@@ -162,6 +162,15 @@ impl DirectApiClient {
         &self.config.model
     }
 
+    /// Get the last assistant message from conversation history.
+    pub fn last_assistant_message(&self) -> Option<String> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .map(|m| m.content.clone())
+    }
+
     /// Persist conversation messages to disk.
     pub fn save_messages(&self) {
         let dir = conversations_dir();

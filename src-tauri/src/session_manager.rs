@@ -146,16 +146,46 @@ impl SessionManager {
             set_session_title_if_empty(self.working_dir.as_deref(), sid, message);
         }
 
-        match &mut self.api_client {
+        // Record user message event to snapshot
+        if let Some(ref sid) = self.session_id {
+            append_event_to_snapshot(
+                self.working_dir.as_deref(),
+                sid,
+                &AppEvent::UserMessage {
+                    text: message.to_string(),
+                },
+            );
+        }
+
+        let result = match &mut self.api_client {
             Some(client) => client.send_message(message, &app_handle).await,
             None => {
-                // Try to initialize the client if it wasn't created yet
                 let mut client = DirectApiClient::new(&app_handle)?;
                 let result = client.send_message(message, &app_handle).await;
                 self.api_client = Some(client);
                 result
             }
+        };
+
+        // Record assistant response event to snapshot
+        if result.is_ok() {
+            if let Some(ref client) = self.api_client {
+                if let Some(last_msg) = client.last_assistant_message() {
+                    if let Some(ref sid) = self.session_id {
+                        append_event_to_snapshot(
+                            self.working_dir.as_deref(),
+                            sid,
+                            &AppEvent::AssistantMessage {
+                                text: last_msg,
+                                model: self.model.clone(),
+                            },
+                        );
+                    }
+                }
+            }
         }
+
+        result
     }
 
     /// Restart the session.
@@ -263,7 +293,6 @@ pub fn save_snapshot(project_path: Option<&str>, snapshot: &SessionSnapshot) -> 
 }
 
 /// Append an event to the session snapshot for replay.
-#[allow(dead_code)]
 fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event: &AppEvent) {
     let path = snapshot_path(project_path, session_id);
     if let Ok(content) = fs::read_to_string(&path) {

@@ -130,6 +130,11 @@ pub enum AppEvent {
         tools: Vec<String>,
     },
 
+    #[serde(rename = "user_message")]
+    UserMessage {
+        text: String,
+    },
+
     #[serde(rename = "assistant_message")]
     AssistantMessage {
         text: String,
