@@ -106,23 +106,8 @@ impl SessionManager {
         // Mark any previous crashed sessions
         mark_crashed_sessions();
 
-        // Create initial snapshot
-        let api_sid = self.api_client.as_ref().map(|c| c.session_id().to_string());
-        let snapshot = SessionSnapshot {
-            session_id: sid.clone(),
-            project_path: self.working_dir.clone(),
-            model: self.model.clone(),
-            created_at: current_timestamp_ms(),
-            updated_at: current_timestamp_ms(),
-            message_count: 0,
-            status: SessionStatus::Active,
-            cost_usd: 0.0,
-            duration_ms: 0,
-            title: None,
-            api_session_id: api_sid,
-            events: Vec::new(),
-        };
-        let _ = save_snapshot(self.working_dir.as_deref(), &snapshot);
+        // Snapshot is created lazily on first message (see send_input)
+        // so empty sessions don't clutter history
 
         // Emit session ready status
         let _ = app_handle.emit(
@@ -145,8 +130,14 @@ impl SessionManager {
         message: &str,
         app_handle: AppHandle,
     ) -> Result<(), String> {
-        // Set session title from first user message
+        // Create snapshot lazily on first message
         if let Some(ref sid) = self.session_id {
+            ensure_snapshot_exists(
+                self.working_dir.as_deref(),
+                sid,
+                &self.model,
+                self.api_client.as_ref().map(|c| c.session_id().to_string()),
+            );
             set_session_title_if_empty(self.working_dir.as_deref(), sid, message);
         }
 
@@ -321,6 +312,34 @@ fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event:
                 .and_then(|json| fs::write(&path, json).ok());
         }
     }
+}
+
+/// Create a snapshot file if it doesn't already exist (lazy creation on first message).
+fn ensure_snapshot_exists(
+    project_path: Option<&str>,
+    session_id: &str,
+    model: &str,
+    api_session_id: Option<String>,
+) {
+    let path = snapshot_path(project_path, session_id);
+    if path.exists() {
+        return;
+    }
+    let snapshot = SessionSnapshot {
+        session_id: session_id.to_string(),
+        project_path: project_path.map(|s| s.to_string()),
+        model: model.to_string(),
+        created_at: current_timestamp_ms(),
+        updated_at: current_timestamp_ms(),
+        message_count: 0,
+        status: SessionStatus::Active,
+        cost_usd: 0.0,
+        duration_ms: 0,
+        title: None,
+        api_session_id,
+        events: Vec::new(),
+    };
+    let _ = save_snapshot(project_path, &snapshot);
 }
 
 /// Set the session title from the first user message (only if not yet set).
