@@ -1,159 +1,106 @@
 import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import ChatPane from "./components/ChatPane";
+import { useEventStore } from "./hooks/useEventStore";
+import TimelineView from "./components/timeline/TimelineView";
+import InputBar from "./components/InputBar";
 import Dashboard from "./components/Dashboard";
-
-export interface Message {
-  id: number;
-  role: "user" | "assistant" | "system";
-  content: string;
-  timestamp: string;
-}
-
-export interface ApprovalData {
-  command: string;
-  risk_label: string;
-}
-
-export interface PlanGateData {
-  lines: string[];
-  file_count: number;
-}
-
-export interface CostData {
-  input_tokens: number;
-  output_tokens: number;
-  cost_usd: number;
-}
-
-export type Theme = "dark" | "light";
-
-const SLASH_COMMANDS = [
-  { cmd: "/compact", desc: "Compress context to save tokens" },
-  { cmd: "/clear", desc: "Clear conversation history" },
-  { cmd: "/config", desc: "View or set configuration options" },
-  { cmd: "/cost", desc: "Show token usage and cost for this session" },
-  { cmd: "/doctor", desc: "Check Claude Code health and connectivity" },
-  { cmd: "/help", desc: "Show available commands and usage" },
-  { cmd: "/init", desc: "Initialize CLAUDE.md in current project" },
-  { cmd: "/login", desc: "Switch authentication or re-login" },
-  { cmd: "/logout", desc: "Log out of current session" },
-  { cmd: "/memory", desc: "Edit CLAUDE.md memory files" },
-  { cmd: "/model deepseek-v4-pro", desc: "Switch to deepseek-v4-pro (default)" },
-  { cmd: "/model deepseek-r1", desc: "Switch to deepseek-r1 (R1 reasoning)" },
-  { cmd: "/model deepseek-v4-flash", desc: "Switch to deepseek-v4-flash (fast/cheap)" },
-  { cmd: "/permissions", desc: "View or update tool permissions" },
-  { cmd: "/review", desc: "Review code changes in current project" },
-  { cmd: "/status", desc: "Show current session status and model" },
-  { cmd: "/terminal-setup", desc: "Setup terminal integration (Shift+Enter)" },
-  { cmd: "/vim", desc: "Toggle vim mode for input" },
-];
-
-const EMPTY_COST: CostData = { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+import Toast from "./components/Toast";
+import ApprovalModal from "./components/approvals/ApprovalModal";
+import FileDiffModal from "./components/approvals/FileDiffModal";
+import SessionSidebar from "./components/sessions/SessionSidebar";
+import ToolDetailPanel from "./components/tools/ToolDetailPanel";
+import BrainPanel from "./components/memory/BrainPanel";
+import GraphPanel from "./components/graphs/GraphPanel";
+import TokenPanel from "./components/optimizer/TokenPanel";
+import AgentPanel from "./components/agents/AgentPanel";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent } from "./types";
+import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [approval, setApproval] = useState<ApprovalData | null>(null);
-  const [planGate, setPlanGate] = useState<PlanGateData | null>(null);
-  const [totalCost, setTotalCost] = useState<CostData>(EMPTY_COST);
-  const [sessionCost, setSessionCost] = useState<CostData>(EMPTY_COST);
-  const [memoryLines, setMemoryLines] = useState<string[]>([]);
-  const [currentAssistantMsg, setCurrentAssistantMsg] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const [theme, setTheme] = useState<Theme>("dark");
+  const {
+    state,
+    processEvent,
+    addUserMessage,
+    clearSession,
+    resolveApproval,
+    closeDiff,
+    replayEvents,
+    toolEntries,
+    stats,
+  } = useEventStore();
 
-  // Feature 1: Project Switcher
+  const [totalCost, setTotalCost] = useState<CostData>(EMPTY_COST);
+  const [memoryLines, setMemoryLines] = useState<string[]>([]);
+  const [theme, setTheme] = useState<Theme>("dark");
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Project Switcher
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
 
-  // Feature 5: Model Switcher
-  const [currentModel, setCurrentModel] = useState<"deepseek-v4-pro" | "deepseek-r1" | "deepseek-v4-flash">("deepseek-v4-pro");
+  // Session sidebar
+  const [showSessionSidebar, setShowSessionSidebar] = useState(false);
 
-  // Feature 9: Env Var Warning
+  // Tool detail panel
+  const [viewingTool, setViewingTool] = useState<ToolUseData | null>(null);
+
+  // Brain panel
+  const [showBrainPanel, setShowBrainPanel] = useState(false);
+
+  // Graph panel
+  const [showGraphPanel, setShowGraphPanel] = useState(false);
+
+  // Token optimizer panel
+  const [showTokenPanel, setShowTokenPanel] = useState(false);
+
+  // Agent panel
+  const [showAgentPanel, setShowAgentPanel] = useState(false);
+
+  // Env / Status
   const [envWarning, setEnvWarning] = useState<string | null>(null);
-
-  // Feature 10: Auto-Compact Warning
   const [compactWarningDismissed, setCompactWarningDismissed] = useState(false);
+
+  // ═══════ Theme ═══════
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  // ═══════ Boot ═══════
 
   useEffect(() => {
     checkEnvVars();
     startSession();
     loadDashboardData();
 
-    const unlisten1 = listen<{ line: string; is_error: boolean }>("pty-output", (event) => {
-      const { line, is_error } = event.payload;
-      setIsTyping(false);
-      if (is_error) {
-        addMessage("system", line);
-      } else {
-        setCurrentAssistantMsg((prev) => prev + line + "\n");
-      }
-    });
-
-    const unlisten2 = listen<ApprovalData>("approval-request", (event) => {
-      flushAssistantMessage();
-      setApproval(event.payload);
-    });
-
-    const unlisten3 = listen<PlanGateData>("plan-gate", (event) => {
-      flushAssistantMessage();
-      setPlanGate(event.payload);
-    });
-
-    // Live token update — accumulates session cost
-    const unlisten4 = listen<CostData>("token-update", (event) => {
-      setSessionCost((prev) => ({
-        input_tokens: prev.input_tokens + event.payload.input_tokens,
-        output_tokens: prev.output_tokens + event.payload.output_tokens,
-        cost_usd: prev.cost_usd + event.payload.cost_usd,
-      }));
+    const unlistenAppEvent = listen<AppEvent>("app-event", (event) => {
+      processEvent(event.payload);
     });
 
     const costInterval = setInterval(loadCost, 10000);
 
     return () => {
-      unlisten1.then((f) => f());
-      unlisten2.then((f) => f());
-      unlisten3.then((f) => f());
-      unlisten4.then((f) => f());
+      unlistenAppEvent.then((f) => f());
       clearInterval(costInterval);
     };
   }, []);
 
-  const getTimestamp = () =>
-    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // ═══════ Toast ═══════
 
-  const addMessage = useCallback((role: Message["role"], content: string) => {
-    setMessages((prev) => [
-      ...prev,
-      { id: Date.now() + Math.random(), role, content, timestamp: getTimestamp() },
-    ]);
+  const addToast = useCallback(
+    (text: string, type: ToastMessage["type"] = "info") => {
+      setToasts((prev) => [...prev, { id: Date.now(), text, type }]);
+    },
+    []
+  );
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const flushAssistantMessage = useCallback(() => {
-    setCurrentAssistantMsg((prev) => {
-      if (prev.trim()) {
-        setMessages((msgs) => [
-          ...msgs,
-          {
-            id: Date.now(),
-            role: "assistant",
-            content: prev.trim(),
-            timestamp: getTimestamp(),
-          },
-        ]);
-      }
-      return "";
-    });
-  }, []);
-
-  // ═══════ Feature 9: Env Var Check ═══════
+  // ═══════ Env Var Check ═══════
 
   const checkEnvVars = async () => {
     try {
@@ -168,37 +115,32 @@ function App() {
   const startSession = async () => {
     try {
       await invoke("start_session");
-      addMessage("system", "Session started — memory injected");
     } catch (e) {
-      addMessage("system", `Failed to start PTY: ${e}`);
+      addToast(`Failed to start session: ${e}`, "error");
     }
   };
 
   const handleRestart = async () => {
-    setCurrentAssistantMsg("");
-    setIsTyping(false);
-    setSessionCost(EMPTY_COST);
+    clearSession();
     try {
       await invoke("restart_session");
-      addMessage("system", "Session restarted");
       loadDashboardData();
+      addToast("Session restarted", "info");
     } catch (e) {
-      addMessage("system", `Restart failed: ${e}`);
+      addToast(`Restart failed: ${e}`, "error");
     }
   };
 
-  // ═══════ Feature 1: Project Switcher ═══════
+  // ═══════ Project Switcher ═══════
 
   const handlePickProject = async () => {
     try {
-      // Use Tauri dialog API to pick a directory
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === "string") {
         await switchToProject(selected);
       }
     } catch (_) {
-      // Fallback: prompt for path
       const path = window.prompt("Enter project directory path:");
       if (path) {
         await switchToProject(path);
@@ -208,6 +150,7 @@ function App() {
 
   const switchToProject = async (path: string) => {
     try {
+      clearSession();
       await invoke("switch_project", { path });
       setProjectPath(path);
       setRecentProjects((prev) => {
@@ -215,27 +158,28 @@ function App() {
         return [path, ...filtered].slice(0, 5);
       });
       setShowProjectDropdown(false);
-      // Restart session in new directory
-      await handleRestart();
-      addMessage("system", `Switched to project: ${path}`);
-      // Update window title
+      addToast(`Switched to project: ${path.split(/[/\\]/).pop()}`, "success");
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const name = path.split(/[/\\]/).pop() || path;
         await getCurrentWindow().setTitle(`Claude Desktop — ${name}`);
       } catch (_) {}
     } catch (e) {
-      addMessage("system", `Failed to switch project: ${e}`);
+      addToast(`Failed to switch project: ${e}`, "error");
     }
   };
 
-  const projectName = projectPath ? projectPath.split(/[/\\]/).pop() || projectPath : null;
+  const projectName = projectPath
+    ? projectPath.split(/[/\\]/).pop() || projectPath
+    : null;
 
   // ═══════ Dashboard Data ═══════
 
   const loadDashboardData = async () => {
     try {
-      const data = await invoke<{ claude_md: string; memory_lines: string[] }>("get_memory_data");
+      const data = await invoke<{ claude_md: string; memory_lines: string[] }>(
+        "get_memory_data"
+      );
       setMemoryLines(data.memory_lines);
     } catch (_) {}
     loadCost();
@@ -251,39 +195,12 @@ function App() {
   // ═══════ Chat Actions ═══════
 
   const handleSend = async (input: string) => {
-    flushAssistantMessage();
-    addMessage("user", input);
-    setIsTyping(true);
+    addUserMessage(input);
     try {
-      await invoke("send_input", { input });
+      await invoke("send_input", { message: input });
     } catch (e) {
-      setIsTyping(false);
-      addMessage("system", `Error: ${e}`);
+      addToast(`Error: ${e}`, "error");
     }
-  };
-
-  const handleApproval = async (approved: boolean) => {
-    try {
-      await invoke("respond_approval", { approved });
-      setApproval(null);
-      addMessage("system", approved ? "Command approved" : "Command denied");
-    } catch (_) {}
-  };
-
-  const handlePlanApproval = async () => {
-    try {
-      await invoke("approve_plan");
-      setPlanGate(null);
-      addMessage("system", "Plan approved — proceeding");
-    } catch (_) {}
-  };
-
-  const handlePlanDeny = async () => {
-    try {
-      await invoke("deny_plan");
-      setPlanGate(null);
-      addMessage("system", "Plan denied — describe what to change");
-    } catch (_) {}
   };
 
   const handleSaveMemory = async () => {
@@ -292,71 +209,84 @@ function App() {
     try {
       await invoke("save_memory", { entry });
       loadDashboardData();
-      addMessage("system", "Memory saved");
+      addToast("Memory saved", "success");
     } catch (_) {}
   };
 
   const handleCompact = async () => {
     try {
-      await invoke("send_input", { input: "/compact" });
-      addMessage("system", "Compact requested");
+      await invoke("send_input", { message: "/compact" });
+      addToast("Compact requested", "info");
       setCompactWarningDismissed(true);
     } catch (_) {}
   };
 
-  // ═══════ Feature 5: Model Switcher ═══════
+  // ═══════ Approval Handlers ═══════
 
-  const handleModelToggle = async () => {
-    const modelCycle: Record<string, "deepseek-v4-pro" | "deepseek-r1" | "deepseek-v4-flash"> = {
-      "deepseek-v4-pro": "deepseek-r1",
-      "deepseek-r1": "deepseek-v4-flash",
-      "deepseek-v4-flash": "deepseek-v4-pro",
-    };
-    const next = modelCycle[currentModel] ?? "deepseek-v4-pro";
-    try {
-      await invoke("send_input", { input: `/model ${next}` });
-      setCurrentModel(next);
-      addMessage("system", `Switched to ${next}`);
-    } catch (_) {}
+  const handleApprove = () => {
+    resolveApproval("approved");
+    // Send approval to backend
+    invoke("send_input", { message: "y" }).catch(() => {});
   };
 
-  const toggleTheme = () => {
-    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  const handleDeny = () => {
+    resolveApproval("denied");
+    invoke("send_input", { message: "n" }).catch(() => {});
   };
 
-  // ═══════ Feature 10: Auto-Compact Warning ═══════
-  const messageCount = messages.length;
+  const handleDiffApprove = () => {
+    closeDiff();
+    invoke("send_input", { message: "y" }).catch(() => {});
+  };
+
+  const handleDiffDeny = () => {
+    closeDiff();
+    invoke("send_input", { message: "n" }).catch(() => {});
+  };
+
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+
+  // ═══════ Auto-Compact Warning ═══════
   const showCompactWarning =
     !compactWarningDismissed &&
-    (messageCount > 20 || totalCost.input_tokens > 80000 || sessionCost.input_tokens > 80000);
+    (state.timeline.length > 30 ||
+      totalCost.input_tokens > 80000 ||
+      state.sessionCost.input_tokens > 80000);
 
   return (
     <div className="app-container">
+      {/* ═══════ Main Panel ═══════ */}
       <div className="chat-panel">
-        {/* Feature 9: Env var warning banner */}
+        {/* Env var warning banner */}
         {envWarning && (
           <div className="env-warning-banner">
-            <span>
-              &#9888; DeepSeek env vars not set — Claude Code will fail. Set ANTHROPIC_BASE_URL and
-              ANTHROPIC_API_KEY in your shell, then restart.
-            </span>
-            <button className="env-warning-close" onClick={() => setEnvWarning(null)}>
+            <span>&#9888; {envWarning}</span>
+            <button
+              className="env-warning-close"
+              onClick={() => setEnvWarning(null)}
+            >
               &times;
             </button>
           </div>
         )}
 
+        {/* Toolbar */}
         <div className="toolbar">
-          {/* Feature 5: Clickable model switcher */}
           <button
-            className={`model-toggle ${currentModel === "deepseek-r1" ? "reasoner" : currentModel === "deepseek-v4-flash" ? "flash" : ""}`}
-            onClick={handleModelToggle}
-            title={`Current: ${currentModel} — click to cycle models`}
+            className="toolbar-btn sessions-btn"
+            onClick={() => setShowSessionSidebar(true)}
+            title="Session history"
           >
-            {currentModel}
+            &#9776;
           </button>
+          <span
+            className="model-indicator"
+            title={`Session: ${state.sessionId || "none"}`}
+          >
+            {state.sessionModel}
+          </span>
 
-          {/* Feature 1: Project Switcher */}
+          {/* Project Switcher */}
           <div className="project-switcher">
             <button
               className="toolbar-btn project-btn"
@@ -367,14 +297,21 @@ function App() {
             </button>
             {showProjectDropdown && (
               <div className="project-dropdown">
-                <button className="project-dropdown-item pick-folder" onClick={handlePickProject}>
+                <button
+                  className="project-dropdown-item pick-folder"
+                  onClick={handlePickProject}
+                >
                   &#128194; Browse folder...
                 </button>
-                {recentProjects.length > 0 && <div className="project-dropdown-divider" />}
+                {recentProjects.length > 0 && (
+                  <div className="project-dropdown-divider" />
+                )}
                 {recentProjects.map((p) => (
                   <button
                     key={p}
-                    className={`project-dropdown-item ${p === projectPath ? "active" : ""}`}
+                    className={`project-dropdown-item ${
+                      p === projectPath ? "active" : ""
+                    }`}
                     onClick={() => switchToProject(p)}
                   >
                     {p.split(/[/\\]/).pop()}
@@ -389,32 +326,81 @@ function App() {
             <div className="token-progress">
               <div
                 className="token-progress-fill"
-                style={{ width: `${Math.min((sessionCost.cost_usd / 1) * 100, 100)}%` }}
+                style={{
+                  width: `${Math.min(
+                    (state.sessionCost.cost_usd / 1) * 100,
+                    100
+                  )}%`,
+                }}
               />
             </div>
-            <span className="token-label">${sessionCost.cost_usd.toFixed(4)}</span>
+            <span className="token-label">
+              ${state.sessionCost.cost_usd.toFixed(4)}
+            </span>
           </div>
+
           <button className="toolbar-btn" onClick={handleSaveMemory}>
             Save Memory
           </button>
           <button
-            className={`toolbar-btn ${showCompactWarning ? "compact-warning" : ""}`}
+            className={`toolbar-btn ${
+              showCompactWarning ? "compact-warning" : ""
+            }`}
             onClick={handleCompact}
-            title={showCompactWarning ? "Context getting full — consider /compact" : "Compact context"}
+            title={
+              showCompactWarning
+                ? "Context getting full — consider /compact"
+                : "Compact context"
+            }
           >
             Compact
             {showCompactWarning && <span className="compact-badge" />}
           </button>
-          {/* Feature 2: Restart button */}
-          <button className="toolbar-btn restart-btn" onClick={handleRestart} title="Restart session">
+          <button
+            className="toolbar-btn"
+            onClick={() => setShowBrainPanel(true)}
+            title="Workspace intelligence"
+          >
+            Brain
+          </button>
+          <button
+            className="toolbar-btn"
+            onClick={() => setShowGraphPanel(true)}
+            title="Visual memory graphs"
+          >
+            Graphs
+          </button>
+          <button
+            className="toolbar-btn"
+            onClick={() => setShowTokenPanel(true)}
+            title="Token optimization & budgeting"
+          >
+            Tokens
+          </button>
+          <button
+            className="toolbar-btn"
+            onClick={() => setShowAgentPanel(true)}
+            title="Multi-agent workflows & provider routing"
+          >
+            Agents
+          </button>
+          <button
+            className="toolbar-btn restart-btn"
+            onClick={handleRestart}
+            title="Restart session"
+          >
             &#8634; Restart
           </button>
-          <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
+          <button
+            className="theme-toggle"
+            onClick={toggleTheme}
+            title="Toggle theme"
+          >
             {theme === "dark" ? "\u263E" : "\u2600"}
           </button>
         </div>
 
-        {/* Feature 10: Auto-compact warning bar */}
+        {/* Auto-compact warning bar */}
         {showCompactWarning && (
           <div className="compact-warning-bar">
             <span>Context at ~80% — run /compact to save tokens</span>
@@ -430,28 +416,105 @@ function App() {
           </div>
         )}
 
-        <ChatPane
-          messages={messages}
-          currentStream={currentAssistantMsg}
-          approval={approval}
-          isTyping={isTyping}
+        {/* Timeline — replaces ChatPane messages */}
+        <TimelineView
+          entries={state.timeline}
+          isTyping={state.isTyping}
+          onViewToolDetail={(tool) => setViewingTool(tool)}
+        />
+
+        {/* Input */}
+        <InputBar
           slashCommands={SLASH_COMMANDS}
-          onApproval={handleApproval}
           onSend={handleSend}
         />
       </div>
+
+      {/* ═══════ Dashboard Sidebar ═══════ */}
       <Dashboard
-        sessionCost={sessionCost}
+        sessionCost={state.sessionCost}
         totalCost={totalCost}
         memoryLines={memoryLines}
-        planGate={planGate}
-        onPlanApproval={handlePlanApproval}
-        onPlanDeny={handlePlanDeny}
-        hasApprovalPending={approval !== null}
+        toolEntries={toolEntries}
+        stats={stats}
         projectPath={projectPath}
         projectName={projectName}
         onMemoryReload={loadDashboardData}
       />
+
+      {/* ═══════ Modals ═══════ */}
+      {state.activeApproval && state.activeApproval.status === "pending" && (
+        <ApprovalModal
+          approval={state.activeApproval}
+          onApprove={handleApprove}
+          onDeny={handleDeny}
+        />
+      )}
+
+      {state.activeDiff && (
+        <FileDiffModal
+          filePath={state.activeDiff.filePath}
+          oldContent={state.activeDiff.oldContent}
+          newContent={state.activeDiff.newContent}
+          onApprove={handleDiffApprove}
+          onDeny={handleDiffDeny}
+          onClose={closeDiff}
+        />
+      )}
+
+      {/* ═══════ Session Sidebar ═══════ */}
+      <SessionSidebar
+        visible={showSessionSidebar}
+        onClose={() => setShowSessionSidebar(false)}
+        onToast={addToast}
+        onRestore={(events: PersistedEvent[]) => {
+          replayEvents(events.map((e) => e.event));
+          addToast(`Restored ${events.length} events from session`, "success");
+        }}
+      />
+
+      {/* ═══════ Tool Detail Panel ═══════ */}
+      {viewingTool && (
+        <ToolDetailPanel
+          tool={viewingTool}
+          onClose={() => setViewingTool(null)}
+        />
+      )}
+
+      {/* ═══════ Brain Panel ═══════ */}
+      <BrainPanel
+        visible={showBrainPanel}
+        onClose={() => setShowBrainPanel(false)}
+        onToast={addToast}
+        projectPath={projectPath}
+      />
+
+      {/* ═══════ Graph Panel ═══════ */}
+      <GraphPanel
+        visible={showGraphPanel}
+        onClose={() => setShowGraphPanel(false)}
+        onToast={addToast}
+        projectPath={projectPath}
+      />
+
+      {/* ═══════ Token Panel ═══════ */}
+      <TokenPanel
+        visible={showTokenPanel}
+        onClose={() => setShowTokenPanel(false)}
+        onToast={addToast}
+        projectPath={projectPath}
+      />
+
+      {/* ═══════ Agent Panel ═══════ */}
+      <AgentPanel
+        visible={showAgentPanel}
+        onClose={() => setShowAgentPanel(false)}
+        onToast={addToast}
+        projectPath={projectPath}
+      />
+
+      {/* ═══════ Toasts ═══════ */}
+      <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

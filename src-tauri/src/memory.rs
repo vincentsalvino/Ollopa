@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// DeepSeek pricing per million tokens
 const INPUT_PRICE_PER_M: f64 = 0.27;
@@ -47,6 +47,7 @@ pub fn read_claude_md() -> String {
 }
 
 /// Read <project_path>/CLAUDE.md if it exists
+#[allow(dead_code)]
 pub fn read_project_claude_md(project_path: &str) -> String {
     let path = PathBuf::from(project_path).join("CLAUDE.md");
     fs::read_to_string(&path).unwrap_or_default()
@@ -75,44 +76,6 @@ pub fn read_memory_full() -> String {
 pub fn write_memory_full(content: &str) -> Result<(), String> {
     let path = claude_dir().join("deepseek_memory.md");
     fs::write(&path, content).map_err(|e| format!("Failed to write memory: {}", e))
-}
-
-/// Build the initial injection message for the pty session.
-/// If a project path is provided, also injects project-level CLAUDE.md.
-pub fn build_initial_injection(project_path: Option<&str>) -> Option<String> {
-    let claude_md = read_claude_md();
-    let memory = read_memory_full();
-    let project_md = project_path
-        .map(|p| read_project_claude_md(p))
-        .unwrap_or_default();
-
-    if claude_md.is_empty() && memory.is_empty() && project_md.is_empty() {
-        return None;
-    }
-
-    let mut injection = String::new();
-
-    if !memory.is_empty() {
-        injection.push_str("Context from my memory file (~/.claude/deepseek_memory.md):\n");
-        injection.push_str(&memory);
-        injection.push_str("\n\n");
-    }
-
-    if !project_md.is_empty() {
-        injection.push_str("Project-level config (CLAUDE.md):\n");
-        injection.push_str(&project_md);
-        injection.push_str("\n\n");
-    }
-
-    if !claude_md.is_empty() {
-        injection.push_str("My global config (~/.claude/CLAUDE.md):\n");
-        injection.push_str(&claude_md);
-        injection.push_str("\n\n");
-    }
-
-    injection.push_str("Acknowledge these silently and wait for my first task.");
-
-    Some(injection)
 }
 
 /// Parse JSONL session logs from ~/.claude/projects/ to compute total token cost
@@ -168,4 +131,42 @@ pub fn append_memory(entry: &str) -> Result<(), String> {
     content.push_str(entry);
     content.push('\n');
     fs::write(&path, content).map_err(|e| format!("Failed to write memory: {}", e))
+}
+
+// ═══════ Project File Tree ═══════
+
+pub fn read_project_tree(project_path: &str) -> String {
+    let mut lines = vec!["Project files:".to_string()];
+    tree_recursive(Path::new(project_path), 0, 3, &mut lines);
+    lines.join("\n")
+}
+
+fn tree_recursive(dir: &Path, depth: usize, max: usize, out: &mut Vec<String>) {
+    if depth >= max {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.starts_with('.')
+            || name == "node_modules"
+            || name == "target"
+            || name == "vendor"
+            || name == "dist"
+        {
+            continue;
+        }
+        let indent = "  ".repeat(depth);
+        if path.is_dir() {
+            out.push(format!("{}{}/", indent, name));
+            tree_recursive(&path, depth + 1, max, out);
+        } else {
+            out.push(format!("{}{}", indent, name));
+        }
+    }
 }
