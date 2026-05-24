@@ -4,9 +4,11 @@ mod claude_events;
 #[allow(dead_code)]
 mod claude_process;
 mod event_bus;
+mod git_intelligence;
 mod memory;
 mod multi_agent;
 mod provider_router;
+mod repo_intelligence;
 mod second_brain;
 mod session_manager;
 mod token_optimizer;
@@ -61,6 +63,37 @@ async fn send_input(
 }
 
 
+
+// ═══════ Conversation Persistence ═══════
+
+#[tauri::command]
+fn list_conversations() -> Vec<String> {
+    api_client::DirectApiClient::list_saved_conversations()
+}
+
+#[tauri::command]
+fn get_conversation_messages(session_id: String) -> Option<Vec<api_client::ChatMessage>> {
+    api_client::DirectApiClient::load_messages(&session_id)
+}
+
+#[tauri::command]
+async fn resume_conversation(
+    session_id: String,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    // Start a fresh session first
+    let working_dir = session.working_dir.clone();
+    session.start(app_handle, working_dir, None).await?;
+    // Then resume the conversation history
+    if let Some(ref mut client) = session.api_client {
+        if !client.resume_session(&session_id) {
+            return Err(format!("No saved conversation found for {}", session_id));
+        }
+    }
+    Ok(())
+}
 
 // ═══════ Project Switcher ═══════
 
@@ -449,6 +482,83 @@ fn agent_delete_workflow(id: String) -> Result<(), String> {
     multi_agent::delete_workflow(&id)
 }
 
+// ═══════ Autonomous Workflow Execution ═══════
+
+#[tauri::command]
+async fn agent_execute_workflow(
+    id: String,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<multi_agent::Workflow, String> {
+    let mut workflow = multi_agent::list_workflows(None)
+        .into_iter()
+        .find(|w| w.id == id)
+        .ok_or_else(|| format!("Workflow '{}' not found", id))?;
+
+    for i in 0..workflow.steps.len() {
+        if workflow.steps[i].status != multi_agent::StepStatus::Pending {
+            continue;
+        }
+
+        // Check dependencies
+        let deps = workflow.steps[i].depends_on.clone();
+        let deps_met = deps.iter().all(|dep_id| {
+            workflow.steps.iter().any(|s| s.id == *dep_id && s.status == multi_agent::StepStatus::Completed)
+        });
+        if !deps_met {
+            continue;
+        }
+
+        // Mark step as running
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        workflow.steps[i].status = multi_agent::StepStatus::Running;
+        workflow.steps[i].started_at = Some(now);
+
+        // Build the prompt from agent + step
+        let prompt = format!(
+            "You are performing the '{}' action.\nTask: {}\nContext: Workflow '{}' - {}",
+            workflow.steps[i].action, workflow.steps[i].input, workflow.name, workflow.description
+        );
+
+        // Execute via API client
+        let mut session = state.session.lock().await;
+        let result = session.send_input(&prompt, app_handle.clone()).await;
+        drop(session);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        match result {
+            Ok(()) => {
+                workflow.steps[i].status = multi_agent::StepStatus::Completed;
+                workflow.steps[i].output = Some("Step executed successfully".to_string());
+            }
+            Err(e) => {
+                workflow.steps[i].status = multi_agent::StepStatus::Failed;
+                workflow.steps[i].output = Some(format!("Step failed: {}", e));
+                workflow.status = multi_agent::WorkflowStatus::Failed;
+                let _ = multi_agent::save_workflow(&workflow);
+                return Ok(workflow);
+            }
+        }
+        workflow.steps[i].completed_at = Some(now);
+    }
+
+    // Check if all steps completed
+    let all_done = workflow.steps.iter().all(|s| s.status == multi_agent::StepStatus::Completed);
+    if all_done {
+        workflow.status = multi_agent::WorkflowStatus::Completed;
+    }
+
+    let _ = multi_agent::save_workflow(&workflow);
+    Ok(workflow)
+}
+
 // ═══════ Provider Router ═══════
 
 #[tauri::command]
@@ -490,6 +600,36 @@ fn router_stats() -> provider_router::RouterStats {
     provider_router::get_router_stats()
 }
 
+// ═══════ Git Intelligence ═══════
+
+#[tauri::command]
+fn git_info(project_path: String) -> git_intelligence::GitInfo {
+    git_intelligence::get_git_info(&project_path)
+}
+
+// ═══════ Repository Intelligence ═══════
+
+#[tauri::command]
+fn repo_analyze(project_path: String) -> repo_intelligence::RepoAnalysis {
+    repo_intelligence::analyze_repo(&project_path)
+}
+
+// ═══════ Provider Switch (wires router to API client) ═══════
+
+#[tauri::command]
+async fn switch_provider(
+    base_url: String,
+    api_key_env: String,
+    model: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    match &mut session.api_client {
+        Some(client) => client.switch_provider(&base_url, &api_key_env, &model),
+        None => Err("No active session to switch provider on".to_string()),
+    }
+}
+
 // ═══════ Approval ═══════
 
 #[tauri::command]
@@ -522,6 +662,9 @@ pub fn run() {
             restart_session,
             stop_session,
             send_input,
+            list_conversations,
+            get_conversation_messages,
+            resume_conversation,
             switch_project,
             list_sessions,
             delete_session_by_key,
@@ -577,6 +720,7 @@ pub fn run() {
             agent_list_workflows,
             agent_advance_workflow,
             agent_delete_workflow,
+            agent_execute_workflow,
             router_list_providers,
             router_save_provider,
             router_delete_provider,
@@ -584,6 +728,9 @@ pub fn run() {
             router_save_config,
             router_route,
             router_stats,
+            git_info,
+            repo_analyze,
+            switch_provider,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
