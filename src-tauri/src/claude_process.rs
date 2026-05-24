@@ -81,7 +81,8 @@ impl ClaudeProcess {
             cmd.arg("--resume").arg(sid);
         }
 
-        cmd.stdin(Stdio::piped())
+        // Use null stdin since we pass prompt via -p (avoids 3s stdin warning)
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -103,21 +104,9 @@ impl ClaudeProcess {
             .take()
             .ok_or_else(|| "Failed to capture stderr".to_string())?;
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "Failed to capture stdin".to_string())?;
-
-        let (stdin_tx, stdin_rx) = mpsc::channel::<String>(64);
+        let (stdin_tx, _stdin_rx) = mpsc::channel::<String>(64);
         let session_id = Arc::new(Mutex::new(None::<String>));
         let model = Arc::new(Mutex::new("unknown".to_string()));
-
-        // Spawn stdin writer task
-        let stdin_mutex = Arc::new(Mutex::new(stdin));
-        let stdin_clone = stdin_mutex.clone();
-        tokio::spawn(async move {
-            Self::stdin_writer(stdin_clone, stdin_rx).await;
-        });
 
         // Spawn stdout reader task
         let app_clone = app_handle.clone();

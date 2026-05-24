@@ -136,13 +136,31 @@ impl SessionManager {
             let _ = proc.kill().await;
         }
 
-        let process = ClaudeProcess::spawn(
+        // Try with --resume first (for conversation continuity), fall back to fresh session
+        let resume_id = self.claude_session_id.clone();
+        let result = ClaudeProcess::spawn(
             app_handle.clone(),
             self.working_dir.clone(),
             Some(message.to_string()),
-            self.claude_session_id.clone(),
+            resume_id.clone(),
         )
-        .await?;
+        .await;
+
+        let process = match result {
+            Ok(p) => p,
+            Err(_) if resume_id.is_some() => {
+                // Resume failed (e.g. DeepSeek doesn't support --resume) — retry without it
+                self.claude_session_id = None;
+                ClaudeProcess::spawn(
+                    app_handle.clone(),
+                    self.working_dir.clone(),
+                    Some(message.to_string()),
+                    None,
+                )
+                .await?
+            }
+            Err(e) => return Err(e),
+        };
 
         let _ = app_handle.emit(
             "app-event",
