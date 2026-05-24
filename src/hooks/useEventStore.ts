@@ -16,7 +16,8 @@ type Action =
   | { type: "ADD_USER_MESSAGE"; content: string }
   | { type: "CLEAR_SESSION" }
   | { type: "RESOLVE_APPROVAL"; decision: "approved" | "denied" }
-  | { type: "CLOSE_DIFF" };
+  | { type: "CLOSE_DIFF" }
+  | { type: "REPLAY_EVENTS"; events: AppEvent[] };
 
 // ═══════ Helpers ═══════
 
@@ -87,6 +88,15 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
 
     case "CLOSE_DIFF":
       return { ...state, activeDiff: null };
+
+    case "REPLAY_EVENTS": {
+      let s = { ...initialState };
+      for (const event of action.events) {
+        s = processAppEvent(s, event);
+      }
+      s.isTyping = false;
+      return s;
+    }
 
     case "PROCESS_EVENT":
       return processAppEvent(state, action.event);
@@ -284,6 +294,11 @@ export function useEventStore() {
     []
   );
 
+  const replayEvents = useCallback(
+    (events: AppEvent[]) => dispatch({ type: "REPLAY_EVENTS", events }),
+    []
+  );
+
   // Derived data
   const toolEntries = state.timeline.filter(
     (e) => e.kind === "tool_use"
@@ -310,6 +325,7 @@ export function useEventStore() {
     clearSession,
     resolveApproval,
     closeDiff,
+    replayEvents,
     toolEntries,
     runningTools,
     stats,

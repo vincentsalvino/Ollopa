@@ -75,6 +75,20 @@ fn delete_session_by_key(key: String) -> Result<(), String> {
     session_manager::delete_snapshot(&key)
 }
 
+#[tauri::command]
+fn get_session_events(
+    session_id: String,
+) -> Result<Vec<session_manager::PersistedEvent>, String> {
+    session_manager::load_session_events(&session_id)
+}
+
+#[tauri::command]
+fn get_session_snapshot(
+    session_id: String,
+) -> Result<session_manager::SessionSnapshot, String> {
+    session_manager::get_session_snapshot(&session_id)
+}
+
 // ═══════ Event History (for session recovery) ═══════
 
 #[tauri::command]
@@ -181,6 +195,8 @@ pub fn run() {
             switch_project,
             list_sessions,
             delete_session_by_key,
+            get_session_events,
+            get_session_snapshot,
             get_recent_events,
             get_token_cost,
             get_memory_data,

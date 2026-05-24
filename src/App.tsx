@@ -10,7 +10,7 @@ import ApprovalModal from "./components/approvals/ApprovalModal";
 import FileDiffModal from "./components/approvals/FileDiffModal";
 import SessionSidebar from "./components/sessions/SessionSidebar";
 import ToolDetailPanel from "./components/tools/ToolDetailPanel";
-import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData } from "./types";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
@@ -21,6 +21,7 @@ function App() {
     clearSession,
     resolveApproval,
     closeDiff,
+    replayEvents,
     toolEntries,
     stats,
   } = useEventStore();
@@ -422,6 +423,10 @@ function App() {
         visible={showSessionSidebar}
         onClose={() => setShowSessionSidebar(false)}
         onToast={addToast}
+        onRestore={(events: PersistedEvent[]) => {
+          replayEvents(events.map((e) => e.event));
+          addToast(`Restored ${events.length} events from session`, "success");
+        }}
       />
 
       {/* ═══════ Tool Detail Panel ═══════ */}

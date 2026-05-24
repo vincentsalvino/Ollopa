@@ -216,6 +216,31 @@ export interface SessionMeta {
   key: string;
   preview: string;
   message_count: number;
+  status: string;
+  project_path: string | null;
+  created_at: number;
+  updated_at: number;
+  cost_usd: number;
+}
+
+// ═══════ Session Replay (from backend) ═══════
+
+export interface PersistedEvent {
+  timestamp_ms: number;
+  event: AppEvent;
+}
+
+export interface SessionSnapshot {
+  session_id: string;
+  project_path: string | null;
+  model: string;
+  created_at: number;
+  updated_at: number;
+  message_count: number;
+  status: string;
+  cost_usd: number;
+  duration_ms: number;
+  events: PersistedEvent[];
 }
 
 // ═══════ Toast ═══════

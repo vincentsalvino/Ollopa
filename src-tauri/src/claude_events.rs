@@ -118,7 +118,7 @@ pub struct Usage {
 
 // ═══════ Internal App Events (emitted to frontend) ═══════
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[allow(dead_code)]
 pub enum AppEvent {
