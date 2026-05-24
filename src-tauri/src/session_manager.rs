@@ -1,5 +1,5 @@
+use crate::api_client::DirectApiClient;
 use crate::claude_events::AppEvent;
-use crate::claude_process::ClaudeProcess;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -49,13 +49,11 @@ pub struct SessionMeta {
     pub cost_usd: f64,
 }
 
-/// Manages Claude process lifecycle and session persistence.
+/// Manages session lifecycle and API communication.
 pub struct SessionManager {
-    pub process: Option<ClaudeProcess>,
+    pub api_client: Option<DirectApiClient>,
     pub working_dir: Option<String>,
     pub session_id: Option<String>,
-    /// The Claude CLI's session ID (from stream-json init event) used for --resume
-    pub claude_session_id: Option<String>,
     pub model: String,
     heartbeat_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -63,42 +61,44 @@ pub struct SessionManager {
 impl SessionManager {
     pub fn new() -> Self {
         Self {
-            process: None,
+            api_client: None,
             working_dir: None,
             session_id: None,
-            claude_session_id: None,
             model: "unknown".to_string(),
             heartbeat_handle: None,
         }
     }
 
-    /// Initialize a new session (no process spawned yet — waits for first message).
+    /// Start a new session: initialize the direct API client.
     pub async fn start(
         &mut self,
         app_handle: AppHandle,
         working_dir: Option<String>,
         _initial_prompt: Option<String>,
     ) -> Result<(), String> {
-        // Kill existing process if any
-        if let Some(ref mut proc) = self.process {
-            let _ = proc.kill().await;
-        }
         self.stop_heartbeat();
-
         self.working_dir = working_dir.clone();
-        self.claude_session_id = None;
 
         // Generate session ID
         let sid = format!("session-{}", current_timestamp_ms());
         self.session_id = Some(sid.clone());
 
-        let _ = app_handle.emit(
-            "app-event",
-            AppEvent::StatusUpdate {
-                status: "ready".to_string(),
-                detail: "Session ready. Type a message to begin.".to_string(),
-            },
-        );
+        // Create direct API client
+        match DirectApiClient::new(&app_handle) {
+            Ok(client) => {
+                self.model = client.model().to_string();
+                self.api_client = Some(client);
+            }
+            Err(e) => {
+                let _ = app_handle.emit(
+                    "app-event",
+                    AppEvent::Error {
+                        message: format!("API client init failed: {}", e),
+                        recoverable: true,
+                    },
+                );
+            }
+        }
 
         // Mark any previous crashed sessions
         mark_crashed_sessions();
@@ -121,65 +121,28 @@ impl SessionManager {
         // Start heartbeat
         self.start_heartbeat(app_handle.clone());
 
-        self.process = None;
         Ok(())
     }
 
-    /// Send user input: spawns claude -p "message" per turn, using --resume for follow-ups.
+    /// Send user input via direct API call.
     pub async fn send_input(
         &mut self,
         message: &str,
         app_handle: AppHandle,
     ) -> Result<(), String> {
-        // Kill previous process if still running (shouldn't be, but just in case)
-        if let Some(ref mut proc) = self.process {
-            let _ = proc.kill().await;
-        }
-
-        // Try with --resume first (for conversation continuity), fall back to fresh session
-        let resume_id = self.claude_session_id.clone();
-        let result = ClaudeProcess::spawn(
-            app_handle.clone(),
-            self.working_dir.clone(),
-            Some(message.to_string()),
-            resume_id.clone(),
-        )
-        .await;
-
-        let process = match result {
-            Ok(p) => p,
-            Err(_) if resume_id.is_some() => {
-                // Resume failed (e.g. DeepSeek doesn't support --resume) — retry without it
-                self.claude_session_id = None;
-                ClaudeProcess::spawn(
-                    app_handle.clone(),
-                    self.working_dir.clone(),
-                    Some(message.to_string()),
-                    None,
-                )
-                .await?
+        match &mut self.api_client {
+            Some(client) => client.send_message(message, &app_handle).await,
+            None => {
+                // Try to initialize the client if it wasn't created yet
+                let mut client = DirectApiClient::new(&app_handle)?;
+                let result = client.send_message(message, &app_handle).await;
+                self.api_client = Some(client);
+                result
             }
-            Err(e) => return Err(e),
-        };
-
-        let _ = app_handle.emit(
-            "app-event",
-            AppEvent::StatusUpdate {
-                status: "starting".to_string(),
-                detail: "Claude process spawned, waiting for initialization...".to_string(),
-            },
-        );
-
-        self.process = Some(process);
-        Ok(())
+        }
     }
 
-    /// Store the Claude CLI session ID (from stream-json init event) for --resume.
-    pub fn set_claude_session_id(&mut self, id: String) {
-        self.claude_session_id = Some(id);
-    }
-
-    /// Restart the session (kill + spawn new).
+    /// Restart the session.
     pub async fn restart(
         &mut self,
         app_handle: AppHandle,
@@ -198,18 +161,14 @@ impl SessionManager {
             finalize_session(self.working_dir.as_deref(), sid, false);
         }
 
-        if let Some(ref mut proc) = self.process {
-            proc.kill().await?;
-        }
-        self.process = None;
+        self.api_client = None;
         self.session_id = None;
-        self.claude_session_id = None;
         Ok(())
     }
 
     /// Check if a session is currently active.
     pub fn is_active(&self) -> bool {
-        self.process.is_some()
+        self.api_client.is_some()
     }
 
     /// Set the working directory for next session.

@@ -77,10 +77,6 @@ function App() {
 
     const unlistenAppEvent = listen<AppEvent>("app-event", (event) => {
       processEvent(event.payload);
-      // Store claude's session ID for --resume on follow-up messages
-      if (event.payload.type === "session_started" && event.payload.session_id) {
-        invoke("set_claude_session_id", { sessionId: event.payload.session_id }).catch(() => {});
-      }
     });
 
     const costInterval = setInterval(loadCost, 10000);

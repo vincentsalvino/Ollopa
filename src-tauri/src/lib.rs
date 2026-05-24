@@ -1,3 +1,4 @@
+mod api_client;
 mod approval_manager;
 mod claude_events;
 mod claude_process;
@@ -58,17 +59,7 @@ async fn send_input(
     session.send_input(&message, app_handle).await
 }
 
-/// Called by the frontend when it receives a SessionStarted event with claude's session ID.
-/// This stores the ID so subsequent messages use --resume for conversation continuity.
-#[tauri::command]
-async fn set_claude_session_id(
-    session_id: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let mut session = state.session.lock().await;
-    session.set_claude_session_id(session_id);
-    Ok(())
-}
+
 
 // ═══════ Project Switcher ═══════
 
@@ -163,28 +154,8 @@ fn get_project_tree(path: Option<String>) -> String {
 
 #[tauri::command]
 fn check_env_vars() -> Result<(), String> {
-    // With stream-json architecture, Claude CLI handles its own auth.
-    // We just verify the CLI is available.
-    let output_result = if cfg!(windows) {
-        std::process::Command::new("cmd")
-            .args(["/C", "claude", "--version"])
-            .output()
-    } else {
-        std::process::Command::new("claude")
-            .arg("--version")
-            .output()
-    };
-    match output_result {
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(output) => Err(format!(
-            "claude CLI returned error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )),
-        Err(e) => Err(format!(
-            "claude CLI not found. Install Claude Code first. Error: {}",
-            e
-        )),
-    }
+    // Verify API key is available for direct API calls
+    api_client::ApiConfig::from_env().map(|_| ())
 }
 
 // ═══════ Second Brain ═══════
@@ -550,7 +521,6 @@ pub fn run() {
             restart_session,
             stop_session,
             send_input,
-            set_claude_session_id,
             switch_project,
             list_sessions,
             delete_session_by_key,
