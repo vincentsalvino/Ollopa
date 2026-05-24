@@ -1,22 +1,30 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { CostData, ToolEvent } from "../App";
+import type { CostData, TimelineEntry, ToolUseData } from "../types";
 
 interface DashboardProps {
   sessionCost: CostData;
   totalCost: CostData;
   memoryLines: string[];
-  activeTools: ToolEvent[];
+  toolEntries: (TimelineEntry & { data: ToolUseData })[];
+  stats: {
+    totalTools: number;
+    runningTools: number;
+    successTools: number;
+    errorTools: number;
+    avgDuration: number;
+  };
   projectPath: string | null;
   projectName: string | null;
   onMemoryReload: () => void;
 }
 
-function Dashboard({
+export default function Dashboard({
   sessionCost,
   totalCost,
   memoryLines,
-  activeTools,
+  toolEntries,
+  stats,
   projectPath,
   projectName,
   onMemoryReload,
@@ -53,7 +61,17 @@ function Dashboard({
     setMemoryContent("");
   };
 
-  const recentTools = activeTools.slice(-10).reverse();
+  // Tool frequency map
+  const toolFrequency: Record<string, number> = {};
+  for (const entry of toolEntries) {
+    const name = entry.data.tool_name;
+    toolFrequency[name] = (toolFrequency[name] || 0) + 1;
+  }
+  const topTools = Object.entries(toolFrequency)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 5);
+
+  const recentTools = toolEntries.slice(-8).reverse();
 
   return (
     <div className={`dashboard-panel ${collapsed ? "collapsed" : ""}`}>
@@ -66,8 +84,14 @@ function Dashboard({
         <div className="mini-cost">${sessionCost.cost_usd.toFixed(4)}</div>
         <div className="mini-divider" />
         <div
-          className={`mini-safety-dot ${activeTools.some((t) => t.status === "started") ? "yellow" : "green"}`}
-          title={activeTools.some((t) => t.status === "started") ? "Tool Running" : "Idle"}
+          className={`mini-safety-dot ${
+            stats.runningTools > 0 ? "yellow" : "green"
+          }`}
+          title={
+            stats.runningTools > 0
+              ? `${stats.runningTools} tool(s) running`
+              : "Idle"
+          }
         />
       </div>
 
@@ -92,6 +116,59 @@ function Dashboard({
           )}
         </div>
 
+        {/* Execution Metrics */}
+        <div className="card">
+          <h3 className="card-title">Execution Metrics</h3>
+          <div className="metrics-grid">
+            <div className="metric-item">
+              <div className="metric-value">{stats.totalTools}</div>
+              <div className="metric-label">Total Tools</div>
+            </div>
+            <div className="metric-item">
+              <div className="metric-value metric-running">{stats.runningTools}</div>
+              <div className="metric-label">Running</div>
+            </div>
+            <div className="metric-item">
+              <div className="metric-value metric-success">{stats.successTools}</div>
+              <div className="metric-label">Success</div>
+            </div>
+            <div className="metric-item">
+              <div className="metric-value metric-error">{stats.errorTools}</div>
+              <div className="metric-label">Errors</div>
+            </div>
+          </div>
+          {stats.avgDuration > 0 && (
+            <div className="metric-avg">
+              Avg duration: {stats.avgDuration < 1000
+                ? `${Math.round(stats.avgDuration)}ms`
+                : `${(stats.avgDuration / 1000).toFixed(1)}s`}
+            </div>
+          )}
+        </div>
+
+        {/* Tool Analytics */}
+        {topTools.length > 0 && (
+          <div className="card">
+            <h3 className="card-title">Tool Analytics</h3>
+            <div className="tool-analytics">
+              {topTools.map(([name, count]) => (
+                <div key={name} className="tool-analytics-row">
+                  <span className="tool-analytics-name">{name}</span>
+                  <div className="tool-analytics-bar-bg">
+                    <div
+                      className="tool-analytics-bar"
+                      style={{
+                        width: `${(count / Math.max(...topTools.map(([, c]) => c))) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="tool-analytics-count">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Memory */}
         <div className="card">
           <h3 className="card-title">Memory</h3>
@@ -104,7 +181,11 @@ function Dashboard({
                 rows={10}
               />
               <div className="memory-editor-buttons">
-                <button className="btn-memory-save" onClick={handleSaveMemory} disabled={memorySaving}>
+                <button
+                  className="btn-memory-save"
+                  onClick={handleSaveMemory}
+                  disabled={memorySaving}
+                >
                   {memorySaving ? "Saving..." : "Save"}
                 </button>
                 <button className="btn-memory-cancel" onClick={handleCancelMemory}>
@@ -166,19 +247,36 @@ function Dashboard({
           </div>
         </div>
 
-        {/* Tool Activity */}
+        {/* Recent Tools */}
         {recentTools.length > 0 && (
           <div className="card">
             <h3 className="card-title">Recent Tools</h3>
             <div className="tool-activity-list">
-              {recentTools.map((tool) => (
-                <div key={tool.tool_use_id} className={`tool-activity-item ${tool.status}`}>
-                  <span className="tool-activity-name">{tool.tool_name}</span>
-                  <span className={`tool-activity-status ${tool.status}`}>
-                    {tool.status === "started" ? "running" : tool.status}
-                  </span>
-                </div>
-              ))}
+              {recentTools.map((entry) => {
+                const tool = entry.data;
+                return (
+                  <div
+                    key={entry.id}
+                    className={`tool-activity-item ${tool.status}`}
+                  >
+                    <span className="tool-activity-name">{tool.tool_name}</span>
+                    <span className={`tool-activity-status ${tool.status}`}>
+                      {tool.status === "running"
+                        ? "running"
+                        : tool.status === "success"
+                        ? "done"
+                        : "error"}
+                    </span>
+                    {tool.duration_ms && (
+                      <span className="tool-activity-duration">
+                        {tool.duration_ms < 1000
+                          ? `${tool.duration_ms}ms`
+                          : `${(tool.duration_ms / 1000).toFixed(1)}s`}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -186,5 +284,3 @@ function Dashboard({
     </div>
   );
 }
-
-export default Dashboard;
