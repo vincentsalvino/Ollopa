@@ -9,7 +9,8 @@ import Toast from "./components/Toast";
 import ApprovalModal from "./components/approvals/ApprovalModal";
 import FileDiffModal from "./components/approvals/FileDiffModal";
 import SessionSidebar from "./components/sessions/SessionSidebar";
-import type { AppEvent, CostData, ToastMessage, Theme } from "./types";
+import ToolDetailPanel from "./components/tools/ToolDetailPanel";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
@@ -36,6 +37,9 @@ function App() {
 
   // Session sidebar
   const [showSessionSidebar, setShowSessionSidebar] = useState(false);
+
+  // Tool detail panel
+  const [viewingTool, setViewingTool] = useState<ToolUseData | null>(null);
 
   // Env / Status
   const [envWarning, setEnvWarning] = useState<string | null>(null);
@@ -371,6 +375,7 @@ function App() {
         <TimelineView
           entries={state.timeline}
           isTyping={state.isTyping}
+          onViewToolDetail={(tool) => setViewingTool(tool)}
         />
 
         {/* Input */}
@@ -418,6 +423,14 @@ function App() {
         onClose={() => setShowSessionSidebar(false)}
         onToast={addToast}
       />
+
+      {/* ═══════ Tool Detail Panel ═══════ */}
+      {viewingTool && (
+        <ToolDetailPanel
+          tool={viewingTool}
+          onClose={() => setViewingTool(null)}
+        />
+      )}
 
       {/* ═══════ Toasts ═══════ */}
       <Toast toasts={toasts} onDismiss={dismissToast} />
