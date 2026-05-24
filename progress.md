@@ -202,11 +202,66 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 
 ## Phase 5 — Second-Brain Foundation
 
-**Status: NOT STARTED**
+**Status: COMPLETE**
 
 ### Goals
 - Build persistent workspace intelligence
 - Memory summaries, semantic indexing, retrieval
+
+### What Was Built
+
+#### Backend (`second_brain.rs` — new module, ~450 lines)
+- **SessionSummary** — Auto-summarizes sessions: title, summary text, key actions, files touched, tags, token count
+- **Decision records** — Architectural Decision Records (ADR): title, context, decision, rationale, tags, status (Active/Superseded/Deprecated)
+- **Semantic index** — Keyword-based BM25-inspired search with IDF scoring, recency boost, snippet extraction
+- **Keyword extraction** — Tokenization + stopword removal (100+ stopwords)
+- **Compressed context** — `get_compressed_context()` generates token-budgeted context for prompt injection (decisions first, then summaries, then compressed memory)
+- **Auto-indexing** — Saving summaries/decisions automatically adds to semantic index
+- **Note indexing** — Free-form notes can be indexed with tags
+- **Brain stats** — Overview of total summaries, decisions, index entries, memory size, projects tracked
+
+#### Backend Commands (9 new in lib.rs)
+- `brain_search` — Keyword search across all indexed content
+- `brain_stats` — Workspace intelligence overview
+- `brain_save_decision` — Record architectural decision
+- `brain_list_decisions` — List all decisions (filterable by project)
+- `brain_delete_decision` — Delete a decision
+- `brain_list_summaries` — List session summaries
+- `brain_delete_summary` — Delete a summary
+- `brain_get_context` — Get compressed context for prompt injection
+- `brain_index_note` — Index a free-form note
+
+#### Frontend (`BrainPanel.tsx` — new component, ~400 lines)
+- **Overview tab** — 4-stat grid (summaries, decisions, index entries, memory size), projects tracked, recent tags, add note form
+- **Search tab** — Full-text search bar with results showing type, score, snippet, metadata
+- **Decisions tab** — Record new decisions (title/context/decision/rationale/tags form), list with status badges, delete
+- **Summaries tab** — View session summaries with key actions, files touched, tags, token count, delete
+
+#### Frontend Types (4 new interfaces)
+- `SessionSummaryData`, `DecisionData`, `BrainSearchResult`, `BrainStats`
+
+#### App Integration
+- "Brain" button in toolbar opens BrainPanel
+- BrainPanel receives projectPath for project-scoped queries
+
+### Storage Structure
+```
+~/.claude/workspace-brain/
+├── summaries/        # Session summary JSON files
+├── decisions/        # Decision record JSON files
+└── semantic-index.json  # Keyword index for search
+```
+
+### Success Criteria
+- [x] Workspace persists summaries, decisions, and indexed notes
+- [x] Semantic search retrieves relevant content with BM25 scoring
+- [x] Compressed context generation for token-efficient prompt injection
+- [x] Full CRUD UI for decisions and summaries
+
+### Build Status
+- `cargo check` — 0 errors (6 warnings: unused functions from earlier phases)
+- `npx tsc --noEmit` — 0 errors
+- `npx vite build` — 53 modules, clean
 
 ---
 
@@ -250,14 +305,15 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `session_manager.rs` | 1+4 | Session lifecycle + snapshots + replay + heartbeat |
 | `approval_manager.rs` | 1 | Tool risk classification |
 | `memory.rs` | 1 | Memory read/write/tree |
-| `lib.rs` | 1-4 | Tauri commands + app entry |
+| `second_brain.rs` | 5 | Summaries, decisions, semantic index, retrieval |
+| `lib.rs` | 1-5 | Tauri commands + app entry |
 
 ### Frontend (src/)
 | File | Phase | Purpose |
 |------|-------|---------|
-| `types.ts` | 2+4 | Shared types, events, timeline, session |
+| `types.ts` | 2+4+5 | Shared types, events, timeline, session, brain |
 | `hooks/useEventStore.ts` | 2+4 | Centralized reducer state + replay |
-| `App.tsx` | 2-4 | Main app wiring |
+| `App.tsx` | 2-5 | Main app wiring |
 | `components/timeline/TimelineView.tsx` | 2-3 | Scrollable timeline |
 | `components/timeline/TimelineEntry.tsx` | 2-3 | Polymorphic entry renderer |
 | `components/timeline/MessageBubble.tsx` | 2 | Markdown renderer |
@@ -266,7 +322,8 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `components/approvals/ApprovalModal.tsx` | 2 | Approval dialog |
 | `components/approvals/FileDiffModal.tsx` | 2-3 | Diff viewer + syntax highlighting |
 | `components/sessions/SessionSidebar.tsx` | 2+4 | Session history + restore |
+| `components/memory/BrainPanel.tsx` | 5 | Second Brain UI (search, decisions, summaries) |
 | `components/Dashboard.tsx` | 2 | Metrics + analytics |
 | `components/Toast.tsx` | 2 | Notifications |
 | `components/InputBar.tsx` | 2 | Slash command input |
-| `index.css` | 2-4 | All CSS (~2900 lines) |
+| `index.css` | 2-5 | All CSS (~3300 lines) |

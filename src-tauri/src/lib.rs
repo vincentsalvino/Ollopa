@@ -3,6 +3,7 @@ mod claude_events;
 mod claude_process;
 mod event_bus;
 mod memory;
+mod second_brain;
 mod session_manager;
 
 use std::sync::Arc;
@@ -160,6 +161,81 @@ fn check_env_vars() -> Result<(), String> {
     }
 }
 
+// ═══════ Second Brain ═══════
+
+#[tauri::command]
+fn brain_search(query: String, project_path: Option<String>) -> Vec<second_brain::SearchResult> {
+    second_brain::search(&query, project_path.as_deref(), 20)
+}
+
+#[tauri::command]
+fn brain_stats() -> second_brain::BrainStats {
+    second_brain::get_brain_stats()
+}
+
+#[tauri::command]
+fn brain_save_decision(
+    title: String,
+    context: String,
+    decision: String,
+    rationale: String,
+    tags: Vec<String>,
+    project_path: Option<String>,
+) -> Result<(), String> {
+    let d = second_brain::Decision {
+        id: format!("dec-{}", std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+        project_path,
+        title,
+        context,
+        decision,
+        rationale,
+        tags,
+        status: second_brain::DecisionStatus::Active,
+    };
+    second_brain::save_decision(&d)
+}
+
+#[tauri::command]
+fn brain_list_decisions(project_path: Option<String>) -> Vec<second_brain::Decision> {
+    second_brain::list_decisions(project_path.as_deref())
+}
+
+#[tauri::command]
+fn brain_delete_decision(id: String) -> Result<(), String> {
+    second_brain::delete_decision(&id)
+}
+
+#[tauri::command]
+fn brain_list_summaries(project_path: Option<String>) -> Vec<second_brain::SessionSummary> {
+    second_brain::list_summaries(project_path.as_deref())
+}
+
+#[tauri::command]
+fn brain_delete_summary(session_id: String) -> Result<(), String> {
+    second_brain::delete_summary(&session_id)
+}
+
+#[tauri::command]
+fn brain_get_context(project_path: Option<String>, max_tokens: Option<usize>) -> String {
+    second_brain::get_compressed_context(project_path.as_deref(), max_tokens.unwrap_or(2000))
+}
+
+#[tauri::command]
+fn brain_index_note(
+    content: String,
+    project_path: Option<String>,
+    tags: Vec<String>,
+) -> Result<(), String> {
+    second_brain::index_note(&content, project_path.as_deref(), &tags)
+}
+
 // ═══════ Approval ═══════
 
 #[tauri::command]
@@ -206,6 +282,15 @@ pub fn run() {
             get_project_tree,
             check_env_vars,
             classify_tool_risk,
+            brain_search,
+            brain_stats,
+            brain_save_decision,
+            brain_list_decisions,
+            brain_delete_decision,
+            brain_list_summaries,
+            brain_delete_summary,
+            brain_get_context,
+            brain_index_note,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

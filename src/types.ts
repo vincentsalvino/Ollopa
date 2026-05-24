@@ -243,6 +243,57 @@ export interface SessionSnapshot {
   events: PersistedEvent[];
 }
 
+// ═══════ Second Brain Types ═══════
+
+export interface SessionSummaryData {
+  session_id: string;
+  project_path: string | null;
+  created_at: number;
+  title: string;
+  summary: string;
+  key_actions: string[];
+  files_touched: string[];
+  decisions_made: string[];
+  tags: string[];
+  token_count: number;
+}
+
+export interface DecisionData {
+  id: string;
+  created_at: number;
+  project_path: string | null;
+  title: string;
+  context: string;
+  decision: string;
+  rationale: string;
+  tags: string[];
+  status: "Active" | "Superseded" | "Deprecated";
+}
+
+export interface BrainSearchResult {
+  entry: {
+    id: string;
+    source_type: string;
+    source_id: string;
+    content: string;
+    keywords: string[];
+    project_path: string | null;
+    created_at: number;
+    relevance_score: number;
+  };
+  score: number;
+  snippet: string;
+}
+
+export interface BrainStats {
+  total_summaries: number;
+  total_decisions: number;
+  total_index_entries: number;
+  total_memory_bytes: number;
+  projects_tracked: string[];
+  recent_tags: string[];
+}
+
 // ═══════ Toast ═══════
 
 export interface ToastMessage {

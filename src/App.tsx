@@ -10,6 +10,7 @@ import ApprovalModal from "./components/approvals/ApprovalModal";
 import FileDiffModal from "./components/approvals/FileDiffModal";
 import SessionSidebar from "./components/sessions/SessionSidebar";
 import ToolDetailPanel from "./components/tools/ToolDetailPanel";
+import BrainPanel from "./components/memory/BrainPanel";
 import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
@@ -41,6 +42,9 @@ function App() {
 
   // Tool detail panel
   const [viewingTool, setViewingTool] = useState<ToolUseData | null>(null);
+
+  // Brain panel
+  const [showBrainPanel, setShowBrainPanel] = useState(false);
 
   // Env / Status
   const [envWarning, setEnvWarning] = useState<string | null>(null);
@@ -341,6 +345,13 @@ function App() {
             {showCompactWarning && <span className="compact-badge" />}
           </button>
           <button
+            className="toolbar-btn"
+            onClick={() => setShowBrainPanel(true)}
+            title="Workspace intelligence"
+          >
+            Brain
+          </button>
+          <button
             className="toolbar-btn restart-btn"
             onClick={handleRestart}
             title="Restart session"
@@ -436,6 +447,14 @@ function App() {
           onClose={() => setViewingTool(null)}
         />
       )}
+
+      {/* ═══════ Brain Panel ═══════ */}
+      <BrainPanel
+        visible={showBrainPanel}
+        onClose={() => setShowBrainPanel(false)}
+        onToast={addToast}
+        projectPath={projectPath}
+      />
 
       {/* ═══════ Toasts ═══════ */}
       <Toast toasts={toasts} onDismiss={dismissToast} />
