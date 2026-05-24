@@ -119,6 +119,7 @@ impl DirectApiClient {
         })
     }
 
+    #[allow(dead_code)]
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
@@ -273,6 +274,7 @@ impl DirectApiClient {
     }
 
     /// Clear conversation history.
+    #[allow(dead_code)]
     pub fn clear_history(&mut self) {
         self.messages.clear();
     }

@@ -558,6 +558,7 @@ fn route_failover(
 }
 
 /// Save a routing decision for auditing
+#[allow(dead_code)]
 pub fn save_routing_decision(decision: &RoutingDecision) -> Result<(), String> {
     ensure_dirs();
     let json = serde_json::to_string_pretty(decision)
@@ -576,6 +577,7 @@ fn load_health() -> Vec<ProviderHealth> {
 }
 
 /// Update provider health status
+#[allow(dead_code)]
 pub fn update_health(
     provider_id: &str,
     status: HealthStatus,

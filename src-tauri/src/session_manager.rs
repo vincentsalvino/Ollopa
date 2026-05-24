@@ -118,6 +118,15 @@ impl SessionManager {
         };
         let _ = save_snapshot(self.working_dir.as_deref(), &snapshot);
 
+        // Emit session ready status
+        let _ = app_handle.emit(
+            "app-event",
+            AppEvent::StatusUpdate {
+                status: "ready".to_string(),
+                detail: "Session ready. Type a message to begin.".to_string(),
+            },
+        );
+
         // Start heartbeat
         self.start_heartbeat(app_handle.clone());
 
@@ -167,6 +176,7 @@ impl SessionManager {
     }
 
     /// Check if a session is currently active.
+    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
         self.api_client.is_some()
     }
@@ -177,6 +187,7 @@ impl SessionManager {
     }
 
     /// Record an event to the current session's snapshot.
+    #[allow(dead_code)]
     pub fn record_event(&self, event: &AppEvent) {
         if let Some(ref sid) = self.session_id {
             append_event_to_snapshot(self.working_dir.as_deref(), sid, event);
@@ -245,6 +256,7 @@ pub fn save_snapshot(project_path: Option<&str>, snapshot: &SessionSnapshot) -> 
 }
 
 /// Append an event to the session snapshot for replay.
+#[allow(dead_code)]
 fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event: &AppEvent) {
     let path = snapshot_path(project_path, session_id);
     if let Ok(content) = fs::read_to_string(&path) {

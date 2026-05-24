@@ -120,6 +120,7 @@ pub fn list_graphs(project_path: Option<&str>, graph_type: Option<&str>) -> Vec<
     graphs
 }
 
+#[allow(dead_code)]
 pub fn get_graph(graph_id: &str) -> Result<Graph, String> {
     let path = graphs_dir().join(format!("{}.json", graph_id));
     let content =
@@ -134,6 +135,7 @@ pub fn delete_graph(graph_id: &str) -> Result<(), String> {
 
 // ═══════ Timeline CRUD ═══════
 
+#[allow(dead_code)]
 pub fn save_timeline(timeline: &SessionTimelineData) -> Result<(), String> {
     ensure_dirs();
     let path = timelines_dir().join(format!("{}.json", timeline.session_id));
@@ -159,6 +161,7 @@ pub fn list_timelines() -> Vec<SessionTimelineData> {
     timelines
 }
 
+#[allow(dead_code)]
 pub fn delete_timeline(session_id: &str) -> Result<(), String> {
     let path = timelines_dir().join(format!("{}.json", session_id));
     fs::remove_file(&path).map_err(|e| format!("Failed to delete timeline: {}", e))

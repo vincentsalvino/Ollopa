@@ -516,6 +516,7 @@ pub fn complete_task(id: &str, result: &str, success: bool) -> Result<AgentTask,
 }
 
 /// Delete a task
+#[allow(dead_code)]
 pub fn delete_task(id: &str) -> Result<(), String> {
     let path = tasks_dir().join(format!("{}.json", id));
     fs::remove_file(&path).map_err(|e| format!("Failed to delete task: {}", e))

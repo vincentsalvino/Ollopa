@@ -1,6 +1,7 @@
 mod api_client;
 mod approval_manager;
 mod claude_events;
+#[allow(dead_code)]
 mod claude_process;
 mod event_bus;
 mod memory;
