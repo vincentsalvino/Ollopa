@@ -19,6 +19,31 @@ pub struct ClaudeProcess {
     model: Arc<Mutex<String>>,
 }
 
+/// On Windows, find the actual Node.js entry point for the claude CLI.
+/// This bypasses cmd.exe which breaks stdin piping for interactive processes.
+fn find_claude_cli_js() -> Option<String> {
+    let output = std::process::Command::new("where.exe")
+        .arg("claude.cmd")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let paths = String::from_utf8_lossy(&output.stdout);
+    let cmd_path = paths.lines().next()?.trim().to_string();
+    let dir = std::path::Path::new(&cmd_path).parent()?;
+    // npm global layout: prefix/claude.cmd + prefix/node_modules/@anthropic-ai/claude-code/cli.js
+    let cli_js = dir
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code")
+        .join("cli.js");
+    if cli_js.exists() {
+        return Some(cli_js.to_string_lossy().to_string());
+    }
+    None
+}
+
 impl ClaudeProcess {
     /// Spawn `claude --output-format stream-json` and start streaming events.
     pub async fn spawn(
@@ -26,12 +51,20 @@ impl ClaudeProcess {
         working_dir: Option<String>,
         initial_prompt: Option<String>,
     ) -> Result<Self, String> {
-        // On Windows, npm-installed CLIs are .cmd scripts that must be
-        // executed via cmd.exe. On Unix, invoke the binary directly.
+        // On Windows, npm-installed CLIs are .cmd wrappers. Running them through
+        // cmd.exe /C breaks stdin piping for interactive use. Instead, resolve
+        // the actual Node.js entry point and invoke node directly.
         let mut cmd = if cfg!(windows) {
-            let mut c = Command::new("cmd");
-            c.args(["/C", "claude", "--output-format", "stream-json"]);
-            c
+            if let Some(cli_path) = find_claude_cli_js() {
+                let mut c = Command::new("node");
+                c.args([&cli_path, "--output-format", "stream-json"]);
+                c
+            } else {
+                // Fallback: use cmd /C (may have stdin issues)
+                let mut c = Command::new("cmd");
+                c.args(["/C", "claude", "--output-format", "stream-json"]);
+                c
+            }
         } else {
             let mut c = Command::new("claude");
             c.arg("--output-format").arg("stream-json");
