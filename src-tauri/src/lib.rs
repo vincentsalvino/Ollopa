@@ -49,9 +49,25 @@ async fn stop_session(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn send_input(message: String, state: State<'_, AppState>) -> Result<(), String> {
-    let session = state.session.lock().await;
-    session.send_input(&message).await
+async fn send_input(
+    message: String,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    session.send_input(&message, app_handle).await
+}
+
+/// Called by the frontend when it receives a SessionStarted event with claude's session ID.
+/// This stores the ID so subsequent messages use --resume for conversation continuity.
+#[tauri::command]
+async fn set_claude_session_id(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    session.set_claude_session_id(session_id);
+    Ok(())
 }
 
 // ═══════ Project Switcher ═══════
@@ -534,6 +550,7 @@ pub fn run() {
             restart_session,
             stop_session,
             send_input,
+            set_claude_session_id,
             switch_project,
             list_sessions,
             delete_session_by_key,

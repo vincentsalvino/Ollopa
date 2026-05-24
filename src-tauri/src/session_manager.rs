@@ -54,6 +54,8 @@ pub struct SessionManager {
     pub process: Option<ClaudeProcess>,
     pub working_dir: Option<String>,
     pub session_id: Option<String>,
+    /// The Claude CLI's session ID (from stream-json init event) used for --resume
+    pub claude_session_id: Option<String>,
     pub model: String,
     heartbeat_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -64,17 +66,18 @@ impl SessionManager {
             process: None,
             working_dir: None,
             session_id: None,
+            claude_session_id: None,
             model: "unknown".to_string(),
             heartbeat_handle: None,
         }
     }
 
-    /// Start a new Claude session with automatic snapshot creation.
+    /// Initialize a new session (no process spawned yet — waits for first message).
     pub async fn start(
         &mut self,
         app_handle: AppHandle,
         working_dir: Option<String>,
-        initial_prompt: Option<String>,
+        _initial_prompt: Option<String>,
     ) -> Result<(), String> {
         // Kill existing process if any
         if let Some(ref mut proc) = self.process {
@@ -83,19 +86,17 @@ impl SessionManager {
         self.stop_heartbeat();
 
         self.working_dir = working_dir.clone();
+        self.claude_session_id = None;
 
         // Generate session ID
         let sid = format!("session-{}", current_timestamp_ms());
         self.session_id = Some(sid.clone());
 
-        let process =
-            ClaudeProcess::spawn(app_handle.clone(), working_dir.clone(), initial_prompt).await?;
-
         let _ = app_handle.emit(
             "app-event",
             AppEvent::StatusUpdate {
-                status: "starting".to_string(),
-                detail: "Claude process spawned, waiting for initialization...".to_string(),
+                status: "ready".to_string(),
+                detail: "Session ready. Type a message to begin.".to_string(),
             },
         );
 
@@ -120,27 +121,55 @@ impl SessionManager {
         // Start heartbeat
         self.start_heartbeat(app_handle.clone());
 
+        self.process = None;
+        Ok(())
+    }
+
+    /// Send user input: spawns claude -p "message" per turn, using --resume for follow-ups.
+    pub async fn send_input(
+        &mut self,
+        message: &str,
+        app_handle: AppHandle,
+    ) -> Result<(), String> {
+        // Kill previous process if still running (shouldn't be, but just in case)
+        if let Some(ref mut proc) = self.process {
+            let _ = proc.kill().await;
+        }
+
+        let process = ClaudeProcess::spawn(
+            app_handle.clone(),
+            self.working_dir.clone(),
+            Some(message.to_string()),
+            self.claude_session_id.clone(),
+        )
+        .await?;
+
+        let _ = app_handle.emit(
+            "app-event",
+            AppEvent::StatusUpdate {
+                status: "starting".to_string(),
+                detail: "Claude process spawned, waiting for initialization...".to_string(),
+            },
+        );
+
         self.process = Some(process);
         Ok(())
     }
 
-    /// Send user input to the running Claude process.
-    pub async fn send_input(&self, message: &str) -> Result<(), String> {
-        match &self.process {
-            Some(proc) => proc.send_message(message).await,
-            None => Err("No active session".to_string()),
-        }
+    /// Store the Claude CLI session ID (from stream-json init event) for --resume.
+    pub fn set_claude_session_id(&mut self, id: String) {
+        self.claude_session_id = Some(id);
     }
 
     /// Restart the session (kill + spawn new).
     pub async fn restart(
         &mut self,
         app_handle: AppHandle,
-        initial_prompt: Option<String>,
+        _initial_prompt: Option<String>,
     ) -> Result<(), String> {
         let working_dir = self.working_dir.clone();
         self.stop().await?;
-        self.start(app_handle, working_dir, initial_prompt).await
+        self.start(app_handle, working_dir, None).await
     }
 
     /// Stop the current session and finalize snapshot.
@@ -156,6 +185,7 @@ impl SessionManager {
         }
         self.process = None;
         self.session_id = None;
+        self.claude_session_id = None;
         Ok(())
     }
 

@@ -45,43 +45,48 @@ fn find_claude_cli_js() -> Option<String> {
 }
 
 impl ClaudeProcess {
-    /// Spawn `claude --output-format stream-json` and start streaming events.
+    /// Spawn `claude -p "prompt" --output-format stream-json` for a single turn.
+    /// Uses `--resume` with a session ID for follow-up messages in the same conversation.
     pub async fn spawn(
         app_handle: AppHandle,
         working_dir: Option<String>,
-        initial_prompt: Option<String>,
+        prompt: Option<String>,
+        resume_session_id: Option<String>,
     ) -> Result<Self, String> {
-        // On Windows, npm-installed CLIs are .cmd wrappers. Running them through
-        // cmd.exe /C breaks stdin piping for interactive use. Instead, resolve
-        // the actual Node.js entry point and invoke node directly.
+        // On Windows, npm-installed CLIs are .cmd wrappers. Resolve the
+        // actual Node.js entry point to get clean stdin/stdout pipes.
         let mut cmd = if cfg!(windows) {
             if let Some(cli_path) = find_claude_cli_js() {
                 let mut c = Command::new("node");
-                c.args([&cli_path, "--output-format", "stream-json"]);
+                c.arg(&cli_path);
                 c
             } else {
-                // Fallback: use cmd /C (may have stdin issues)
                 let mut c = Command::new("cmd");
-                c.args(["/C", "claude", "--output-format", "stream-json"]);
+                c.args(["/C", "claude"]);
                 c
             }
         } else {
-            let mut c = Command::new("claude");
-            c.arg("--output-format").arg("stream-json");
-            c
+            Command::new("claude")
         };
+
+        // Always use -p for single-turn stream-json mode
+        if let Some(ref p) = prompt {
+            cmd.arg("-p").arg(p);
+        }
+
+        cmd.arg("--output-format").arg("stream-json");
+
+        // Resume previous conversation if we have a session ID
+        if let Some(ref sid) = resume_session_id {
+            cmd.arg("--resume").arg(sid);
+        }
+
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         if let Some(ref dir) = working_dir {
             cmd.current_dir(dir);
-        }
-
-        // If initial prompt provided, pass via --print flag (non-interactive single turn)
-        // Otherwise launch in interactive mode by passing -p with stdin
-        if let Some(ref prompt) = initial_prompt {
-            cmd.arg("-p").arg(prompt);
         }
 
         let mut child = cmd
