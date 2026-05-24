@@ -114,7 +114,10 @@ impl DirectApiClient {
         Ok(Self {
             client: Client::new(),
             config,
-            messages: Vec::new(),
+            messages: vec![ChatMessage {
+                role: "system".to_string(),
+                content: "You are a helpful assistant. Always respond in English unless the user explicitly writes in another language.".to_string(),
+            }],
             session_id,
         })
     }
