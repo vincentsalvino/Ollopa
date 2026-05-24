@@ -406,6 +406,140 @@ export interface RollingSummary {
   created_at: number;
 }
 
+// ═══════ Multi-Agent Types ═══════
+
+export interface AgentDef {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+  capabilities: string[];
+  system_prompt: string;
+  model_preference: string | null;
+  max_tokens: number;
+  created_at: number;
+  is_builtin: boolean;
+}
+
+export type StepStatus = "Pending" | "Running" | "Completed" | "Failed" | "Skipped";
+export type WorkflowStatus = "Draft" | "Running" | "Completed" | "Failed" | "Paused";
+export type TaskPriority = "Low" | "Normal" | "High" | "Critical";
+
+export interface WorkflowStep {
+  id: string;
+  agent_id: string;
+  action: string;
+  input: string;
+  output: string | null;
+  status: StepStatus;
+  started_at: number | null;
+  completed_at: number | null;
+  depends_on: string[];
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  description: string;
+  steps: WorkflowStep[];
+  status: WorkflowStatus;
+  created_at: number;
+  updated_at: number;
+  project_path: string | null;
+}
+
+export interface AgentTask {
+  id: string;
+  agent_id: string;
+  description: string;
+  context: string;
+  priority: TaskPriority;
+  status: StepStatus;
+  result: string | null;
+  created_at: number;
+  completed_at: number | null;
+}
+
+export interface AgentStats {
+  total_agents: number;
+  builtin_agents: number;
+  custom_agents: number;
+  total_workflows: number;
+  active_workflows: number;
+  total_tasks: number;
+  completed_tasks: number;
+}
+
+// ═══════ Provider Router Types ═══════
+
+export type ProviderType = "Claude" | "DeepSeek" | "OpenAI" | "Local" | "Custom";
+export type RoutingStrategy = "CostOptimized" | "QualityFirst" | "LatencyFirst" | "RoundRobin" | "Failover" | "Manual";
+export type HealthStatus = "Healthy" | "Degraded" | "Down" | "Unknown";
+
+export interface ModelConfig {
+  id: string;
+  name: string;
+  max_tokens: number;
+  input_price_per_m: number;
+  output_price_per_m: number;
+  supports_streaming: boolean;
+  supports_tools: boolean;
+  context_window: number;
+}
+
+export interface ProviderDef {
+  id: string;
+  name: string;
+  provider_type: ProviderType;
+  base_url: string | null;
+  models: ModelConfig[];
+  enabled: boolean;
+  priority: number;
+  api_key_env: string | null;
+  created_at: number;
+  is_builtin: boolean;
+}
+
+export interface RouterConfig {
+  strategy: RoutingStrategy;
+  default_provider: string;
+  default_model: string;
+  fallback_provider: string | null;
+  max_retries: number;
+  timeout_ms: number;
+  cost_threshold_usd: number;
+}
+
+export interface RoutingDecision {
+  id: string;
+  timestamp: number;
+  task_type: string;
+  selected_provider: string;
+  selected_model: string;
+  reason: string;
+  estimated_cost: number;
+  fallback_used: boolean;
+}
+
+export interface ProviderHealth {
+  provider_id: string;
+  status: HealthStatus;
+  last_checked: number;
+  avg_latency_ms: number;
+  error_rate: number;
+  requests_today: number;
+}
+
+export interface RouterStats {
+  config: RouterConfig;
+  total_providers: number;
+  enabled_providers: number;
+  total_models: number;
+  total_routing_decisions: number;
+  fallback_count: number;
+  provider_health: ProviderHealth[];
+}
+
 // ═══════ Toast ═══════
 
 export interface ToastMessage {

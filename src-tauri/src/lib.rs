@@ -3,6 +3,8 @@ mod claude_events;
 mod claude_process;
 mod event_bus;
 mod memory;
+mod multi_agent;
+mod provider_router;
 mod second_brain;
 mod session_manager;
 mod token_optimizer;
@@ -364,6 +366,136 @@ fn optimizer_estimate_tokens(text: String) -> usize {
     token_optimizer::estimate_tokens(&text)
 }
 
+// ═══════ Multi-Agent ═══════
+
+#[tauri::command]
+fn agent_list() -> Vec<multi_agent::AgentDef> {
+    multi_agent::list_agents()
+}
+
+#[tauri::command]
+fn agent_save(agent: multi_agent::AgentDef) -> Result<(), String> {
+    multi_agent::save_agent(&agent)
+}
+
+#[tauri::command]
+fn agent_delete(id: String) -> Result<(), String> {
+    multi_agent::delete_agent(&id)
+}
+
+#[tauri::command]
+fn agent_stats() -> multi_agent::AgentStats {
+    multi_agent::get_agent_stats()
+}
+
+#[tauri::command]
+fn agent_route_task(
+    description: String,
+    capabilities: Vec<String>,
+) -> Option<multi_agent::AgentDef> {
+    multi_agent::route_task(&description, &capabilities)
+}
+
+#[tauri::command]
+fn agent_create_task(
+    description: String,
+    context: String,
+    capabilities: Vec<String>,
+    priority: multi_agent::TaskPriority,
+) -> Result<multi_agent::AgentTask, String> {
+    multi_agent::create_task(&description, &context, &capabilities, priority)
+}
+
+#[tauri::command]
+fn agent_list_tasks(agent_id: Option<String>) -> Vec<multi_agent::AgentTask> {
+    multi_agent::list_tasks(agent_id.as_deref())
+}
+
+#[tauri::command]
+fn agent_complete_task(
+    id: String,
+    result: String,
+    success: bool,
+) -> Result<multi_agent::AgentTask, String> {
+    multi_agent::complete_task(&id, &result, success)
+}
+
+#[tauri::command]
+fn agent_create_workflow(
+    name: String,
+    description: String,
+    template: String,
+    project_path: Option<String>,
+) -> Result<multi_agent::Workflow, String> {
+    let steps = match template.as_str() {
+        "code_review" => multi_agent::template_code_review(&description),
+        "feature_dev" => multi_agent::template_feature_dev(&description),
+        _ => return Err(format!("Unknown template: {}", template)),
+    };
+    multi_agent::create_workflow(&name, &description, steps, project_path.as_deref())
+}
+
+#[tauri::command]
+fn agent_list_workflows(project_path: Option<String>) -> Vec<multi_agent::Workflow> {
+    multi_agent::list_workflows(project_path.as_deref())
+}
+
+#[tauri::command]
+fn agent_advance_workflow(
+    id: String,
+    step_id: String,
+    output: String,
+    success: bool,
+) -> Result<multi_agent::Workflow, String> {
+    multi_agent::advance_workflow(&id, &step_id, &output, success)
+}
+
+#[tauri::command]
+fn agent_delete_workflow(id: String) -> Result<(), String> {
+    multi_agent::delete_workflow(&id)
+}
+
+// ═══════ Provider Router ═══════
+
+#[tauri::command]
+fn router_list_providers() -> Vec<provider_router::Provider> {
+    provider_router::list_providers()
+}
+
+#[tauri::command]
+fn router_save_provider(provider: provider_router::Provider) -> Result<(), String> {
+    provider_router::save_provider(&provider)
+}
+
+#[tauri::command]
+fn router_delete_provider(id: String) -> Result<(), String> {
+    provider_router::delete_provider(&id)
+}
+
+#[tauri::command]
+fn router_get_config() -> provider_router::RouterConfig {
+    provider_router::load_config()
+}
+
+#[tauri::command]
+fn router_save_config(config: provider_router::RouterConfig) -> Result<(), String> {
+    provider_router::save_config(&config)
+}
+
+#[tauri::command]
+fn router_route(
+    task_type: String,
+    needs_tools: bool,
+    max_budget: Option<f64>,
+) -> provider_router::RoutingDecision {
+    provider_router::route(&task_type, needs_tools, max_budget)
+}
+
+#[tauri::command]
+fn router_stats() -> provider_router::RouterStats {
+    provider_router::get_router_stats()
+}
+
 // ═══════ Approval ═══════
 
 #[tauri::command]
@@ -439,6 +571,25 @@ pub fn run() {
             optimizer_list_rolling,
             optimizer_clear_data,
             optimizer_estimate_tokens,
+            agent_list,
+            agent_save,
+            agent_delete,
+            agent_stats,
+            agent_route_task,
+            agent_create_task,
+            agent_list_tasks,
+            agent_complete_task,
+            agent_create_workflow,
+            agent_list_workflows,
+            agent_advance_workflow,
+            agent_delete_workflow,
+            router_list_providers,
+            router_save_provider,
+            router_delete_provider,
+            router_get_config,
+            router_save_config,
+            router_route,
+            router_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

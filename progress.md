@@ -421,12 +421,45 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 
 ---
 
-## Phase 8 — Future Enhancements (Optional)
+## Phase 8 — Future Enhancements
 
-**Status: NOT STARTED**
+**Status: COMPLETE**
 
 ### Goals
-- Multi-agent workflows, provider routing, MCP integrations
+- Lightweight multi-agent workflows
+- Provider routing with cost/quality/failover strategies
+- Agent registry, task routing, workflow orchestration
+
+### What Was Built
+
+#### Multi-Agent System (`multi_agent.rs` — ~480 lines)
+- **Agent Registry** — 5 built-in agents (Coder, Reviewer, Architect, Tester, Documenter) + custom agent support
+- **Capability-Based Routing** — Route tasks to best-fit agent by capabilities and keyword matching
+- **Workflow Orchestration** — DAG-based workflows with dependency tracking, step advancement, status propagation
+- **Task Management** — Create, list, complete tasks with priority levels (Low/Normal/High/Critical)
+- **Workflow Templates** — "Code Review" (3 steps) and "Feature Dev" (5 steps)
+
+#### Provider Router (`provider_router.rs` — ~550 lines)
+- **Provider Registry** — 3 built-in providers (DeepSeek, Claude, OpenAI) with model configs
+- **Routing Strategies** — CostOptimized, QualityFirst, Failover, LatencyFirst, RoundRobin, Manual
+- **Health Tracking** — Provider health status, latency averaging, error rate tracking
+- **Routing Decisions** — Auditable decision records with reason, estimated cost, fallback tracking
+
+#### Backend Commands (19 new in lib.rs)
+- Multi-Agent: `agent_list`, `agent_save`, `agent_delete`, `agent_stats`, `agent_route_task`, `agent_create_task`, `agent_list_tasks`, `agent_complete_task`, `agent_create_workflow`, `agent_list_workflows`, `agent_advance_workflow`, `agent_delete_workflow`
+- Provider Router: `router_list_providers`, `router_save_provider`, `router_delete_provider`, `router_get_config`, `router_save_config`, `router_route`, `router_stats`
+
+#### Frontend (`AgentPanel.tsx` — ~530 lines, 5-tab UI)
+- **Agents Tab** — Agent card grid with capabilities and token limits
+- **Workflows Tab** — Create from templates, view step pipeline with status
+- **Tasks Tab** — Task list with agent assignment, priority, status
+- **Providers Tab** — Provider cards with model pricing, toggle enable/disable
+- **Router Tab** — Strategy config, live route testing, stats + provider health
+
+### Build Status
+- `cargo check` — 0 errors
+- `npx tsc --noEmit` — 0 errors
+- `npx vite build` — 60 modules, clean
 
 ---
 
@@ -444,14 +477,16 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `second_brain.rs` | 5 | Summaries, decisions, semantic index, retrieval |
 | `visual_memory.rs` | 6 | Graph data models, auto-generation, persistence |
 | `token_optimizer.rs` | 7 | Token budgeting, rolling summaries, caching, chunking |
-| `lib.rs` | 1-7 | Tauri commands + app entry |
+| `multi_agent.rs` | 8 | Agent registry, task routing, workflow orchestration |
+| `provider_router.rs` | 8 | Provider registry, model routing, failover strategies |
+| `lib.rs` | 1-8 | Tauri commands + app entry |
 
 ### Frontend (src/)
 | File | Phase | Purpose |
 |------|-------|---------|
-| `types.ts` | 2+4+5+6+7 | Shared types, events, timeline, session, brain, graphs, optimizer |
+| `types.ts` | 2+4+5+6+7+8 | Shared types, events, timeline, session, brain, graphs, optimizer, agents, router |
 | `hooks/useEventStore.ts` | 2+4 | Centralized reducer state + replay |
-| `App.tsx` | 2-7 | Main app wiring |
+| `App.tsx` | 2-8 | Main app wiring |
 | `components/timeline/TimelineView.tsx` | 2-3 | Scrollable timeline |
 | `components/timeline/TimelineEntry.tsx` | 2-3 | Polymorphic entry renderer |
 | `components/timeline/MessageBubble.tsx` | 2 | Markdown renderer |
@@ -467,7 +502,8 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `components/graphs/SessionTimelineView.tsx` | 6 | Session event timeline with drill-down |
 | `components/graphs/NodeDetail.tsx` | 6 | Node metadata detail panel |
 | `components/optimizer/TokenPanel.tsx` | 7 | Token optimizer UI (budget, cache, rolling, context preview) |
+| `components/agents/AgentPanel.tsx` | 8 | Multi-agent workflows + provider routing UI |
 | `components/Dashboard.tsx` | 2 | Metrics + analytics |
 | `components/Toast.tsx` | 2 | Notifications |
 | `components/InputBar.tsx` | 2 | Slash command input |
-| `index.css` | 2-7 | All CSS (~4300 lines) |
+| `index.css` | 2-8 | All CSS (~4900 lines) |
