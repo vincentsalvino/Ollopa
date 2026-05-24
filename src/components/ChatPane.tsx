@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import type { Message, ApprovalData } from "../App";
-import PinnedPrompts from "./PinnedPrompts";
+import type { Message, ToolEvent } from "../App";
 
 interface SlashCommand {
   cmd: string;
@@ -10,20 +9,18 @@ interface SlashCommand {
 interface ChatPaneProps {
   messages: Message[];
   currentStream: string;
-  approval: ApprovalData | null;
+  activeTools: ToolEvent[];
   isTyping: boolean;
   slashCommands: SlashCommand[];
-  onApproval: (approved: boolean) => void;
   onSend: (input: string) => void;
 }
 
 function ChatPane({
   messages,
   currentStream,
-  approval,
+  activeTools,
   isTyping,
   slashCommands,
-  onApproval,
   onSend,
 }: ChatPaneProps) {
   const [input, setInput] = useState("");
@@ -35,7 +32,7 @@ function ChatPane({
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, currentStream, isTyping]);
+  }, [messages, currentStream, isTyping, activeTools]);
 
   const filteredCommands = slashCommands.filter(
     (c) => c.cmd.includes(slashFilter) || c.desc.toLowerCase().includes(slashFilter)
@@ -53,7 +50,6 @@ function ChatPane({
       setShowSlash(false);
     }
 
-    // Auto-resize
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       textareaRef.current.style.height =
@@ -139,6 +135,9 @@ function ChatPane({
     });
   };
 
+  // Active tool cards (running tools)
+  const runningTools = activeTools.filter((t) => t.status === "started");
+
   return (
     <div className="chat-pane">
       <div className="messages-container">
@@ -146,6 +145,22 @@ function ChatPane({
           <div key={msg.id} className={`message ${msg.role}`}>
             <div className={`bubble ${msg.role}`}>{renderContent(msg.content)}</div>
             <div className="message-meta">{msg.timestamp}</div>
+          </div>
+        ))}
+
+        {/* Active tool cards */}
+        {runningTools.map((tool) => (
+          <div key={tool.tool_use_id} className="tool-card">
+            <div className="tool-card-header">
+              <span className="tool-card-icon">&#9881;</span>
+              <span className="tool-card-name">{tool.tool_name}</span>
+              <span className="tool-card-status running">running</span>
+            </div>
+            {tool.input && Object.keys(tool.input).length > 0 && (
+              <div className="tool-card-input">
+                <pre>{JSON.stringify(tool.input, null, 2)}</pre>
+              </div>
+            )}
           </div>
         ))}
 
@@ -169,62 +184,36 @@ function ChatPane({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Approval Modal */}
-      {approval && (
-        <div className="approval-overlay">
-          <div className="approval-modal">
-            <h3 className="approval-title">&#9888;&#65039; Approval Required</h3>
-            <div className="risk-label">{approval.risk_label}</div>
-            <pre className="approval-command">{approval.command}</pre>
-            <div className="approval-buttons">
-              <button className="btn-approve" onClick={() => onApproval(true)}>
-                Approve
-              </button>
-              <button className="btn-deny" onClick={() => onApproval(false)}>
-                Deny
-              </button>
+      {/* Slash command dropdown */}
+      {showSlash && (
+        <div className="slash-dropdown">
+          {filteredCommands.map((c, i) => (
+            <div
+              key={c.cmd}
+              className={`slash-item ${i === selectedIdx ? "selected" : ""}`}
+              onClick={() => selectSlash(c.cmd)}
+            >
+              <span className="slash-cmd">{c.cmd}</span>
+              <span className="slash-desc">{c.desc}</span>
             </div>
-          </div>
+          ))}
         </div>
       )}
 
-      {/* Pinned Prompts */}
-      <PinnedPrompts onSend={onSend} />
-
-      {/* Input Area */}
-      <div className="input-wrapper">
-        {showSlash && filteredCommands.length > 0 && (
-          <div className="slash-dropdown">
-            {filteredCommands.map((cmd, i) => (
-              <div
-                key={cmd.cmd}
-                className={`slash-item ${i === selectedIdx ? "active" : ""}`}
-                onClick={() => selectSlash(cmd.cmd)}
-              >
-                <span className="slash-cmd">{cmd.cmd}</span>
-                <span className="slash-desc">{cmd.desc}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="input-bar">
-          <textarea
-            ref={textareaRef}
-            className="chat-input"
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeydown}
-            placeholder="Type a message... (/ for commands)"
-            rows={1}
-            autoFocus
-          />
-          <button className="send-btn" onClick={handleSubmit}>
-            &#9654;
-          </button>
-        </div>
-        <div className="keyboard-hint">
-          Enter to send &middot; Shift+Enter for newline &middot; / for commands
-        </div>
+      {/* Input area */}
+      <div className="input-area">
+        <textarea
+          ref={textareaRef}
+          className="chat-input"
+          value={input}
+          onChange={handleInputChange}
+          onKeyDown={handleKeydown}
+          placeholder="Ask Claude anything... (/ for commands)"
+          rows={1}
+        />
+        <button className="send-btn" onClick={handleSubmit} disabled={!input.trim()}>
+          &#9654;
+        </button>
       </div>
     </div>
   );

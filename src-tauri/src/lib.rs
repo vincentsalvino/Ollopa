@@ -1,112 +1,89 @@
+mod approval_manager;
+mod claude_events;
+mod claude_process;
+mod event_bus;
 mod memory;
-mod pty;
+mod session_manager;
 
-use parking_lot::Mutex;
 use std::sync::Arc;
 use tauri::{Manager, State};
+use tokio::sync::Mutex;
 
 struct AppState {
-    pty_session: Arc<Mutex<Option<pty::PtySession>>>,
-    working_dir: Arc<Mutex<Option<String>>>,
-}
-
-// ═══════ Helper ═══════
-
-fn spawn_new_session(
-    app_handle: &tauri::AppHandle,
-    working_dir: Option<&str>,
-) -> Result<pty::PtySession, String> {
-    let initial = memory::build_initial_injection(working_dir);
-    pty::PtySession::spawn(app_handle.clone(), initial, working_dir)
-}
-
-// ═══════ HIGH 1: Project Switcher ═══════
-
-#[tauri::command]
-fn switch_project(path: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut dir = state.working_dir.lock();
-    *dir = Some(path);
-    Ok(())
+    session: Arc<Mutex<session_manager::SessionManager>>,
+    event_bus: Arc<event_bus::EventBus>,
 }
 
 // ═══════ Session Management ═══════
 
 #[tauri::command]
-fn start_session(app_handle: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let dir = state.working_dir.lock().clone();
-    let session = spawn_new_session(&app_handle, dir.as_deref())?;
-    let mut guard = state.pty_session.lock();
-    *guard = Some(session);
-    Ok(())
-}
-
-// ═══════ HIGH 2: Session Restart ═══════
-
-#[tauri::command]
-fn restart_session(
+async fn start_session(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // Drop old session
-    {
-        let mut guard = state.pty_session.lock();
-        *guard = None;
-    }
-    // Spawn new one
-    let dir = state.working_dir.lock().clone();
-    let session = spawn_new_session(&app_handle, dir.as_deref())?;
-    let mut guard = state.pty_session.lock();
-    *guard = Some(session);
-    Ok(())
-}
-
-// ═══════ Input / Approval ═══════
-
-#[tauri::command]
-fn send_input(input: String, state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state.pty_session.lock();
-    match guard.as_ref() {
-        Some(session) => session.write_input(&input),
-        None => Err("No active session".to_string()),
-    }
+    let mut session = state.session.lock().await;
+    state.event_bus.clear_history().await;
+    let working_dir = session.working_dir.clone();
+    session.start(app_handle, working_dir, None).await
 }
 
 #[tauri::command]
-fn respond_approval(approved: bool, state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state.pty_session.lock();
-    match guard.as_ref() {
-        Some(session) => {
-            session.respond_approval(approved);
-            Ok(())
-        }
-        None => Err("No active session".to_string()),
-    }
+async fn restart_session(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    state.event_bus.clear_history().await;
+    session.restart(app_handle, None).await
 }
 
 #[tauri::command]
-fn approve_plan(state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state.pty_session.lock();
-    match guard.as_ref() {
-        Some(session) => {
-            session.approve_plan();
-            Ok(())
-        }
-        None => Err("No active session".to_string()),
-    }
+async fn stop_session(state: State<'_, AppState>) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    session.stop().await
 }
 
-// ═══════ HIGH 3: Deny Plan ═══════
+#[tauri::command]
+async fn send_input(message: String, state: State<'_, AppState>) -> Result<(), String> {
+    let session = state.session.lock().await;
+    session.send_input(&message).await
+}
+
+// ═══════ Project Switcher ═══════
 
 #[tauri::command]
-fn deny_plan(state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state.pty_session.lock();
-    match guard.as_ref() {
-        Some(session) => {
-            session.deny_plan();
-            Ok(())
-        }
-        None => Err("No active session".to_string()),
-    }
+async fn switch_project(
+    path: String,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    session.set_working_dir(path);
+    state.event_bus.clear_history().await;
+    session.restart(app_handle, None).await
+}
+
+// ═══════ Session History ═══════
+
+#[tauri::command]
+fn list_sessions() -> Vec<session_manager::SessionMeta> {
+    session_manager::list_sessions()
+}
+
+#[tauri::command]
+fn delete_session_by_key(key: String) -> Result<(), String> {
+    session_manager::delete_snapshot(&key)
+}
+
+// ═══════ Event History (for session recovery) ═══════
+
+#[tauri::command]
+async fn get_recent_events(
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<event_bus::TimestampedEvent>, String> {
+    let events = state.event_bus.recent_events(limit.unwrap_or(100)).await;
+    Ok(events)
 }
 
 // ═══════ Cost / Memory ═══════
@@ -129,8 +106,6 @@ fn save_memory(entry: String) -> Result<(), String> {
     memory::append_memory(&entry)
 }
 
-// ═══════ MED 7: Memory Editor ═══════
-
 #[tauri::command]
 fn get_full_memory() -> String {
     memory::read_memory_full()
@@ -141,28 +116,45 @@ fn write_full_memory(content: String) -> Result<(), String> {
     memory::write_memory_full(&content)
 }
 
-// ═══════ MED 9: Env Var Check ═══════
+#[tauri::command]
+fn get_project_tree(path: Option<String>) -> String {
+    match path {
+        Some(p) => memory::read_project_tree(&p),
+        None => String::new(),
+    }
+}
+
+// ═══════ Env Var Check ═══════
 
 #[tauri::command]
 fn check_env_vars() -> Result<(), String> {
-    let base_url = std::env::var("ANTHROPIC_BASE_URL").ok();
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .or_else(|_| std::env::var("ANTHROPIC_KEY"))
-        .ok();
+    // With stream-json architecture, Claude CLI handles its own auth.
+    // We just verify the CLI is available.
+    match std::process::Command::new("claude")
+        .arg("--version")
+        .output()
+    {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => Err(format!(
+            "claude CLI returned error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )),
+        Err(e) => Err(format!(
+            "claude CLI not found. Install Claude Code first. Error: {}",
+            e
+        )),
+    }
+}
 
-    let mut missing = Vec::new();
-    if base_url.is_none() {
-        missing.push("ANTHROPIC_BASE_URL");
-    }
-    if api_key.is_none() {
-        missing.push("ANTHROPIC_API_KEY");
-    }
+// ═══════ Approval ═══════
 
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("Missing: {}", missing.join(", ")))
-    }
+#[tauri::command]
+fn classify_tool_risk(
+    tool_name: String,
+    input: serde_json::Value,
+) -> (String, String) {
+    let (risk, label) = approval_manager::classify_risk(&tool_name, &input);
+    (format!("{:?}", risk), label)
 }
 
 // ═══════ App Entry ═══════
@@ -172,26 +164,32 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let event_bus = Arc::new(event_bus::EventBus::new());
+            let session = Arc::new(Mutex::new(session_manager::SessionManager::new()));
+
             app.manage(AppState {
-                pty_session: Arc::new(Mutex::new(None)),
-                working_dir: Arc::new(Mutex::new(None)),
+                session,
+                event_bus,
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             start_session,
             restart_session,
-            switch_project,
+            stop_session,
             send_input,
-            respond_approval,
-            approve_plan,
-            deny_plan,
+            switch_project,
+            list_sessions,
+            delete_session_by_key,
+            get_recent_events,
             get_token_cost,
             get_memory_data,
             save_memory,
             get_full_memory,
             write_full_memory,
+            get_project_tree,
             check_env_vars,
+            classify_tool_risk,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
