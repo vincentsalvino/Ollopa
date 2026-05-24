@@ -149,10 +149,16 @@ fn get_project_tree(path: Option<String>) -> String {
 fn check_env_vars() -> Result<(), String> {
     // With stream-json architecture, Claude CLI handles its own auth.
     // We just verify the CLI is available.
-    match std::process::Command::new("claude")
-        .arg("--version")
-        .output()
-    {
+    let output_result = if cfg!(windows) {
+        std::process::Command::new("cmd")
+            .args(["/C", "claude", "--version"])
+            .output()
+    } else {
+        std::process::Command::new("claude")
+            .arg("--version")
+            .output()
+    };
+    match output_result {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(format!(
             "claude CLI returned error: {}",

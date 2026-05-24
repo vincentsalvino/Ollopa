@@ -26,10 +26,18 @@ impl ClaudeProcess {
         working_dir: Option<String>,
         initial_prompt: Option<String>,
     ) -> Result<Self, String> {
-        let mut cmd = Command::new("claude");
-        cmd.arg("--output-format")
-            .arg("stream-json")
-            .stdin(Stdio::piped())
+        // On Windows, npm-installed CLIs are .cmd scripts that must be
+        // executed via cmd.exe. On Unix, invoke the binary directly.
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "claude", "--output-format", "stream-json"]);
+            c
+        } else {
+            let mut c = Command::new("claude");
+            c.arg("--output-format").arg("stream-json");
+            c
+        };
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -42,9 +50,6 @@ impl ClaudeProcess {
         if let Some(ref prompt) = initial_prompt {
             cmd.arg("-p").arg(prompt);
         }
-
-        // Remove conflicting auth token
-        cmd.env_remove("ANTHROPIC_AUTH_TOKEN");
 
         let mut child = cmd
             .spawn()
