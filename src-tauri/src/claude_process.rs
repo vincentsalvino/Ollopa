@@ -74,7 +74,7 @@ impl ClaudeProcess {
             cmd.arg("-p").arg(p);
         }
 
-        cmd.arg("--output-format").arg("stream-json");
+        cmd.arg("--output-format").arg("stream-json").arg("--verbose");
 
         // Resume previous conversation if we have a session ID
         if let Some(ref sid) = resume_session_id {
