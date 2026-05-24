@@ -17,6 +17,7 @@ pub struct SessionSnapshot {
     pub status: SessionStatus,
     pub cost_usd: f64,
     pub duration_ms: u64,
+    pub title: Option<String>,
     pub events: Vec<PersistedEvent>,
 }
 
@@ -114,6 +115,7 @@ impl SessionManager {
             status: SessionStatus::Active,
             cost_usd: 0.0,
             duration_ms: 0,
+            title: None,
             events: Vec::new(),
         };
         let _ = save_snapshot(self.working_dir.as_deref(), &snapshot);
@@ -139,6 +141,11 @@ impl SessionManager {
         message: &str,
         app_handle: AppHandle,
     ) -> Result<(), String> {
+        // Set session title from first user message
+        if let Some(ref sid) = self.session_id {
+            set_session_title_if_empty(self.working_dir.as_deref(), sid, message);
+        }
+
         match &mut self.api_client {
             Some(client) => client.send_message(message, &app_handle).await,
             None => {
@@ -283,6 +290,27 @@ fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event:
     }
 }
 
+/// Set the session title from the first user message (only if not yet set).
+fn set_session_title_if_empty(project_path: Option<&str>, session_id: &str, message: &str) {
+    let path = snapshot_path(project_path, session_id);
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(mut snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+            if snapshot.title.is_none() {
+                // Truncate to reasonable length for display
+                let title = if message.len() > 60 {
+                    format!("{}...", &message[..57])
+                } else {
+                    message.to_string()
+                };
+                snapshot.title = Some(title);
+                let _ = serde_json::to_string_pretty(&snapshot)
+                    .ok()
+                    .and_then(|json| fs::write(&path, json).ok());
+            }
+        }
+    }
+}
+
 /// Update heartbeat timestamp on a snapshot.
 fn update_heartbeat(project_path: Option<&str>, session_id: &str) {
     let path = snapshot_path(project_path, session_id);
@@ -364,9 +392,12 @@ pub fn list_sessions() -> Vec<SessionMeta> {
                 SessionStatus::Crashed => "crashed",
                 SessionStatus::Recovered => "recovered",
             };
+            let title = snapshot.title.clone().unwrap_or_else(|| {
+                format!("Model: {} | Events: {}", snapshot.model, snapshot.events.len())
+            });
             Some(SessionMeta {
                 key,
-                preview: format!("Model: {} | Events: {}", snapshot.model, snapshot.events.len()),
+                preview: title,
                 message_count: snapshot.message_count as usize,
                 status: status_str.to_string(),
                 project_path: snapshot.project_path.clone(),
