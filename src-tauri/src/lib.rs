@@ -5,6 +5,7 @@ mod event_bus;
 mod memory;
 mod second_brain;
 mod session_manager;
+mod token_optimizer;
 mod visual_memory;
 
 use std::sync::Arc;
@@ -302,6 +303,67 @@ fn visual_list_sessions_for_timeline() -> Vec<session_manager::SessionMeta> {
     session_manager::list_sessions()
 }
 
+// ═══════ Token Optimizer ═══════
+
+#[tauri::command]
+fn optimizer_get_stats() -> token_optimizer::OptimizationStats {
+    token_optimizer::get_optimization_stats()
+}
+
+#[tauri::command]
+fn optimizer_get_budget() -> token_optimizer::TokenBudget {
+    token_optimizer::load_budget()
+}
+
+#[tauri::command]
+fn optimizer_save_budget(budget: token_optimizer::TokenBudget) -> Result<(), String> {
+    token_optimizer::save_budget(&budget)
+}
+
+#[tauri::command]
+fn optimizer_run() -> Result<token_optimizer::OptimizationResult, String> {
+    token_optimizer::run_optimization()
+}
+
+#[tauri::command]
+fn optimizer_build_context(
+    project_path: Option<String>,
+    query: Option<String>,
+) -> String {
+    token_optimizer::build_optimized_context(
+        project_path.as_deref(),
+        query.as_deref(),
+    )
+}
+
+#[tauri::command]
+fn optimizer_record_usage(
+    input_tokens: u64,
+    output_tokens: u64,
+) -> Result<(), String> {
+    token_optimizer::record_usage(input_tokens, output_tokens)
+}
+
+#[tauri::command]
+fn optimizer_prune_cache() -> usize {
+    token_optimizer::prune_cache()
+}
+
+#[tauri::command]
+fn optimizer_list_rolling() -> Vec<token_optimizer::RollingSummary> {
+    token_optimizer::list_rolling_summaries()
+}
+
+#[tauri::command]
+fn optimizer_clear_data() -> Result<(), String> {
+    token_optimizer::clear_optimization_data()
+}
+
+#[tauri::command]
+fn optimizer_estimate_tokens(text: String) -> usize {
+    token_optimizer::estimate_tokens(&text)
+}
+
 // ═══════ Approval ═══════
 
 #[tauri::command]
@@ -367,6 +429,16 @@ pub fn run() {
             visual_delete_graph,
             visual_get_stats,
             visual_list_sessions_for_timeline,
+            optimizer_get_stats,
+            optimizer_get_budget,
+            optimizer_save_budget,
+            optimizer_run,
+            optimizer_build_context,
+            optimizer_record_usage,
+            optimizer_prune_cache,
+            optimizer_list_rolling,
+            optimizer_clear_data,
+            optimizer_estimate_tokens,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -346,6 +346,66 @@ export interface VisualStats {
   graph_types: Record<string, number>;
 }
 
+// ═══════ Token Optimizer Types ═══════
+
+export interface TokenBudget {
+  monthly_budget_usd: number;
+  max_context_tokens: number;
+  max_summary_tokens: number;
+  max_decision_tokens: number;
+  max_memory_tokens: number;
+  rolling_window_days: number;
+  cache_ttl_minutes: number;
+}
+
+export interface MonthUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_cost_usd: number;
+  days_tracked: number;
+  session_count: number;
+}
+
+export interface CacheStats {
+  total_entries: number;
+  active_entries: number;
+  total_hits: number;
+  total_token_savings: number;
+  cache_hit_rate: number;
+}
+
+export interface OptimizationStats {
+  budget: TokenBudget;
+  current_month_usage: MonthUsage;
+  cache_stats: CacheStats;
+  rolling_summary_count: number;
+  total_chunks: number;
+  estimated_savings_pct: number;
+  budget_remaining_usd: number;
+  daily_average_cost: number;
+  projected_monthly_cost: number;
+}
+
+export interface OptimizationResult {
+  summaries_rolled: number;
+  chunks_created: number;
+  cache_entries_pruned: number;
+  tokens_saved: number;
+  new_context_tokens: number;
+}
+
+export interface RollingSummary {
+  id: string;
+  period_start: number;
+  period_end: number;
+  session_count: number;
+  content: string;
+  token_count: number;
+  key_themes: string[];
+  files_touched: string[];
+  created_at: number;
+}
+
 // ═══════ Toast ═══════
 
 export interface ToastMessage {

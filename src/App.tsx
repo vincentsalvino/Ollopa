@@ -12,6 +12,7 @@ import SessionSidebar from "./components/sessions/SessionSidebar";
 import ToolDetailPanel from "./components/tools/ToolDetailPanel";
 import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
+import TokenPanel from "./components/optimizer/TokenPanel";
 import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
@@ -49,6 +50,9 @@ function App() {
 
   // Graph panel
   const [showGraphPanel, setShowGraphPanel] = useState(false);
+
+  // Token optimizer panel
+  const [showTokenPanel, setShowTokenPanel] = useState(false);
 
   // Env / Status
   const [envWarning, setEnvWarning] = useState<string | null>(null);
@@ -363,6 +367,13 @@ function App() {
             Graphs
           </button>
           <button
+            className="toolbar-btn"
+            onClick={() => setShowTokenPanel(true)}
+            title="Token optimization & budgeting"
+          >
+            Tokens
+          </button>
+          <button
             className="toolbar-btn restart-btn"
             onClick={handleRestart}
             title="Restart session"
@@ -471,6 +482,14 @@ function App() {
       <GraphPanel
         visible={showGraphPanel}
         onClose={() => setShowGraphPanel(false)}
+        onToast={addToast}
+        projectPath={projectPath}
+      />
+
+      {/* ═══════ Token Panel ═══════ */}
+      <TokenPanel
+        visible={showTokenPanel}
+        onClose={() => setShowTokenPanel(false)}
         onToast={addToast}
         projectPath={projectPath}
       />

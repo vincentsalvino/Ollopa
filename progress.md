@@ -344,11 +344,80 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 
 ## Phase 7 — Token Optimization
 
-**Status: NOT STARTED**
+**Status: COMPLETE**
 
 ### Goals
 - Minimize DeepSeek costs
-- Retrieval optimization, rolling summaries, token budgeting
+- Retrieval optimization, rolling summaries, token budgeting, semantic chunking, prompt caching
+
+### What Was Built
+
+#### Backend (`token_optimizer.rs` — new module, ~650 lines)
+- **TokenBudget** — Configurable budget with monthly USD limit, max context/summary/decision/memory tokens, rolling window, cache TTL
+- **Rolling Summaries** — Auto-compress older session summaries into weekly digests (merges titles, deduplicates files/tags, caps actions)
+- **Semantic Chunking** — Break large text into paragraph/sentence-boundary chunks within token limits
+- **Prompt Cache** — TTL-based cache for pre-built context strings (avoids recomputing same context within configurable window)
+- **Token Usage Tracking** — Daily usage records with input/output token counts and cost calculation
+- **Budget Management** — Load/save configurable budgets, track monthly spend, project costs
+- **Optimized Context Builder** — Priority-ordered context generation: decisions → rolling summaries → recent summaries → search results → memory, each with dedicated token budget
+- **Optimization Pass** — Single-command optimization: roll up old summaries, chunk large ones, prune expired cache, compute savings
+
+#### Backend Commands (10 new in lib.rs)
+- `optimizer_get_stats` — Comprehensive optimization statistics (budget, usage, cache, savings)
+- `optimizer_get_budget` — Load current token budget configuration
+- `optimizer_save_budget` — Persist budget changes
+- `optimizer_run` — Execute full optimization pass
+- `optimizer_build_context` — Build optimized prompt context with caching
+- `optimizer_record_usage` — Record token usage for budget tracking
+- `optimizer_prune_cache` — Remove expired cache entries
+- `optimizer_list_rolling` — List all rolling summaries
+- `optimizer_clear_data` — Clear all optimization data
+- `optimizer_estimate_tokens` — Estimate token count for arbitrary text
+
+#### Frontend (`src/components/optimizer/TokenPanel.tsx` — ~430 lines)
+- **Overview Tab** — Budget meter with color-coded progress bar, stats grid (daily avg, projected monthly, input/output tokens, savings %, rolling count), one-click optimization
+- **Budget Tab** — Full budget configuration form: monthly USD limit, max context tokens, per-category token limits (summary/decision/memory), rolling window days, cache TTL minutes
+- **Cache Tab** — Cache statistics (total/active entries, hits, token savings, hit rate), prune button
+- **Rolling Summaries Tab** — Browsable list of compressed weekly digests with period dates, session count, content preview, theme tags
+- **Context Preview Tab** — Live preview of what gets injected into prompts, with optional query input, showing token/char counts
+
+#### Frontend Types (7 new interfaces in types.ts)
+- `TokenBudget`, `MonthUsage`, `CacheStats`, `OptimizationStats`, `OptimizationResult`, `RollingSummary`
+
+#### App Integration
+- "Tokens" button in toolbar opens TokenPanel
+- Budget remaining shown as badge in panel header
+
+### Storage Structure
+```
+~/.claude/workspace-brain/optimizer/
+├── budget.json        # Token budget configuration
+├── rolling/           # Rolling summary snapshots
+├── cache/             # Prompt context cache (TTL-based)
+├── chunks/            # Semantic chunks
+└── usage/             # Daily token usage records
+```
+
+### Design Decisions
+- **Priority-ordered context** — Decisions (highest value) → rolling summaries (cheap) → recent summaries → search → memory (lowest priority)
+- **Rolling summaries** — Weekly compression of old sessions reduces token cost for historical context
+- **Prompt caching** — Avoids recomputing identical context within TTL window (default 15 min)
+- **Configurable budgets** — Users set monthly USD limit and per-category token allocations
+- **Approximate token estimation** — Uses 3.5 chars/token heuristic (fast, no external dependency)
+
+### Success Criteria
+- [x] Rolling summaries compress old sessions into weekly digests
+- [x] Token budgeting with configurable monthly USD limit
+- [x] Semantic chunking breaks large text at paragraph/sentence boundaries
+- [x] Prompt caching avoids redundant context computation
+- [x] Optimized context builder respects per-category token budgets
+- [x] Daily usage tracking with cost projections
+- [x] System remains affordable under low monthly budgets
+
+### Build Status
+- `cargo check` — 0 errors (9 warnings: unused functions from earlier phases)
+- `npx tsc --noEmit` — 0 errors
+- `npx vite build` — 59 modules, clean
 
 ---
 
@@ -374,14 +443,15 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `memory.rs` | 1 | Memory read/write/tree |
 | `second_brain.rs` | 5 | Summaries, decisions, semantic index, retrieval |
 | `visual_memory.rs` | 6 | Graph data models, auto-generation, persistence |
-| `lib.rs` | 1-6 | Tauri commands + app entry |
+| `token_optimizer.rs` | 7 | Token budgeting, rolling summaries, caching, chunking |
+| `lib.rs` | 1-7 | Tauri commands + app entry |
 
 ### Frontend (src/)
 | File | Phase | Purpose |
 |------|-------|---------|
-| `types.ts` | 2+4+5+6 | Shared types, events, timeline, session, brain, graphs |
+| `types.ts` | 2+4+5+6+7 | Shared types, events, timeline, session, brain, graphs, optimizer |
 | `hooks/useEventStore.ts` | 2+4 | Centralized reducer state + replay |
-| `App.tsx` | 2-6 | Main app wiring |
+| `App.tsx` | 2-7 | Main app wiring |
 | `components/timeline/TimelineView.tsx` | 2-3 | Scrollable timeline |
 | `components/timeline/TimelineEntry.tsx` | 2-3 | Polymorphic entry renderer |
 | `components/timeline/MessageBubble.tsx` | 2 | Markdown renderer |
@@ -396,7 +466,8 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `components/graphs/DAGView.tsx` | 6 | Directed acyclic graph layout renderer |
 | `components/graphs/SessionTimelineView.tsx` | 6 | Session event timeline with drill-down |
 | `components/graphs/NodeDetail.tsx` | 6 | Node metadata detail panel |
+| `components/optimizer/TokenPanel.tsx` | 7 | Token optimizer UI (budget, cache, rolling, context preview) |
 | `components/Dashboard.tsx` | 2 | Metrics + analytics |
 | `components/Toast.tsx` | 2 | Notifications |
 | `components/InputBar.tsx` | 2 | Slash command input |
-| `index.css` | 2-6 | All CSS (~3900 lines) |
+| `index.css` | 2-7 | All CSS (~4300 lines) |
