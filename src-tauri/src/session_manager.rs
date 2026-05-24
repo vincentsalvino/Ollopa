@@ -18,6 +18,8 @@ pub struct SessionSnapshot {
     pub cost_usd: f64,
     pub duration_ms: u64,
     pub title: Option<String>,
+    #[serde(default)]
+    pub api_session_id: Option<String>,
     pub events: Vec<PersistedEvent>,
 }
 
@@ -105,6 +107,7 @@ impl SessionManager {
         mark_crashed_sessions();
 
         // Create initial snapshot
+        let api_sid = self.api_client.as_ref().map(|c| c.session_id().to_string());
         let snapshot = SessionSnapshot {
             session_id: sid.clone(),
             project_path: self.working_dir.clone(),
@@ -116,6 +119,7 @@ impl SessionManager {
             cost_usd: 0.0,
             duration_ms: 0,
             title: None,
+            api_session_id: api_sid,
             events: Vec::new(),
         };
         let _ = save_snapshot(self.working_dir.as_deref(), &snapshot);
@@ -305,7 +309,7 @@ fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event:
             snapshot.message_count = snapshot
                 .events
                 .iter()
-                .filter(|e| matches!(e.event, AppEvent::AssistantMessage { .. }))
+                .filter(|e| matches!(e.event, AppEvent::AssistantMessage { .. } | AppEvent::UserMessage { .. }))
                 .count() as u32;
 
             if let AppEvent::TokenUsage { cost_usd, .. } = event {
@@ -443,6 +447,7 @@ pub fn list_sessions() -> Vec<SessionMeta> {
 }
 
 /// Load a session's events for replay.
+/// Falls back to conversation messages if snapshot events are empty.
 pub fn load_session_events(session_id: &str) -> Result<Vec<PersistedEvent>, String> {
     let dir = sessions_dir();
     let entries = fs::read_dir(&dir)
@@ -453,13 +458,86 @@ pub fn load_session_events(session_id: &str) -> Result<Vec<PersistedEvent>, Stri
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
                 if snapshot.session_id == session_id {
-                    return Ok(snapshot.events);
+                    // If snapshot has events, use them
+                    if !snapshot.events.is_empty() {
+                        return Ok(snapshot.events);
+                    }
+
+                    // Fallback: try loading from conversation persistence
+                    if let Some(ref api_sid) = snapshot.api_session_id {
+                        if let Some(messages) = crate::api_client::DirectApiClient::load_messages(api_sid) {
+                            return Ok(convert_messages_to_events(&messages, &snapshot.model));
+                        }
+                    }
+
+                    // Second fallback: scan conversation files by timestamp
+                    let ts_str = session_id.strip_prefix("session-").unwrap_or("");
+                    if let Ok(ts) = ts_str.parse::<u64>() {
+                        if let Some(events) = find_conversation_by_timestamp(ts, &snapshot.model) {
+                            return Ok(events);
+                        }
+                    }
+
+                    return Ok(Vec::new());
                 }
             }
         }
     }
 
     Err(format!("Session not found: {}", session_id))
+}
+
+/// Convert ChatMessage list into PersistedEvent list for replay.
+fn convert_messages_to_events(messages: &[crate::api_client::ChatMessage], model: &str) -> Vec<PersistedEvent> {
+    let mut events = Vec::new();
+    let base_ts = current_timestamp_ms();
+    for (i, msg) in messages.iter().enumerate() {
+        // Skip system messages
+        if msg.role == "system" {
+            continue;
+        }
+        let event = if msg.role == "user" {
+            AppEvent::UserMessage {
+                text: msg.content.clone(),
+            }
+        } else {
+            AppEvent::AssistantMessage {
+                text: msg.content.clone(),
+                model: model.to_string(),
+            }
+        };
+        events.push(PersistedEvent {
+            timestamp_ms: base_ts + i as u64,
+            event,
+        });
+    }
+    events
+}
+
+/// Scan conversation files to find one created near the given timestamp.
+fn find_conversation_by_timestamp(session_ts: u64, model: &str) -> Option<Vec<PersistedEvent>> {
+    let conv_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude")
+        .join("conversations");
+    let entries = fs::read_dir(&conv_dir).ok()?;
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(ts_str) = name.strip_prefix("direct-").and_then(|s| s.strip_suffix(".json")) {
+            if let Ok(conv_ts) = ts_str.parse::<u64>() {
+                // Match if timestamps are within 5 seconds of each other
+                if conv_ts.abs_diff(session_ts) < 5000 {
+                    if let Some(messages) = crate::api_client::DirectApiClient::load_messages(&format!("direct-{}", ts_str)) {
+                        if messages.len() > 1 {
+                            return Some(convert_messages_to_events(&messages, model));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Get a session's snapshot for restore.

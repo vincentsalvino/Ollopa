@@ -89,11 +89,13 @@ function App() {
 
   // ═══════ Toast ═══════
 
+  const toastCounter = useState(() => ({ current: 0 }))[0];
   const addToast = useCallback(
     (text: string, type: ToastMessage["type"] = "info") => {
-      setToasts((prev) => [...prev, { id: Date.now(), text, type }]);
+      toastCounter.current += 1;
+      setToasts((prev) => [...prev, { id: toastCounter.current, text, type }]);
     },
-    []
+    [toastCounter]
   );
 
   const dismissToast = useCallback((id: number) => {
@@ -469,7 +471,6 @@ function App() {
         onToast={addToast}
         onRestore={(events: PersistedEvent[]) => {
           replayEvents(events.map((e) => e.event));
-          addToast(`Restored ${events.length} events from session`, "success");
         }}
       />
 
