@@ -5,6 +5,7 @@ mod event_bus;
 mod memory;
 mod second_brain;
 mod session_manager;
+mod visual_memory;
 
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -236,6 +237,71 @@ fn brain_index_note(
     second_brain::index_note(&content, project_path.as_deref(), &tags)
 }
 
+// ═══════ Visual Memory ═══════
+
+#[tauri::command]
+fn visual_build_relationship_graph(
+    project_path: Option<String>,
+) -> visual_memory::Graph {
+    visual_memory::build_relationship_graph(project_path.as_deref())
+}
+
+#[tauri::command]
+fn visual_build_architecture_graph(
+    project_path: Option<String>,
+) -> visual_memory::Graph {
+    visual_memory::build_architecture_graph(project_path.as_deref())
+}
+
+#[tauri::command]
+fn visual_build_workflow_dag(
+    project_path: Option<String>,
+) -> visual_memory::Graph {
+    visual_memory::build_workflow_dag(project_path.as_deref())
+}
+
+#[tauri::command]
+fn visual_build_dependency_graph(
+    project_path: Option<String>,
+) -> visual_memory::Graph {
+    visual_memory::build_dependency_graph(project_path.as_deref())
+}
+
+#[tauri::command]
+fn visual_build_session_timeline(
+    session_id: String,
+) -> Result<visual_memory::SessionTimelineData, String> {
+    visual_memory::build_session_timeline(&session_id)
+}
+
+#[tauri::command]
+fn visual_save_graph(graph: visual_memory::Graph) -> Result<(), String> {
+    visual_memory::save_graph(&graph)
+}
+
+#[tauri::command]
+fn visual_list_graphs(
+    project_path: Option<String>,
+    graph_type: Option<String>,
+) -> Vec<visual_memory::Graph> {
+    visual_memory::list_graphs(project_path.as_deref(), graph_type.as_deref())
+}
+
+#[tauri::command]
+fn visual_delete_graph(graph_id: String) -> Result<(), String> {
+    visual_memory::delete_graph(&graph_id)
+}
+
+#[tauri::command]
+fn visual_get_stats() -> visual_memory::VisualStats {
+    visual_memory::get_visual_stats()
+}
+
+#[tauri::command]
+fn visual_list_sessions_for_timeline() -> Vec<session_manager::SessionMeta> {
+    session_manager::list_sessions()
+}
+
 // ═══════ Approval ═══════
 
 #[tauri::command]
@@ -291,6 +357,16 @@ pub fn run() {
             brain_delete_summary,
             brain_get_context,
             brain_index_note,
+            visual_build_relationship_graph,
+            visual_build_architecture_graph,
+            visual_build_workflow_dag,
+            visual_build_dependency_graph,
+            visual_build_session_timeline,
+            visual_save_graph,
+            visual_list_graphs,
+            visual_delete_graph,
+            visual_get_stats,
+            visual_list_sessions_for_timeline,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

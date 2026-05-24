@@ -267,11 +267,78 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 
 ## Phase 6 — Visual Memory Systems
 
-**Status: NOT STARTED**
+**Status: COMPLETE**
 
 ### Goals
 - Visualize workspace intelligence
-- Relationship graphs, architecture graphs, workflow DAGs
+- Relationship graphs, architecture graphs, workflow DAGs, dependency visualization, session timelines
+
+### What Was Built
+
+#### Backend (`visual_memory.rs` — new module, ~500 lines)
+- **GraphNode / GraphEdge / Graph** — Generic graph primitives with typed nodes, labeled edges, and metadata
+- **TimelineEvent / SessionTimelineData** — Timeline event structures with status, duration, and drill-down detail
+- **build_relationship_graph()** — Auto-generates a force-directed graph from session summaries and decisions, linking sessions → files → tags
+- **build_architecture_graph()** — Extracts components from file paths, links decisions to components via tags
+- **build_workflow_dag()** — Builds a directed acyclic graph from session key_actions, showing tool execution flow
+- **build_dependency_graph()** — Computes file co-modification relationships across sessions, weighted by frequency
+- **build_session_timeline()** — Reconstructs a timeline from persisted session snapshots with tool durations
+- **Graph persistence** — Save/list/delete graph snapshots to `~/.claude/workspace-brain/visual/graphs/`
+- **Visual stats** — Overview of total graphs, timelines, and graph type counts
+- **VisualStats** — Summary struct for dashboard integration
+
+#### Backend Commands (10 new in lib.rs)
+- `visual_build_relationship_graph` — Generate relationship graph from brain data
+- `visual_build_architecture_graph` — Generate architecture graph from decisions + files
+- `visual_build_workflow_dag` — Generate workflow DAG from session actions
+- `visual_build_dependency_graph` — Generate file co-dependency graph
+- `visual_build_session_timeline` — Generate timeline from session snapshot
+- `visual_save_graph` — Persist a graph snapshot
+- `visual_list_graphs` — List saved graphs (filterable by project/type)
+- `visual_delete_graph` — Delete a saved graph
+- `visual_get_stats` — Get visual memory statistics
+- `visual_list_sessions_for_timeline` — List sessions available for timeline view
+
+#### Frontend (`src/components/graphs/` — 5 new files, ~800 lines)
+- **`ForceGraph.tsx`** — Force-directed graph renderer using SVG with physics simulation (repulsion, attraction, center gravity, damping), interactive hover/click, node coloring by type, edge highlighting
+- **`DAGView.tsx`** — Directed acyclic graph layout using BFS-based layer assignment, top-to-bottom flow with arrow markers, session/step node styling
+- **`SessionTimelineView.tsx`** — Vertical timeline with dot-and-rail connector pattern, event icons, duration badges, expandable detail panels
+- **`NodeDetail.tsx`** — Slide-in detail panel showing node metadata, type badge, and properties
+- **`GraphPanel.tsx`** — Full-screen modal with 5-tab navigation (Relationships / Architecture / Workflow DAG / Dependencies / Timeline), auto-sizing via ResizeObserver, graph toolbar with refresh and save, session picker for timeline, legend, stats bar
+
+#### Frontend Types (6 new interfaces in types.ts)
+- `GraphNode`, `GraphEdge`, `GraphData`, `TimelineEvent`, `SessionTimelineData`, `VisualStats`
+
+#### App Integration
+- "Graphs" button in toolbar opens GraphPanel
+- GraphPanel receives projectPath for project-scoped visualizations
+- All graph types auto-generated from existing brain data (no manual entry needed)
+
+### Storage Structure
+```
+~/.claude/workspace-brain/visual/
+├── graphs/        # Saved graph snapshots
+└── timelines/     # Timeline data
+```
+
+### Design Decisions
+- **Pure SVG rendering** — No external graph library (keeps bundle lightweight per architecture spec)
+- **Physics simulation** — Custom force-directed layout with 120-iteration convergence
+- **Auto-generation** — Graphs computed from existing brain data rather than requiring manual creation
+- **Five visualization types** — Covering relationships, architecture, workflows, dependencies, and session timelines
+
+### Success Criteria
+- [x] Relationship graphs show connections between sessions, files, tags, and decisions
+- [x] Architecture graphs extract components from file structure and link to decisions
+- [x] Workflow DAGs show tool execution flow from session key actions
+- [x] Dependency visualization shows file co-modification patterns
+- [x] Session timelines provide drill-down view of individual session events
+- [x] Users can visually navigate project intelligence
+
+### Build Status
+- `cargo check` — 0 errors (9 warnings: unused functions from earlier phases + visual_memory helpers)
+- `npx tsc --noEmit` — 0 errors
+- `npx vite build` — 58 modules, clean
 
 ---
 
@@ -306,14 +373,15 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `approval_manager.rs` | 1 | Tool risk classification |
 | `memory.rs` | 1 | Memory read/write/tree |
 | `second_brain.rs` | 5 | Summaries, decisions, semantic index, retrieval |
-| `lib.rs` | 1-5 | Tauri commands + app entry |
+| `visual_memory.rs` | 6 | Graph data models, auto-generation, persistence |
+| `lib.rs` | 1-6 | Tauri commands + app entry |
 
 ### Frontend (src/)
 | File | Phase | Purpose |
 |------|-------|---------|
-| `types.ts` | 2+4+5 | Shared types, events, timeline, session, brain |
+| `types.ts` | 2+4+5+6 | Shared types, events, timeline, session, brain, graphs |
 | `hooks/useEventStore.ts` | 2+4 | Centralized reducer state + replay |
-| `App.tsx` | 2-5 | Main app wiring |
+| `App.tsx` | 2-6 | Main app wiring |
 | `components/timeline/TimelineView.tsx` | 2-3 | Scrollable timeline |
 | `components/timeline/TimelineEntry.tsx` | 2-3 | Polymorphic entry renderer |
 | `components/timeline/MessageBubble.tsx` | 2 | Markdown renderer |
@@ -323,7 +391,12 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `components/approvals/FileDiffModal.tsx` | 2-3 | Diff viewer + syntax highlighting |
 | `components/sessions/SessionSidebar.tsx` | 2+4 | Session history + restore |
 | `components/memory/BrainPanel.tsx` | 5 | Second Brain UI (search, decisions, summaries) |
+| `components/graphs/GraphPanel.tsx` | 6 | Visual Memory panel (5-tab graph navigation) |
+| `components/graphs/ForceGraph.tsx` | 6 | Force-directed graph SVG renderer |
+| `components/graphs/DAGView.tsx` | 6 | Directed acyclic graph layout renderer |
+| `components/graphs/SessionTimelineView.tsx` | 6 | Session event timeline with drill-down |
+| `components/graphs/NodeDetail.tsx` | 6 | Node metadata detail panel |
 | `components/Dashboard.tsx` | 2 | Metrics + analytics |
 | `components/Toast.tsx` | 2 | Notifications |
 | `components/InputBar.tsx` | 2 | Slash command input |
-| `index.css` | 2-5 | All CSS (~3300 lines) |
+| `index.css` | 2-6 | All CSS (~3900 lines) |

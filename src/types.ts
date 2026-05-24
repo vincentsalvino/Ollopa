@@ -294,6 +294,58 @@ export interface BrainStats {
   recent_tags: string[];
 }
 
+// ═══════ Visual Memory Types ═══════
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  node_type: string;
+  metadata: Record<string, string>;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  label: string;
+  edge_type: string;
+  weight: number;
+}
+
+export interface GraphData {
+  id: string;
+  title: string;
+  graph_type: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  created_at: number;
+  project_path: string | null;
+}
+
+export interface TimelineEvent {
+  id: string;
+  session_id: string;
+  timestamp: number;
+  event_type: string;
+  label: string;
+  detail: string;
+  duration_ms: number | null;
+  status: string;
+}
+
+export interface SessionTimelineData {
+  session_id: string;
+  title: string;
+  events: TimelineEvent[];
+  total_duration_ms: number;
+  created_at: number;
+}
+
+export interface VisualStats {
+  total_graphs: number;
+  total_timelines: number;
+  graph_types: Record<string, number>;
+}
+
 // ═══════ Toast ═══════
 
 export interface ToastMessage {
