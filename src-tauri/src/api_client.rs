@@ -18,6 +18,10 @@ pub struct ApiConfig {
 const INPUT_PRICE_PER_M: f64 = 0.27;
 const OUTPUT_PRICE_PER_M: f64 = 1.10;
 
+fn is_openrouter_url(url: &str) -> bool {
+    url.contains("openrouter.ai")
+}
+
 impl ApiConfig {
     /// Create config from a provider router decision.
     pub fn from_provider(
@@ -346,11 +350,20 @@ impl DirectApiClient {
             max_tokens: 4096,
         };
 
-        let response = self
+        let mut req_builder = self
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+
+        // Add OpenRouter-specific headers
+        if is_openrouter_url(&self.config.base_url) {
+            req_builder = req_builder
+                .header("HTTP-Referer", "https://claude-desktop.app")
+                .header("X-Title", "Claude Desktop");
+        }
+
+        let response = req_builder
             .json(&request)
             .send()
             .await

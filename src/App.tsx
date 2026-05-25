@@ -14,7 +14,7 @@ import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
-import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult } from "./types";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
@@ -84,17 +84,44 @@ function App() {
   // Export
   const [showExportMenu, setShowExportMenu] = useState(false);
 
-  // Available models
+  // Prompt transformer state
+  const [transformSettings, setTransformSettings] = useState<TransformSettings>({
+    enabled: true, default_mode: "AutoEnhance", show_preview: true, web_search_enabled: true,
+  });
+  const [transformPreview, setTransformPreview] = useState<TransformResult | null>(null);
+  const [showTransformPreview, setShowTransformPreview] = useState(false);
+
+  // Web search state
+  const [webSearchSettings, setWebSearchSettings] = useState<WebSearchSettings>({
+    enabled: true, provider: "DuckDuckGo", max_results: 5, auto_trigger: true,
+  });
+  const [webSearchResults, setWebSearchResults] = useState<WebSearchResponse | null>(null);
+  const [isSearching, setIsSearching] = useState(false);
+
+  // Template editor
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+
+  // API Key management
+  const [showApiKeys, setShowApiKeys] = useState(false);
+  const [apiKeys, setApiKeys] = useState<ApiKeyInfo[]>([]);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [keyInput, setKeyInput] = useState("");
+
+  // Available models (grouped by provider)
   const AVAILABLE_MODELS = [
-    "deepseek-chat",
-    "deepseek-coder",
-    "deepseek-reasoner",
-    "claude-sonnet-4-20250514",
-    "claude-3-5-haiku-20241022",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo",
+    { group: "DeepSeek", models: ["deepseek-chat", "deepseek-coder", "deepseek-reasoner"] },
+    { group: "Claude", models: ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"] },
+    { group: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"] },
+    { group: "OpenRouter / Hermes", models: [
+      "nousresearch/hermes-3-llama-3.1-405b",
+      "nousresearch/hermes-3-llama-3.1-70b",
+      "openchat/openchat-3.6-8b",
+      "meta-llama/llama-3.1-405b-instruct",
+      "mistralai/mistral-large-2411",
+    ]},
+    { group: "Nous Research", models: ["hermes-3-llama-3.1-70b"] },
   ];
+  const ALL_MODELS = AVAILABLE_MODELS.flatMap((g) => g.models);
 
   // ═══════ Theme (with persistence) ═══════
 
@@ -109,6 +136,8 @@ function App() {
     checkEnvVars();
     startSession();
     loadDashboardData();
+    loadTransformSettings();
+    loadWebSearchSettings();
 
     const unlistenAppEvent = listen<AppEvent>("app-event", (event) => {
       processEvent(event.payload);
@@ -158,6 +187,9 @@ function App() {
         setShowSystemPrompt(false);
         setShowExportMenu(false);
         setShowProjectDropdown(false);
+        setShowTransformPreview(false);
+        setShowTemplateEditor(false);
+        setShowApiKeys(false);
       }
     };
 
@@ -274,13 +306,41 @@ function App() {
 
   // ═══════ Chat Actions ═══════
 
-  const handleSend = async (input: string) => {
-    addUserMessage(input);
+  const enhanceAndSend = async (rawMessage: string) => {
+    let finalMessage = rawMessage;
+
+    // Prompt transformer
+    if (transformSettings.enabled) {
+      try {
+        const result = await invoke<TransformResult>("transform_preview", {
+          raw: rawMessage,
+          model: state.sessionModel,
+          projectPath: projectPath,
+        });
+        if (result.transformed !== rawMessage) {
+          finalMessage = result.transformed;
+        }
+
+        // Web search auto-trigger
+        if (result.web_search_triggered && result.search_query && webSearchSettings.enabled) {
+          const searchContext = await handleWebSearch(result.search_query);
+          if (searchContext) {
+            finalMessage = `${searchContext}\n\n${finalMessage}`;
+          }
+        }
+      } catch (_) {}
+    }
+
     try {
-      await invoke("send_input", { message: input });
+      await invoke("send_input", { message: finalMessage });
     } catch (e) {
       addToast(`Error: ${e}`, "error");
     }
+  };
+
+  const handleSend = async (input: string) => {
+    addUserMessage(input);
+    await enhanceAndSend(input);
   };
 
   const handleSendWithFiles = async (input: string, files: File[]) => {
@@ -298,11 +358,7 @@ function App() {
       message = `${input}\n\n${fileContents.join("\n\n")}`;
     }
     addUserMessage(message);
-    try {
-      await invoke("send_input", { message });
-    } catch (e) {
-      addToast(`Error: ${e}`, "error");
-    }
+    await enhanceAndSend(message);
   };
 
   const handleSaveMemory = async () => {
@@ -402,6 +458,104 @@ function App() {
     }
   };
 
+  // ═══════ Prompt Transformer ═══════
+
+  const loadTransformSettings = async () => {
+    try {
+      const s = await invoke<TransformSettings>("transform_get_settings");
+      setTransformSettings(s);
+    } catch (_) {}
+  };
+
+  const handleToggleTransform = async () => {
+    const updated = { ...transformSettings, enabled: !transformSettings.enabled };
+    setTransformSettings(updated);
+    try {
+      await invoke("transform_save_settings", { settings: updated });
+    } catch (_) {}
+  };
+
+  const handleToggleWebSearch = async () => {
+    const updated = { ...webSearchSettings, enabled: !webSearchSettings.enabled };
+    setWebSearchSettings(updated);
+    try {
+      await invoke("web_search_save_settings", { settings: updated });
+    } catch (_) {}
+  };
+
+  const handlePreviewTransform = async (input: string) => {
+    if (!transformSettings.enabled || !input.trim()) {
+      setTransformPreview(null);
+      return;
+    }
+    try {
+      const result = await invoke<TransformResult>("transform_preview", {
+        raw: input,
+        model: state.sessionModel,
+        projectPath: projectPath,
+      });
+      setTransformPreview(result);
+    } catch (_) {
+      setTransformPreview(null);
+    }
+  };
+
+  // ═══════ Web Search ═══════
+
+  const loadWebSearchSettings = async () => {
+    try {
+      const s = await invoke<WebSearchSettings>("web_search_get_settings");
+      setWebSearchSettings(s);
+    } catch (_) {}
+  };
+
+  const handleWebSearch = async (query: string): Promise<string> => {
+    setIsSearching(true);
+    try {
+      const response = await invoke<WebSearchResponse>("web_search_query", { query });
+      setWebSearchResults(response);
+      const formatted = await invoke<string>("web_search_format", { response });
+      return formatted;
+    } catch (e) {
+      addToast(`Web search failed: ${e}`, "error");
+      return "";
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // ═══════ API Key Management ═══════
+
+  const loadApiKeys = async () => {
+    try {
+      const keys = await invoke<ApiKeyInfo[]>("list_api_keys");
+      setApiKeys(keys);
+    } catch (_) {}
+  };
+
+  const handleSaveApiKey = async (envVar: string) => {
+    if (!keyInput.trim()) return;
+    try {
+      await invoke("save_api_key", { envVar, keyValue: keyInput.trim() });
+      addToast("API key saved", "success");
+      setEditingKey(null);
+      setKeyInput("");
+      loadApiKeys();
+    } catch (e) {
+      addToast(`Failed to save key: ${e}`, "error");
+    }
+  };
+
+  const handleDeleteApiKey = async (envVar: string) => {
+    try {
+      await invoke("delete_api_key", { envVar });
+      addToast("API key removed", "info");
+      loadApiKeys();
+    } catch (e) {
+      addToast(`Failed to delete key: ${e}`, "error");
+    }
+  };
+
   // ═══════ Message Edit & Regenerate ═══════
 
   const handleEditMessage = async (_entryId: string, newContent: string) => {
@@ -496,15 +650,27 @@ function App() {
               {state.sessionModel} &#9662;
             </button>
             {showModelSelector && (
-              <div className="model-dropdown">
-                {AVAILABLE_MODELS.map((m) => (
-                  <button
-                    key={m}
-                    className={`model-dropdown-item ${m === state.sessionModel ? "active" : ""}`}
-                    onClick={() => handleSwitchModel(m)}
-                  >
-                    {m}
-                  </button>
+              <div className="model-dropdown grouped-model-dropdown">
+                <button
+                  className="model-dropdown-item api-key-btn"
+                  onClick={() => { setShowApiKeys(true); setShowModelSelector(false); loadApiKeys(); }}
+                >
+                  &#128273; Manage API Keys
+                </button>
+                <div className="model-dropdown-divider" />
+                {AVAILABLE_MODELS.map((group) => (
+                  <div key={group.group} className="model-group">
+                    <div className="model-group-label">{group.group}</div>
+                    {group.models.map((m) => (
+                      <button
+                        key={m}
+                        className={`model-dropdown-item ${m === state.sessionModel ? "active" : ""}`}
+                        onClick={() => handleSwitchModel(m)}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
             )}
@@ -562,6 +728,24 @@ function App() {
               ${state.sessionCost.cost_usd.toFixed(4)}
             </span>
           </div>
+
+          {/* Prompt Enhance toggle */}
+          <button
+            className={`toolbar-btn enhance-toggle ${transformSettings.enabled ? "active" : ""}`}
+            onClick={handleToggleTransform}
+            title={transformSettings.enabled ? "Auto-enhance ON (click to disable)" : "Auto-enhance OFF (click to enable)"}
+          >
+            &#10024;
+          </button>
+
+          {/* Web Search toggle */}
+          <button
+            className={`toolbar-btn web-search-toggle ${webSearchSettings.enabled ? "active" : ""}`}
+            onClick={handleToggleWebSearch}
+            title={webSearchSettings.enabled ? "Web search ON (click to disable)" : "Web search OFF (click to enable)"}
+          >
+            &#127760;{isSearching && <span className="search-spinner" />}
+          </button>
 
           {/* Search button */}
           <button
@@ -721,6 +905,61 @@ function App() {
           </div>
         )}
 
+        {/* API Key Management Modal */}
+        {showApiKeys && (
+          <div className="modal-overlay" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>
+            <div className="api-keys-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="api-keys-header">
+                <h3>&#128273; API Keys</h3>
+                <button className="api-keys-close" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>&times;</button>
+              </div>
+              <p className="api-keys-desc">Add API keys for each provider. Keys are saved locally and loaded automatically on startup.</p>
+              <div className="api-keys-list">
+                {apiKeys.map((k) => (
+                  <div key={k.env_var} className="api-key-row">
+                    <div className="api-key-info">
+                      <span className="api-key-provider">{k.provider_name}</span>
+                      <span className="api-key-envvar">{k.env_var}</span>
+                    </div>
+                    {editingKey === k.env_var ? (
+                      <div className="api-key-edit">
+                        <input
+                          type="password"
+                          className="api-key-input"
+                          value={keyInput}
+                          onChange={(e) => setKeyInput(e.target.value)}
+                          placeholder={`Enter ${k.env_var}...`}
+                          autoFocus
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveApiKey(k.env_var); if (e.key === "Escape") { setEditingKey(null); setKeyInput(""); } }}
+                        />
+                        <button className="api-key-save-btn" onClick={() => handleSaveApiKey(k.env_var)}>Save</button>
+                        <button className="api-key-cancel-btn" onClick={() => { setEditingKey(null); setKeyInput(""); }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="api-key-actions">
+                        {k.is_set ? (
+                          <>
+                            <span className="api-key-masked">{k.masked_key}</span>
+                            <span className="api-key-status set">Active</span>
+                          </>
+                        ) : (
+                          <span className="api-key-status not-set">Not set</span>
+                        )}
+                        <button className="api-key-edit-btn" onClick={() => { setEditingKey(k.env_var); setKeyInput(""); }}>
+                          {k.is_set ? "Update" : "Add Key"}
+                        </button>
+                        {k.is_set && (
+                          <button className="api-key-delete-btn" onClick={() => handleDeleteApiKey(k.env_var)}>Remove</button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Timeline — replaces ChatPane messages */}
         <TimelineView
           entries={state.timeline}
@@ -733,6 +972,29 @@ function App() {
           onRegenerateMessage={handleRegenerateMessage}
         />
 
+        {/* Web search results indicator */}
+        {webSearchResults && (
+          <div className="web-search-results-bar">
+            <span className="web-search-indicator">&#127760; Web results for: <em>{webSearchResults.query}</em></span>
+            <span className="web-search-count">{webSearchResults.results.length} results</span>
+            <button className="web-search-dismiss" onClick={() => setWebSearchResults(null)}>&times;</button>
+          </div>
+        )}
+
+        {/* Transform preview */}
+        {showTransformPreview && transformPreview && (
+          <div className="transform-preview-bar">
+            <div className="transform-preview-header">
+              <span className="transform-mode-badge">{transformPreview.mode}</span>
+              {transformPreview.web_search_triggered && (
+                <span className="transform-search-badge">&#127760; Web search</span>
+              )}
+              <button className="transform-preview-close" onClick={() => setShowTransformPreview(false)}>&times;</button>
+            </div>
+            <pre className="transform-preview-content">{transformPreview.transformed}</pre>
+          </div>
+        )}
+
         {/* Input */}
         <InputBar
           slashCommands={SLASH_COMMANDS}
@@ -740,6 +1002,10 @@ function App() {
           onSendWithFiles={handleSendWithFiles}
           isStreaming={state.isStreaming}
           onStopGeneration={handleStopGeneration}
+          transformEnabled={transformSettings.enabled}
+          onPreviewTransform={handlePreviewTransform}
+          onTogglePreview={() => setShowTransformPreview((s) => !s)}
+          showTransformPreview={showTransformPreview}
         />
       </div>
 

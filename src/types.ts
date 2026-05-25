@@ -494,7 +494,7 @@ export interface AgentStats {
 
 // ═══════ Provider Router Types ═══════
 
-export type ProviderType = "Claude" | "DeepSeek" | "OpenAI" | "Local" | "Custom";
+export type ProviderType = "Claude" | "DeepSeek" | "OpenAI" | "OpenRouter" | "NousResearch" | "Local" | "Custom";
 export type RoutingStrategy = "CostOptimized" | "QualityFirst" | "LatencyFirst" | "RoundRobin" | "Failover" | "Manual";
 export type HealthStatus = "Healthy" | "Degraded" | "Down" | "Unknown";
 
@@ -596,6 +596,69 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 ];
 
 export const EMPTY_COST: CostData = { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+
+// ═══════ Prompt Transformer Types ═══════
+
+export type TransformMode = "AutoEnhance" | "CodeTask" | "Analysis" | "Creative" | "Debug" | "Raw";
+
+export interface TransformSettings {
+  enabled: boolean;
+  default_mode: TransformMode;
+  show_preview: boolean;
+  web_search_enabled: boolean;
+}
+
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  mode: TransformMode;
+  template: string;
+  is_builtin: boolean;
+  created_at: number;
+}
+
+export interface TransformResult {
+  original: string;
+  transformed: string;
+  mode: TransformMode;
+  web_search_triggered: boolean;
+  search_query: string | null;
+}
+
+// ═══════ Web Search Types ═══════
+
+export type SearchProvider = "DuckDuckGo" | "Tavily" | "SearXNG";
+
+export interface WebSearchSettings {
+  enabled: boolean;
+  provider: SearchProvider;
+  max_results: number;
+  auto_trigger: boolean;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+}
+
+export interface WebSearchResponse {
+  query: string;
+  results: WebSearchResult[];
+  summary: string;
+  timestamp: number;
+}
+
+// ═══════ API Key Management Types ═══════
+
+export interface ApiKeyInfo {
+  provider_id: string;
+  provider_name: string;
+  env_var: string;
+  is_set: boolean;
+  masked_key: string;
+}
 
 // ═══════ Conversation Search ═══════
 

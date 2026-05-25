@@ -15,6 +15,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
+urlencoding = "2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
