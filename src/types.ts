@@ -191,6 +191,18 @@ export interface ErrorEvent {
   recoverable: boolean;
 }
 
+export interface StreamingChunkEvent {
+  type: "streaming_chunk";
+  text: string;
+  model: string;
+}
+
+export interface GenerationStoppedEvent {
+  type: "generation_stopped";
+  partial_text: string;
+  model: string;
+}
+
 export type AppEvent =
   | SessionStartedEvent
   | UserMessageEvent
@@ -202,7 +214,9 @@ export type AppEvent =
   | TokenUsageEvent
   | StatusUpdateEvent
   | SessionFinishedEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | StreamingChunkEvent
+  | GenerationStoppedEvent;
 
 // ═══════ Event Store State ═══════
 
@@ -212,6 +226,8 @@ export interface EventStoreState {
   sessionModel: string;
   sessionCost: CostData;
   isTyping: boolean;
+  isStreaming: boolean;
+  streamingText: string;
   activeApproval: ApprovalRequestData | null;
   activeDiff: { filePath: string; oldContent: string; newContent: string; toolUseId: string } | null;
 }
@@ -580,3 +596,13 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 ];
 
 export const EMPTY_COST: CostData = { input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+
+// ═══════ Conversation Search ═══════
+
+export interface ConversationSearchResult {
+  session_id: string;
+  message_index: number;
+  role: string;
+  snippet: string;
+  score: number;
+}

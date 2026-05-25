@@ -200,6 +200,18 @@ pub enum AppEvent {
         message: String,
         recoverable: bool,
     },
+
+    #[serde(rename = "streaming_chunk")]
+    StreamingChunk {
+        text: String,
+        model: String,
+    },
+
+    #[serde(rename = "generation_stopped")]
+    GenerationStopped {
+        partial_text: String,
+        model: String,
+    },
 }
 
 // ═══════ Parsing ═══════

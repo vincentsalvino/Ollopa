@@ -17,7 +17,8 @@ type Action =
   | { type: "CLEAR_SESSION" }
   | { type: "RESOLVE_APPROVAL"; decision: "approved" | "denied" }
   | { type: "CLOSE_DIFF" }
-  | { type: "REPLAY_EVENTS"; events: AppEvent[] };
+  | { type: "REPLAY_EVENTS"; events: AppEvent[] }
+  | { type: "STOP_STREAMING" };
 
 // ═══════ Helpers ═══════
 
@@ -78,6 +79,14 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
     case "CLEAR_SESSION":
       return { ...initialState };
 
+    case "STOP_STREAMING":
+      return {
+        ...state,
+        isStreaming: false,
+        isTyping: false,
+        streamingText: "",
+      };
+
     case "RESOLVE_APPROVAL":
       return {
         ...state,
@@ -132,10 +141,35 @@ function processAppEvent(state: EventStoreState, event: AppEvent): EventStoreSta
         }),
       };
 
+    case "streaming_chunk":
+      return {
+        ...state,
+        isTyping: false,
+        isStreaming: true,
+        streamingText: state.streamingText + event.text,
+      };
+
+    case "generation_stopped":
+      return {
+        ...state,
+        isTyping: false,
+        isStreaming: false,
+        streamingText: "",
+        timeline: event.partial_text
+          ? addEntry(state.timeline, "assistant_message", {
+              kind: "assistant_message",
+              text: event.partial_text + "\n\n*[Generation stopped]*",
+              model: event.model,
+            })
+          : state.timeline,
+      };
+
     case "assistant_message":
       return {
         ...state,
         isTyping: false,
+        isStreaming: false,
+        streamingText: "",
         timeline: addEntry(state.timeline, "assistant_message", {
           kind: "assistant_message",
           text: event.text,
@@ -268,6 +302,8 @@ const initialState: EventStoreState = {
   sessionModel: "unknown",
   sessionCost: { ...EMPTY_COST },
   isTyping: false,
+  isStreaming: false,
+  streamingText: "",
   activeApproval: null,
   activeDiff: null,
 };
@@ -308,6 +344,11 @@ export function useEventStore() {
     []
   );
 
+  const stopStreaming = useCallback(
+    () => dispatch({ type: "STOP_STREAMING" }),
+    []
+  );
+
   // Derived data
   const toolEntries = state.timeline.filter(
     (e) => e.kind === "tool_use"
@@ -335,6 +376,7 @@ export function useEventStore() {
     resolveApproval,
     closeDiff,
     replayEvents,
+    stopStreaming,
     toolEntries,
     runningTools,
     stats,
