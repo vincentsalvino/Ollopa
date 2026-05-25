@@ -82,13 +82,6 @@ fn ensure_dirs() {
     let _ = fs::create_dir_all(transformer_dir());
 }
 
-fn current_timestamp_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
 // ═══════ Intent Detection ═══════
 
 fn detect_mode(input: &str) -> TransformMode {
