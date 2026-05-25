@@ -5625,3 +5625,195 @@ h6.md-heading { font-size: 12px; }
 .stop-btn:hover {
   opacity: 0.8;
 }
+
+/* ═══════ Grouped Model Dropdown ═══════ */
+
+.grouped-model-dropdown {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.model-group {
+  border-bottom: 1px solid var(--border);
+  padding: 4px 0;
+}
+
+.model-group:last-child {
+  border-bottom: none;
+}
+
+.model-group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 4px 12px 2px;
+  font-weight: 600;
+}
+
+/* ═══════ Enhance Toggle ═══════ */
+
+.enhance-toggle {
+  position: relative;
+  font-size: 16px;
+}
+
+.enhance-toggle.active {
+  color: #ffd700;
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+}
+
+/* ═══════ Web Search Toggle ═══════ */
+
+.web-search-toggle {
+  position: relative;
+  font-size: 16px;
+}
+
+.web-search-toggle.active {
+  color: #4dabf7;
+  text-shadow: 0 0 8px rgba(77, 171, 247, 0.4);
+}
+
+.search-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 2px solid transparent;
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-left: 2px;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ═══════ Web Search Results Bar ═══════ */
+
+.web-search-results-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.web-search-indicator {
+  flex: 1;
+}
+
+.web-search-indicator em {
+  color: var(--text-primary);
+}
+
+.web-search-count {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.web-search-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+.web-search-dismiss:hover {
+  color: var(--danger);
+}
+
+/* ═══════ Transform Preview Bar ═══════ */
+
+.transform-preview-bar {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-accent);
+  border-radius: 8px;
+  margin: 0 16px 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.transform-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.transform-mode-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--accent);
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.transform-search-badge {
+  font-size: 10px;
+  background: #4dabf7;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.transform-preview-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.transform-preview-close:hover {
+  color: var(--danger);
+}
+
+.transform-preview-content {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  line-height: 1.5;
+}
+
+/* ═══════ Preview Button (in input area) ═══════ */
+
+.preview-btn {
+  padding: 4px 8px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.preview-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.preview-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}

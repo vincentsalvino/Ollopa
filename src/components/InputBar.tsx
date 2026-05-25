@@ -8,6 +8,10 @@ interface InputBarProps {
   disabled?: boolean;
   isStreaming?: boolean;
   onStopGeneration?: () => void;
+  transformEnabled?: boolean;
+  onPreviewTransform?: (input: string) => void;
+  onTogglePreview?: () => void;
+  showTransformPreview?: boolean;
 }
 
 export default function InputBar({
@@ -17,6 +21,10 @@ export default function InputBar({
   disabled,
   isStreaming,
   onStopGeneration,
+  transformEnabled,
+  onPreviewTransform,
+  onTogglePreview,
+  showTransformPreview,
 }: InputBarProps) {
   const [input, setInput] = useState("");
   const [showSlash, setShowSlash] = useState(false);
@@ -32,6 +40,8 @@ export default function InputBar({
       c.cmd.includes(slashFilter) ||
       c.desc.toLowerCase().includes(slashFilter)
   );
+
+  const previewTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -49,6 +59,14 @@ export default function InputBar({
       textareaRef.current.style.height = "auto";
       textareaRef.current.style.height =
         Math.min(textareaRef.current.scrollHeight, 120) + "px";
+    }
+
+    // Debounced transform preview
+    if (transformEnabled && onPreviewTransform && showTransformPreview) {
+      if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+      previewTimeoutRef.current = setTimeout(() => {
+        onPreviewTransform(val);
+      }, 500);
     }
   };
 
@@ -177,6 +195,15 @@ export default function InputBar({
         >
           &#128206;
         </button>
+        {transformEnabled && onTogglePreview && (
+          <button
+            className={`preview-btn ${showTransformPreview ? "active" : ""}`}
+            onClick={onTogglePreview}
+            title={showTransformPreview ? "Hide transform preview" : "Show transform preview"}
+          >
+            &#128065;
+          </button>
+        )}
         <input
           ref={fileInputRef}
           type="file"

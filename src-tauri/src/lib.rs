@@ -7,12 +7,14 @@ mod event_bus;
 mod git_intelligence;
 mod memory;
 mod multi_agent;
+mod prompt_transformer;
 mod provider_router;
 mod repo_intelligence;
 mod second_brain;
 mod session_manager;
 mod token_optimizer;
 mod visual_memory;
+mod web_search;
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
@@ -804,6 +806,88 @@ async fn switch_provider(
     }
 }
 
+// ═══════ Prompt Transformer ═══════
+
+#[tauri::command]
+fn transform_preview(
+    raw: String,
+    model: Option<String>,
+    project_path: Option<String>,
+) -> prompt_transformer::TransformResult {
+    let settings = prompt_transformer::load_settings();
+    let context = prompt_transformer::TransformContext {
+        model,
+        project_path,
+        recent_messages: vec![],
+        detected_language: None,
+    };
+    prompt_transformer::transform_prompt(&raw, &context, &settings)
+}
+
+#[tauri::command]
+fn transform_get_settings() -> prompt_transformer::TransformSettings {
+    prompt_transformer::load_settings()
+}
+
+#[tauri::command]
+fn transform_save_settings(
+    settings: prompt_transformer::TransformSettings,
+) -> Result<(), String> {
+    prompt_transformer::save_settings(&settings)
+}
+
+#[tauri::command]
+fn transform_list_templates() -> Vec<prompt_transformer::PromptTemplate> {
+    prompt_transformer::list_templates()
+}
+
+#[tauri::command]
+fn transform_save_template(
+    template: prompt_transformer::PromptTemplate,
+) -> Result<(), String> {
+    prompt_transformer::save_template(&template)
+}
+
+#[tauri::command]
+fn transform_delete_template(id: String) -> Result<(), String> {
+    prompt_transformer::delete_template(&id)
+}
+
+// ═══════ Web Search ═══════
+
+#[tauri::command]
+async fn web_search_query(query: String) -> web_search::SearchResponse {
+    let settings = web_search::load_settings();
+    web_search::web_search(&query, &settings).await
+}
+
+#[tauri::command]
+fn web_search_format(response: web_search::SearchResponse) -> String {
+    web_search::format_search_for_prompt(&response)
+}
+
+#[tauri::command]
+fn web_search_get_settings() -> web_search::WebSearchSettings {
+    web_search::load_settings()
+}
+
+#[tauri::command]
+fn web_search_save_settings(
+    settings: web_search::WebSearchSettings,
+) -> Result<(), String> {
+    web_search::save_settings(&settings)
+}
+
+#[tauri::command]
+fn web_search_list_cache() -> Vec<web_search::SearchResponse> {
+    web_search::list_cached_searches()
+}
+
+#[tauri::command]
+fn web_search_clear_cache() -> usize {
+    web_search::clear_search_cache()
+}
+
 // ═══════ Approval ═══════
 
 #[tauri::command]
@@ -913,6 +997,18 @@ pub fn run() {
             git_info,
             repo_analyze,
             switch_provider,
+            transform_preview,
+            transform_get_settings,
+            transform_save_settings,
+            transform_list_templates,
+            transform_save_template,
+            transform_delete_template,
+            web_search_query,
+            web_search_format,
+            web_search_get_settings,
+            web_search_save_settings,
+            web_search_list_cache,
+            web_search_clear_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

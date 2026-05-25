@@ -554,6 +554,103 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 
 ---
 
+## Phase 10 — OpenRouter/Hermes/OpenClaw + Prompt Transformer + Web Search
+
+**Status: COMPLETE**
+
+### Goals
+- Add OpenRouter and Nous Research as new providers with Hermes 3 and OpenClaw models
+- Add specialized agents (Hermes Reasoner, OpenClaw Coder, Hermes Analyst)
+- Build a prompt transformer/structuring system with auto-enhance
+- Build a web search feature with auto-trigger
+- Claude Code remains the default engine; new providers are additional options
+
+### What Was Built
+
+#### Backend: `prompt_transformer.rs` (new)
+- Intent detection engine (keyword-based mode classification)
+- 5 transform modes: AutoEnhance, CodeTask, Analysis, Creative, Debug, Raw
+- Built-in prompt templates for each mode
+- Custom template management (save/delete/list)
+- Language detection from prompt context
+- Web search trigger detection
+- Settings persistence (enabled by default)
+
+#### Backend: `web_search.rs` (new)
+- Multi-provider search engine (DuckDuckGo, Tavily, SearXNG)
+- DuckDuckGo instant answer API integration (no API key needed)
+- Tavily API integration (optional API key)
+- SearXNG instance support (configurable URL)
+- Search result formatting for LLM context injection
+- Response caching to disk
+- Auto-trigger detection based on prompt keywords
+- Settings persistence (enabled by default)
+
+#### Backend: `provider_router.rs` (updated)
+- Added `OpenRouter` and `NousResearch` to ProviderType enum
+- OpenRouter provider with 5 models:
+  - Hermes 3 405B (nousresearch/hermes-3-llama-3.1-405b)
+  - Hermes 3 70B (nousresearch/hermes-3-llama-3.1-70b)
+  - OpenChat 3.6 8B (openchat/openchat-3.6-8b)
+  - Llama 3.1 405B (meta-llama/llama-3.1-405b-instruct)
+  - Mistral Large (mistralai/mistral-large-2411)
+- Nous Research direct provider with Hermes 3 70B
+
+#### Backend: `multi_agent.rs` (updated)
+- Hermes Reasoner agent — deep reasoning, chain-of-thought, problem decomposition
+- OpenClaw Coder agent — fast code generation, code completion
+- Hermes Analyst agent — data analysis, summarization, research
+
+#### Backend: `api_client.rs` (updated)
+- OpenRouter-specific HTTP headers (HTTP-Referer, X-Title) for OpenRouter API compliance
+
+#### Backend: `lib.rs` (updated)
+- 12 new Tauri commands for prompt transformer and web search
+
+#### Frontend: `App.tsx` (updated)
+- Grouped model selector dropdown (by provider)
+- Prompt transformer toggle + settings
+- Web search toggle + auto-trigger integration
+- Transform preview panel
+- Web search results indicator bar
+- Enhanced send pipeline: raw prompt → transform → web search → send
+
+#### Frontend: `InputBar.tsx` (updated)
+- Preview button (eye icon) for transform preview
+- Debounced preview on input change
+- New props for transform integration
+
+#### Frontend: `types.ts` (updated)
+- TransformMode, TransformSettings, PromptTemplate, TransformResult types
+- SearchProvider, WebSearchSettings, WebSearchResult, WebSearchResponse types
+- Updated ProviderType with OpenRouter + NousResearch
+
+#### Frontend: `index.css` (updated)
+- Grouped model dropdown styling
+- Enhance toggle (golden glow when active)
+- Web search toggle (blue glow when active + spinner)
+- Web search results bar
+- Transform preview bar with mode badges
+- Preview button styling
+
+### Success Criteria
+- [x] OpenRouter and Nous Research providers registered with model configs
+- [x] Hermes 3 (405B, 70B) and OpenChat 3.6 models available in dropdown
+- [x] 3 new specialized agents (Hermes Reasoner, OpenClaw Coder, Hermes Analyst)
+- [x] Prompt transformer with 5 modes and auto-detection
+- [x] Custom prompt template support (save/edit/delete)
+- [x] Web search with DuckDuckGo (free), Tavily, SearXNG support
+- [x] Web search auto-triggers on relevant prompts
+- [x] Transform + search pipeline integrated into message send flow
+- [x] Both features toggleable and ON by default
+- [x] Settings persist across sessions
+
+### Build Status
+- `npx tsc --noEmit` — 0 errors
+- `npx vite build` — clean
+
+---
+
 ## File Inventory
 
 ### Backend (src-tauri/src/)
@@ -569,15 +666,17 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `visual_memory.rs` | 6 | Graph data models, auto-generation, persistence |
 | `token_optimizer.rs` | 7 | Token budgeting, rolling summaries, caching, chunking |
 | `multi_agent.rs` | 8 | Agent registry, task routing, workflow orchestration |
-| `provider_router.rs` | 8 | Provider registry, model routing, failover strategies |
-| `lib.rs` | 1-8 | Tauri commands + app entry |
+| `provider_router.rs` | 8+10 | Provider registry, model routing, failover strategies, OpenRouter/Nous |
+| `prompt_transformer.rs` | 10 | Prompt auto-enhancement, intent detection, templates |
+| `web_search.rs` | 10 | Web search integration (DuckDuckGo/Tavily/SearXNG) |
+| `lib.rs` | 1-10 | Tauri commands + app entry |
 
 ### Frontend (src/)
 | File | Phase | Purpose |
 |------|-------|---------|
-| `types.ts` | 2+4+5+6+7+8 | Shared types, events, timeline, session, brain, graphs, optimizer, agents, router |
+| `types.ts` | 2+4+5+6+7+8+10 | Shared types, events, timeline, session, brain, graphs, optimizer, agents, router, transformer, search |
 | `hooks/useEventStore.ts` | 2+4 | Centralized reducer state + replay |
-| `App.tsx` | 2-8 | Main app wiring |
+| `App.tsx` | 2-10 | Main app wiring |
 | `components/timeline/TimelineView.tsx` | 2-3 | Scrollable timeline |
 | `components/timeline/TimelineEntry.tsx` | 2-3 | Polymorphic entry renderer |
 | `components/timeline/MessageBubble.tsx` | 2 | Markdown renderer |
@@ -596,5 +695,5 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `components/agents/AgentPanel.tsx` | 8 | Multi-agent workflows + provider routing UI |
 | `components/Dashboard.tsx` | 2 | Metrics + analytics |
 | `components/Toast.tsx` | 2 | Notifications |
-| `components/InputBar.tsx` | 2 | Slash command input |
-| `index.css` | 2-8 | All CSS (~4900 lines) |
+| `components/InputBar.tsx` | 2+10 | Slash command input + transform preview |
+| `index.css` | 2-10 | All CSS (~5800 lines) |
