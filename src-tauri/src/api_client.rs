@@ -17,6 +17,26 @@ const INPUT_PRICE_PER_M: f64 = 0.27;
 const OUTPUT_PRICE_PER_M: f64 = 1.10;
 
 impl ApiConfig {
+    /// Create config from a provider router decision.
+    pub fn from_provider(
+        base_url: &str,
+        api_key_env: &str,
+        model: &str,
+    ) -> Result<Self, String> {
+        let api_key = std::env::var(api_key_env).map_err(|_| {
+            format!("API key env var '{}' not set", api_key_env)
+        })?;
+        let base_url = base_url
+            .trim_end_matches('/')
+            .trim_end_matches("/anthropic")
+            .to_string();
+        Ok(Self {
+            base_url,
+            api_key,
+            model: model.to_string(),
+        })
+    }
+
     pub fn from_env() -> Result<Self, String> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
@@ -86,6 +106,17 @@ pub struct DirectApiClient {
     session_id: String,
 }
 
+fn conversations_dir() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".claude")
+        .join("conversations")
+}
+
+fn conversation_path(session_id: &str) -> std::path::PathBuf {
+    conversations_dir().join(format!("{}.json", session_id))
+}
+
 impl DirectApiClient {
     pub fn new(app_handle: &AppHandle) -> Result<Self, String> {
         let config = ApiConfig::from_env()?;
@@ -114,17 +145,84 @@ impl DirectApiClient {
         Ok(Self {
             client: Client::new(),
             config,
-            messages: Vec::new(),
+            messages: vec![ChatMessage {
+                role: "system".to_string(),
+                content: "You are a helpful assistant. Always respond in English unless the user explicitly writes in another language.".to_string(),
+            }],
             session_id,
         })
     }
 
+    #[allow(dead_code)]
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
 
     pub fn model(&self) -> &str {
         &self.config.model
+    }
+
+    /// Get the last assistant message from conversation history.
+    pub fn last_assistant_message(&self) -> Option<String> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .map(|m| m.content.clone())
+    }
+
+    /// Persist conversation messages to disk.
+    pub fn save_messages(&self) {
+        let dir = conversations_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let path = conversation_path(&self.session_id);
+        if let Ok(json) = serde_json::to_string_pretty(&self.messages) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+
+    /// Load conversation messages from a previous session.
+    pub fn load_messages(session_id: &str) -> Option<Vec<ChatMessage>> {
+        let path = conversation_path(session_id);
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
+    /// Resume a previous conversation by loading its messages.
+    pub fn resume_session(&mut self, session_id: &str) -> bool {
+        if let Some(messages) = Self::load_messages(session_id) {
+            self.messages = messages;
+            self.session_id = session_id.to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Switch to a different provider (from router decision).
+    pub fn switch_provider(
+        &mut self,
+        base_url: &str,
+        api_key_env: &str,
+        model: &str,
+    ) -> Result<(), String> {
+        self.config = ApiConfig::from_provider(base_url, api_key_env, model)?;
+        Ok(())
+    }
+
+    /// List all saved conversation session IDs.
+    pub fn list_saved_conversations() -> Vec<String> {
+        let dir = conversations_dir();
+        std::fs::read_dir(dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.strip_suffix(".json").map(|s| s.to_string())
+            })
+            .collect()
     }
 
     /// Send a user message and stream the response back via events.
@@ -245,6 +343,9 @@ impl DirectApiClient {
                     model: self.config.model.clone(),
                 },
             );
+
+            // Persist conversation to disk
+            self.save_messages();
         }
 
         // Emit token usage
@@ -273,6 +374,7 @@ impl DirectApiClient {
     }
 
     /// Clear conversation history.
+    #[allow(dead_code)]
     pub fn clear_history(&mut self) {
         self.messages.clear();
     }

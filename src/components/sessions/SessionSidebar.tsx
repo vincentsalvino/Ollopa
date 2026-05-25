@@ -203,14 +203,13 @@ export default function SessionSidebar({
                     {/* Main info */}
                     <div className="ss-item-body">
                       <div className="ss-item-top">
-                        <span className="ss-item-id">
-                          {s.key.replace("session-", "").slice(0, 8)}...
+                        <span className="ss-item-id" title={s.key}>
+                          {s.preview || s.key.replace("session-", "").slice(0, 8) + "..."}
                         </span>
                         <span className="ss-item-time">
                           {formatTime(s.updated_at)}
                         </span>
                       </div>
-                      <div className="ss-item-preview">{s.preview}</div>
                       <div className="ss-item-stats">
                         <span>{s.message_count} msgs</span>
                         {s.cost_usd > 0 && (

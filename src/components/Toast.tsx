@@ -31,7 +31,14 @@ function ToastItem({
   return (
     <div className={`toast toast-${toast.type}`}>
       <span className="toast-text">{toast.text}</span>
-      <button className="toast-close" onClick={() => onDismiss(toast.id)}>
+      <button
+        className="toast-close"
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onDismiss(toast.id);
+        }}
+      >
         &times;
       </button>
     </div>

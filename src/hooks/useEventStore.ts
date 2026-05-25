@@ -123,6 +123,15 @@ function processAppEvent(state: EventStoreState, event: AppEvent): EventStoreSta
         }),
       };
 
+    case "user_message":
+      return {
+        ...state,
+        timeline: addEntry(state.timeline, "user_message", {
+          kind: "user_message",
+          content: event.text,
+        }),
+      };
+
     case "assistant_message":
       return {
         ...state,

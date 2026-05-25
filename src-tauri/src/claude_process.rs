@@ -1,3 +1,6 @@
+// This module is kept for future Claude CLI mode support.
+// Currently, the app uses api_client.rs (direct API) instead.
+
 use crate::claude_events::{
     parse_stream_line, AppEvent, ClaudeStreamEvent, ContentBlock, Usage,
 };
