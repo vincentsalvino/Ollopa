@@ -102,6 +102,10 @@ export default function SessionSidebar({
     if (!onRestore) return;
     setRestoringId(sessionId);
     try {
+      // Resume the conversation on the backend (restores session_id, model, history)
+      await invoke<string>("resume_conversation", { sessionId });
+
+      // Load and replay events on the frontend
       const events = await invoke<PersistedEvent[]>("get_session_events", {
         sessionId,
       });

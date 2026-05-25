@@ -81,18 +81,52 @@ async fn resume_conversation(
     session_id: String,
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let mut session = state.session.lock().await;
-    // Start a fresh session first
+
+    // Finalize current session if active
+    if let Some(ref sid) = session.session_id {
+        session_manager::finalize_session_pub(session.working_dir.as_deref(), sid, false);
+    }
+
+    // Look up the model from the snapshot so we can restore it
+    let snapshot_model = session_manager::get_session_model(&session_id);
+
+    // Start a fresh API client
     let working_dir = session.working_dir.clone();
-    session.start(app_handle, working_dir, None).await?;
-    // Then resume the conversation history
+    session.start(app_handle.clone(), working_dir, None).await?;
+
+    // Override the session_id to the original so events append to the same snapshot
+    session.session_id = Some(session_id.clone());
+
+    // Resume the conversation history in the API client
     if let Some(ref mut client) = session.api_client {
         if !client.resume_session(&session_id) {
-            return Err(format!("No saved conversation found for {}", session_id));
+            // No saved conversation file, but we may still have snapshot events — that's ok
         }
     }
-    Ok(())
+
+    // Restore the model from the snapshot (not "unknown")
+    let model = snapshot_model.unwrap_or_else(|| session.model.clone());
+    session.model = model.clone();
+
+    // Re-activate the snapshot so new messages append to it
+    session_manager::reactivate_session(session.working_dir.as_deref(), &session_id);
+
+    // Emit session_started with correct model so frontend picks it up
+    let _ = app_handle.emit(
+        "app-event",
+        claude_events::AppEvent::SessionStarted {
+            session_id: session_id.clone(),
+            model: model.clone(),
+            cwd: std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            tools: vec![],
+        },
+    );
+
+    Ok(model)
 }
 
 // ═══════ Project Switcher ═══════
