@@ -81,18 +81,52 @@ async fn resume_conversation(
     session_id: String,
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let mut session = state.session.lock().await;
-    // Start a fresh session first
+
+    // Finalize current session if active
+    if let Some(ref sid) = session.session_id {
+        session_manager::finalize_session_pub(session.working_dir.as_deref(), sid, false);
+    }
+
+    // Look up the model from the snapshot so we can restore it
+    let snapshot_model = session_manager::get_session_model(&session_id);
+
+    // Start a fresh API client
     let working_dir = session.working_dir.clone();
-    session.start(app_handle, working_dir, None).await?;
-    // Then resume the conversation history
+    session.start(app_handle.clone(), working_dir, None).await?;
+
+    // Override the session_id to the original so events append to the same snapshot
+    session.session_id = Some(session_id.clone());
+
+    // Resume the conversation history in the API client
     if let Some(ref mut client) = session.api_client {
         if !client.resume_session(&session_id) {
-            return Err(format!("No saved conversation found for {}", session_id));
+            // No saved conversation file, but we may still have snapshot events — that's ok
         }
     }
-    Ok(())
+
+    // Restore the model from the snapshot (not "unknown")
+    let model = snapshot_model.unwrap_or_else(|| session.model.clone());
+    session.model = model.clone();
+
+    // Re-activate the snapshot so new messages append to it
+    session_manager::reactivate_session(session.working_dir.as_deref(), &session_id);
+
+    // Emit session_started with correct model so frontend picks it up
+    let _ = app_handle.emit(
+        "app-event",
+        claude_events::AppEvent::SessionStarted {
+            session_id: session_id.clone(),
+            model: model.clone(),
+            cwd: std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            tools: vec![],
+        },
+    );
+
+    Ok(model)
 }
 
 // ═══════ Project Switcher ═══════
@@ -190,6 +224,146 @@ fn get_project_tree(path: Option<String>) -> String {
 fn check_env_vars() -> Result<(), String> {
     // Verify API key is available for direct API calls
     api_client::ApiConfig::from_env().map(|_| ())
+}
+
+// ═══════ Stop Generation ═══════
+
+#[tauri::command]
+async fn stop_generation(state: State<'_, AppState>) -> Result<(), String> {
+    let session = state.session.lock().await;
+    if let Some(ref client) = session.api_client {
+        client.cancel_generation();
+        Ok(())
+    } else {
+        Err("No active session".to_string())
+    }
+}
+
+// ═══════ System Prompt ═══════
+
+#[tauri::command]
+async fn set_system_prompt(
+    prompt: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    if let Some(ref mut client) = session.api_client {
+        client.set_system_prompt(&prompt);
+        Ok(())
+    } else {
+        Err("No active session".to_string())
+    }
+}
+
+#[tauri::command]
+async fn get_system_prompt(
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let session = state.session.lock().await;
+    if let Some(ref client) = session.api_client {
+        Ok(client.system_prompt().to_string())
+    } else {
+        Ok("You are a helpful assistant. Always respond in English unless the user explicitly writes in another language.".to_string())
+    }
+}
+
+// ═══════ Model Selector ═══════
+
+#[tauri::command]
+async fn set_model(
+    model: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    if let Some(ref mut client) = session.api_client {
+        client.set_model(&model);
+        session.model = model;
+        Ok(())
+    } else {
+        Err("No active session".to_string())
+    }
+}
+
+#[tauri::command]
+async fn get_current_model(
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let session = state.session.lock().await;
+    Ok(session.model.clone())
+}
+
+// ═══════ Message Editing ═══════
+
+#[tauri::command]
+async fn edit_message(
+    index: usize,
+    new_content: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let mut session = state.session.lock().await;
+    if let Some(ref mut client) = session.api_client {
+        Ok(client.edit_message_at(index, &new_content))
+    } else {
+        Err("No active session".to_string())
+    }
+}
+
+// ═══════ Export Conversation ═══════
+
+#[tauri::command]
+async fn export_conversation(
+    format: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let session = state.session.lock().await;
+    if let Some(ref client) = session.api_client {
+        let messages = client.get_messages();
+        match format.as_str() {
+            "json" => {
+                serde_json::to_string_pretty(messages)
+                    .map_err(|e| format!("JSON serialization failed: {}", e))
+            }
+            "markdown" => {
+                let mut md = String::new();
+                md.push_str("# Conversation Export\n\n");
+                md.push_str(&format!("*Exported at: {}*\n\n---\n\n",
+                    chrono_format_now()));
+                for msg in messages {
+                    match msg.role.as_str() {
+                        "system" => {
+                            md.push_str(&format!("## System\n\n{}\n\n---\n\n", msg.content));
+                        }
+                        "user" => {
+                            md.push_str(&format!("## User\n\n{}\n\n---\n\n", msg.content));
+                        }
+                        "assistant" => {
+                            md.push_str(&format!("## Assistant\n\n{}\n\n---\n\n", msg.content));
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(md)
+            }
+            _ => Err(format!("Unknown format: {}", format)),
+        }
+    } else {
+        Err("No active session".to_string())
+    }
+}
+
+fn chrono_format_now() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{}", now)
+}
+
+// ═══════ Search Conversations ═══════
+
+#[tauri::command]
+fn search_conversations(query: String) -> Vec<api_client::ConversationSearchResult> {
+    api_client::DirectApiClient::search_conversations(&query)
 }
 
 // ═══════ Second Brain ═══════
@@ -679,6 +853,14 @@ pub fn run() {
             get_project_tree,
             check_env_vars,
             classify_tool_risk,
+            stop_generation,
+            set_system_prompt,
+            get_system_prompt,
+            set_model,
+            get_current_model,
+            edit_message,
+            export_conversation,
+            search_conversations,
             brain_search,
             brain_stats,
             brain_save_decision,

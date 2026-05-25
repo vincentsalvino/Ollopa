@@ -2,7 +2,9 @@ use crate::claude_events::AppEvent;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 /// Configuration for the API client, read from environment variables.
 #[derive(Debug, Clone)]
@@ -104,6 +106,8 @@ pub struct DirectApiClient {
     config: ApiConfig,
     messages: Vec<ChatMessage>,
     session_id: String,
+    cancel_token: Arc<CancellationToken>,
+    system_prompt: String,
 }
 
 fn conversations_dir() -> std::path::PathBuf {
@@ -129,6 +133,8 @@ impl DirectApiClient {
                 .as_millis()
         );
 
+        let default_system_prompt = "You are a helpful assistant. Always respond in English unless the user explicitly writes in another language.".to_string();
+
         // Emit session started
         let _ = app_handle.emit(
             "app-event",
@@ -147,9 +153,11 @@ impl DirectApiClient {
             config,
             messages: vec![ChatMessage {
                 role: "system".to_string(),
-                content: "You are a helpful assistant. Always respond in English unless the user explicitly writes in another language.".to_string(),
+                content: default_system_prompt.clone(),
             }],
             session_id,
+            cancel_token: Arc::new(CancellationToken::new()),
+            system_prompt: default_system_prompt,
         })
     }
 
@@ -208,6 +216,96 @@ impl DirectApiClient {
     ) -> Result<(), String> {
         self.config = ApiConfig::from_provider(base_url, api_key_env, model)?;
         Ok(())
+    }
+
+    /// Cancel in-progress generation.
+    pub fn cancel_generation(&self) {
+        self.cancel_token.cancel();
+    }
+
+    /// Get a fresh cancellation token for the next request.
+    pub fn new_cancel_token(&mut self) -> Arc<CancellationToken> {
+        let token = Arc::new(CancellationToken::new());
+        self.cancel_token = token.clone();
+        token
+    }
+
+    /// Set the system prompt.
+    pub fn set_system_prompt(&mut self, prompt: &str) {
+        self.system_prompt = prompt.to_string();
+        // Update the first message if it's a system message
+        if let Some(first) = self.messages.first_mut() {
+            if first.role == "system" {
+                first.content = prompt.to_string();
+            }
+        }
+    }
+
+    /// Get the current system prompt.
+    pub fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
+    /// Get the current model name.
+    pub fn current_model(&self) -> &str {
+        &self.config.model
+    }
+
+    /// Set the model.
+    pub fn set_model(&mut self, model: &str) {
+        self.config.model = model.to_string();
+    }
+
+    /// Edit a message at a specific index and truncate history after it.
+    pub fn edit_message_at(&mut self, index: usize, new_content: &str) -> bool {
+        if index < self.messages.len() && self.messages[index].role == "user" {
+            self.messages[index].content = new_content.to_string();
+            self.messages.truncate(index + 1);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get conversation history for export.
+    pub fn get_messages(&self) -> &[ChatMessage] {
+        &self.messages
+    }
+
+    /// Search conversations for a query string.
+    pub fn search_conversations(query: &str) -> Vec<ConversationSearchResult> {
+        let dir = conversations_dir();
+        let query_lower = query.to_lowercase();
+        let mut results = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if let Some(session_id) = name.strip_suffix(".json") {
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        if let Ok(messages) = serde_json::from_str::<Vec<ChatMessage>>(&content) {
+                            for (i, msg) in messages.iter().enumerate() {
+                                if msg.content.to_lowercase().contains(&query_lower) {
+                                    let snippet_start = msg.content.to_lowercase().find(&query_lower).unwrap_or(0);
+                                    let start = snippet_start.saturating_sub(50);
+                                    let end = (snippet_start + query.len() + 50).min(msg.content.len());
+                                    results.push(ConversationSearchResult {
+                                        session_id: session_id.to_string(),
+                                        message_index: i,
+                                        role: msg.role.clone(),
+                                        snippet: msg.content[start..end].to_string(),
+                                        score: 1.0,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        results.truncate(50);
+        results
     }
 
     /// List all saved conversation session IDs.
@@ -277,46 +375,85 @@ impl DirectApiClient {
             return Err(err);
         }
 
-        // Stream the response
+        // Get a cancellation token for this request
+        let cancel_token = self.cancel_token.clone();
+        let mut was_cancelled = false;
+
+        // Stream the response with real-time chunk emission
         let mut full_response = String::new();
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
 
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result.map_err(|e| format!("Stream error: {}", e))?;
-            let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text);
-
-            // Process complete SSE lines
-            while let Some(newline_pos) = buffer.find('\n') {
-                let line = buffer[..newline_pos].trim().to_string();
-                buffer = buffer[newline_pos + 1..].to_string();
-
-                if line.is_empty() || line.starts_with(':') {
-                    continue;
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    was_cancelled = true;
+                    break;
                 }
+                chunk_opt = stream.next() => {
+                    match chunk_opt {
+                        Some(chunk_result) => {
+                            let chunk = chunk_result.map_err(|e| format!("Stream error: {}", e))?;
+                            let text = String::from_utf8_lossy(&chunk);
+                            buffer.push_str(&text);
 
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data.trim() == "[DONE]" {
-                        continue;
-                    }
+                            // Process complete SSE lines
+                            while let Some(newline_pos) = buffer.find('\n') {
+                                let line = buffer[..newline_pos].trim().to_string();
+                                buffer = buffer[newline_pos + 1..].to_string();
 
-                    if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
-                        if let Some(choices) = chunk.choices {
-                            for choice in choices {
-                                if let Some(delta) = choice.delta {
-                                    if let Some(content) = delta.content {
-                                        if !content.is_empty() {
-                                            full_response.push_str(&content);
+                                if line.is_empty() || line.starts_with(':') {
+                                    continue;
+                                }
+
+                                if let Some(data) = line.strip_prefix("data: ") {
+                                    if data.trim() == "[DONE]" {
+                                        continue;
+                                    }
+
+                                    if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                                        if let Some(choices) = chunk.choices {
+                                            for choice in choices {
+                                                if let Some(delta) = choice.delta {
+                                                    if let Some(content) = delta.content {
+                                                        if !content.is_empty() {
+                                                            full_response.push_str(&content);
+                                                            // Emit streaming chunk for real-time display
+                                                            let _ = app_handle.emit(
+                                                                "app-event",
+                                                                AppEvent::StreamingChunk {
+                                                                    text: content,
+                                                                    model: self.config.model.clone(),
+                                                                },
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
+                        None => break,
                     }
                 }
             }
         }
+
+        // If cancelled, emit generation_stopped event
+        if was_cancelled {
+            let _ = app_handle.emit(
+                "app-event",
+                AppEvent::GenerationStopped {
+                    partial_text: full_response.clone(),
+                    model: self.config.model.clone(),
+                },
+            );
+        }
+
+        // Reset cancel token for next request
+        self.cancel_token = Arc::new(CancellationToken::new());
 
         let duration = start.elapsed();
 
@@ -378,4 +515,13 @@ impl DirectApiClient {
     pub fn clear_history(&mut self) {
         self.messages.clear();
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationSearchResult {
+    pub session_id: String,
+    pub message_index: usize,
+    pub role: String,
+    pub snippet: String,
+    pub score: f64,
 }

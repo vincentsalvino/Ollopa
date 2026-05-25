@@ -14,7 +14,7 @@ import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
-import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent } from "./types";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
@@ -26,13 +26,17 @@ function App() {
     resolveApproval,
     closeDiff,
     replayEvents,
+    stopStreaming,
     toolEntries,
     stats,
   } = useEventStore();
 
   const [totalCost, setTotalCost] = useState<CostData>(EMPTY_COST);
   const [memoryLines, setMemoryLines] = useState<string[]>([]);
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = localStorage.getItem("claude-desktop-theme");
+    return (saved === "light" || saved === "dark") ? saved : "dark";
+  });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   // Project Switcher
@@ -65,10 +69,38 @@ function App() {
   const [envWarning, setEnvWarning] = useState<string | null>(null);
   const [compactWarningDismissed, setCompactWarningDismissed] = useState(false);
 
-  // ═══════ Theme ═══════
+  // Model selector
+  const [showModelSelector, setShowModelSelector] = useState(false);
+
+  // Search
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<ConversationSearchResult[]>([]);
+
+  // System prompt
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState("");
+
+  // Export
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
+  // Available models
+  const AVAILABLE_MODELS = [
+    "deepseek-chat",
+    "deepseek-coder",
+    "deepseek-reasoner",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-haiku-20241022",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4-turbo",
+  ];
+
+  // ═══════ Theme (with persistence) ═══════
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("claude-desktop-theme", theme);
   }, [theme]);
 
   // ═══════ Boot ═══════
@@ -88,6 +120,49 @@ function App() {
       unlistenAppEvent.then((f) => f());
       clearInterval(costInterval);
     };
+  }, []);
+
+  // ═══════ Keyboard Shortcuts ═══════
+
+  useEffect(() => {
+    const handleKeyboard = (e: KeyboardEvent) => {
+      // Ctrl+N: New chat
+      if (e.ctrlKey && e.key === "n") {
+        e.preventDefault();
+        handleRestart();
+      }
+      // Ctrl+Shift+S: Search conversations
+      if (e.ctrlKey && e.shiftKey && e.key === "S") {
+        e.preventDefault();
+        setShowSearch((s) => !s);
+      }
+      // Ctrl+Shift+E: Export
+      if (e.ctrlKey && e.shiftKey && e.key === "E") {
+        e.preventDefault();
+        setShowExportMenu((s) => !s);
+      }
+      // Ctrl+,: System prompt settings
+      if (e.ctrlKey && e.key === ",") {
+        e.preventDefault();
+        handleOpenSystemPrompt();
+      }
+      // Ctrl+Shift+M: Model selector
+      if (e.ctrlKey && e.shiftKey && e.key === "M") {
+        e.preventDefault();
+        setShowModelSelector((s) => !s);
+      }
+      // Escape: Close modals
+      if (e.key === "Escape") {
+        setShowSearch(false);
+        setShowModelSelector(false);
+        setShowSystemPrompt(false);
+        setShowExportMenu(false);
+        setShowProjectDropdown(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyboard);
+    return () => window.removeEventListener("keydown", handleKeyboard);
   }, []);
 
   // ═══════ Toast ═══════
@@ -208,6 +283,28 @@ function App() {
     }
   };
 
+  const handleSendWithFiles = async (input: string, files: File[]) => {
+    let message = input;
+    if (files.length > 0) {
+      const fileContents: string[] = [];
+      for (const file of files) {
+        if (file.type.startsWith("image/")) {
+          fileContents.push(`[Image: ${file.name} (${(file.size / 1024).toFixed(1)}KB)]`);
+        } else {
+          const text = await file.text();
+          fileContents.push(`--- File: ${file.name} ---\n${text}\n--- End: ${file.name} ---`);
+        }
+      }
+      message = `${input}\n\n${fileContents.join("\n\n")}`;
+    }
+    addUserMessage(message);
+    try {
+      await invoke("send_input", { message });
+    } catch (e) {
+      addToast(`Error: ${e}`, "error");
+    }
+  };
+
   const handleSaveMemory = async () => {
     const date = new Date().toISOString().split("T")[0];
     const entry = `[${date}] [SESSION] [SAVE]: Manual memory save triggered`;
@@ -226,11 +323,115 @@ function App() {
     } catch (_) {}
   };
 
+  // ═══════ Stop Generation ═══════
+
+  const handleStopGeneration = async () => {
+    try {
+      await invoke("stop_generation");
+      stopStreaming();
+      addToast("Generation stopped", "info");
+    } catch (e) {
+      addToast(`Stop failed: ${e}`, "error");
+    }
+  };
+
+  // ═══════ Model Selector ═══════
+
+  const handleSwitchModel = async (model: string) => {
+    try {
+      await invoke("set_model", { model });
+      addToast(`Switched to ${model}`, "success");
+      setShowModelSelector(false);
+    } catch (e) {
+      addToast(`Model switch failed: ${e}`, "error");
+    }
+  };
+
+  // ═══════ System Prompt ═══════
+
+  const handleOpenSystemPrompt = async () => {
+    try {
+      const prompt = await invoke<string>("get_system_prompt");
+      setSystemPrompt(prompt);
+    } catch (_) {
+      setSystemPrompt("You are a helpful assistant.");
+    }
+    setShowSystemPrompt(true);
+  };
+
+  const handleSaveSystemPrompt = async () => {
+    try {
+      await invoke("set_system_prompt", { prompt: systemPrompt });
+      addToast("System prompt updated", "success");
+      setShowSystemPrompt(false);
+    } catch (e) {
+      addToast(`Failed: ${e}`, "error");
+    }
+  };
+
+  // ═══════ Search ═══════
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+    try {
+      const results = await invoke<ConversationSearchResult[]>("search_conversations", {
+        query: searchQuery,
+      });
+      setSearchResults(results);
+    } catch (e) {
+      addToast(`Search failed: ${e}`, "error");
+    }
+  };
+
+  // ═══════ Export ═══════
+
+  const handleExport = async (format: string) => {
+    try {
+      const content = await invoke<string>("export_conversation", { format });
+      const blob = new Blob([content], { type: format === "json" ? "application/json" : "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `conversation.${format === "json" ? "json" : "md"}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addToast(`Exported as ${format}`, "success");
+      setShowExportMenu(false);
+    } catch (e) {
+      addToast(`Export failed: ${e}`, "error");
+    }
+  };
+
+  // ═══════ Message Edit & Regenerate ═══════
+
+  const handleEditMessage = async (_entryId: string, newContent: string) => {
+    addUserMessage(newContent);
+    try {
+      await invoke("send_input", { message: newContent });
+    } catch (e) {
+      addToast(`Error: ${e}`, "error");
+    }
+  };
+
+  const handleRegenerateMessage = async (_entryId: string) => {
+    const lastUserMsg = state.timeline
+      .filter((e) => e.kind === "user_message")
+      .pop();
+    if (lastUserMsg) {
+      const content = (lastUserMsg.data as { kind: string; content: string }).content;
+      addUserMessage(content);
+      try {
+        await invoke("send_input", { message: content });
+      } catch (e) {
+        addToast(`Error: ${e}`, "error");
+      }
+    }
+  };
+
   // ═══════ Approval Handlers ═══════
 
   const handleApprove = () => {
     resolveApproval("approved");
-    // Send approval to backend
     invoke("send_input", { message: "y" }).catch(() => {});
   };
 
@@ -284,12 +485,30 @@ function App() {
           >
             &#9776;
           </button>
-          <span
-            className="model-indicator"
-            title={`Session: ${state.sessionId || "none"}`}
-          >
-            {state.sessionModel}
-          </span>
+
+          {/* Model Selector */}
+          <div className="model-selector-wrapper">
+            <button
+              className="model-indicator model-selector-btn"
+              onClick={() => setShowModelSelector((s) => !s)}
+              title={`Model: ${state.sessionModel} (click to switch)`}
+            >
+              {state.sessionModel} &#9662;
+            </button>
+            {showModelSelector && (
+              <div className="model-dropdown">
+                {AVAILABLE_MODELS.map((m) => (
+                  <button
+                    key={m}
+                    className={`model-dropdown-item ${m === state.sessionModel ? "active" : ""}`}
+                    onClick={() => handleSwitchModel(m)}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Project Switcher */}
           <div className="project-switcher">
@@ -344,6 +563,36 @@ function App() {
             </span>
           </div>
 
+          {/* Search button */}
+          <button
+            className="toolbar-btn"
+            onClick={() => setShowSearch((s) => !s)}
+            title="Search conversations (Ctrl+Shift+S)"
+          >
+            &#128269;
+          </button>
+
+          {/* Export button */}
+          <div className="export-wrapper">
+            <button
+              className="toolbar-btn"
+              onClick={() => setShowExportMenu((s) => !s)}
+              title="Export conversation (Ctrl+Shift+E)"
+            >
+              &#128190;
+            </button>
+            {showExportMenu && (
+              <div className="export-dropdown">
+                <button className="export-dropdown-item" onClick={() => handleExport("markdown")}>
+                  Export as Markdown
+                </button>
+                <button className="export-dropdown-item" onClick={() => handleExport("json")}>
+                  Export as JSON
+                </button>
+              </div>
+            )}
+          </div>
+
           <button
             className="toolbar-btn tools-toggle-btn"
             onClick={() => setShowTools((s) => !s)}
@@ -377,13 +626,16 @@ function App() {
               <button className="toolbar-btn" onClick={() => setShowAgentPanel(true)} title="Multi-agent workflows">
                 &#129302; Agents
               </button>
+              <button className="toolbar-btn" onClick={handleOpenSystemPrompt} title="Custom instructions (Ctrl+,)">
+                &#9881; Prompt
+              </button>
             </div>
           )}
 
           <button
             className="toolbar-btn restart-btn"
             onClick={handleRestart}
-            title="Restart session"
+            title="New chat (Ctrl+N)"
           >
             &#8634;
           </button>
@@ -412,17 +664,82 @@ function App() {
           </div>
         )}
 
+        {/* Search overlay */}
+        {showSearch && (
+          <div className="search-overlay">
+            <div className="search-panel">
+              <div className="search-header">
+                <input
+                  className="search-input"
+                  type="text"
+                  placeholder="Search conversations..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                  autoFocus
+                />
+                <button className="search-btn" onClick={handleSearch}>Search</button>
+                <button className="search-close" onClick={() => setShowSearch(false)}>&times;</button>
+              </div>
+              {searchResults.length > 0 && (
+                <div className="search-results">
+                  {searchResults.map((r, i) => (
+                    <div key={i} className="search-result-item">
+                      <span className="search-result-role">{r.role}</span>
+                      <span className="search-result-session">{r.session_id}</span>
+                      <p className="search-result-snippet">{r.snippet}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* System Prompt Modal */}
+        {showSystemPrompt && (
+          <div className="modal-overlay" onClick={() => setShowSystemPrompt(false)}>
+            <div className="system-prompt-modal" onClick={(e) => e.stopPropagation()}>
+              <h3>Custom Instructions</h3>
+              <p className="system-prompt-desc">Set a system prompt to customize how the assistant behaves.</p>
+              <textarea
+                className="system-prompt-textarea"
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                rows={8}
+                placeholder="You are a helpful assistant..."
+              />
+              <div className="system-prompt-actions">
+                <button className="system-prompt-save" onClick={handleSaveSystemPrompt}>
+                  Save
+                </button>
+                <button className="system-prompt-cancel" onClick={() => setShowSystemPrompt(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Timeline — replaces ChatPane messages */}
         <TimelineView
           entries={state.timeline}
           isTyping={state.isTyping}
+          isStreaming={state.isStreaming}
+          streamingText={state.streamingText}
           onViewToolDetail={(tool) => setViewingTool(tool)}
+          onStopGeneration={handleStopGeneration}
+          onEditMessage={handleEditMessage}
+          onRegenerateMessage={handleRegenerateMessage}
         />
 
         {/* Input */}
         <InputBar
           slashCommands={SLASH_COMMANDS}
           onSend={handleSend}
+          onSendWithFiles={handleSendWithFiles}
+          isStreaming={state.isStreaming}
+          onStopGeneration={handleStopGeneration}
         />
       </div>
 

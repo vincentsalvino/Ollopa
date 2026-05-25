@@ -376,6 +376,87 @@ fn update_heartbeat(project_path: Option<&str>, session_id: &str) {
     }
 }
 
+/// Public wrapper for finalize_session (used by lib.rs resume_conversation).
+/// First tries with project_path, then scans all snapshots by session_id.
+pub fn finalize_session_pub(project_path: Option<&str>, session_id: &str, is_crash: bool) {
+    let path = snapshot_path(project_path, session_id);
+    if path.exists() {
+        finalize_session(project_path, session_id, is_crash);
+        return;
+    }
+    // Scan all snapshots
+    let dir = sessions_dir();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().map_or(true, |e| e != "json") {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&p) {
+                if let Ok(mut snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+                    if snapshot.session_id == session_id {
+                        snapshot.status = if is_crash {
+                            SessionStatus::Crashed
+                        } else {
+                            SessionStatus::Completed
+                        };
+                        snapshot.updated_at = current_timestamp_ms();
+                        snapshot.duration_ms = snapshot.updated_at.saturating_sub(snapshot.created_at);
+                        let _ = serde_json::to_string_pretty(&snapshot)
+                            .ok()
+                            .and_then(|json| fs::write(&p, json).ok());
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Get the model from a session snapshot.
+pub fn get_session_model(session_id: &str) -> Option<String> {
+    let dir = sessions_dir();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+                    if snapshot.session_id == session_id {
+                        return Some(snapshot.model);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Re-activate a session snapshot (set status back to Active for continued use).
+/// Searches all snapshot files by session_id to handle different project paths.
+pub fn reactivate_session(_project_path: Option<&str>, session_id: &str) {
+    let dir = sessions_dir();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(true, |e| e != "json") {
+                continue;
+            }
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(mut snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+                    if snapshot.session_id == session_id {
+                        snapshot.status = SessionStatus::Active;
+                        snapshot.updated_at = current_timestamp_ms();
+                        let _ = serde_json::to_string_pretty(&snapshot)
+                            .ok()
+                            .and_then(|json| fs::write(&path, json).ok());
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Finalize a session snapshot (mark as Completed or Crashed).
 fn finalize_session(project_path: Option<&str>, session_id: &str, is_crash: bool) {
     let path = snapshot_path(project_path, session_id);

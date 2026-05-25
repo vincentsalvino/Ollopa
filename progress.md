@@ -463,6 +463,97 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 
 ---
 
+## Phase 9 — Competitive Feature Parity
+
+**Status: COMPLETE**
+
+### Goals
+- Close critical UX gaps vs ChatGPT Desktop, Claude Desktop, Cursor, etc.
+- Streaming display, markdown rendering, message actions, file upload, search, model selector, keyboard shortcuts
+
+### What Was Built
+
+#### Critical (Red) — Users Expect These
+- **Streaming display** — Tokens appear in real-time as the API streams them. `StreamingChunk` events emitted per-token from backend, accumulated in frontend reducer, rendered via `StreamingBubble` component with blinking cursor
+- **Full markdown rendering** — Headings (h1-h6), lists (ordered/unordered), tables, blockquotes, horizontal rules, links, images, bold, italic, strikethrough, inline code all rendered properly in `MessageBubble.tsx`
+- **Copy button on messages** — Every message bubble shows copy/edit/regenerate buttons on hover
+- **File/image upload** — Attach files via button or drag-and-drop. File contents sent inline with message. Attached files preview with remove buttons
+- **Search in conversations** — Full-text search across all saved conversations via `search_conversations` backend command. Results show session ID, role, and snippet with context
+
+#### Important (Yellow) — Differentiators
+- **Model selector in UI** — Dropdown in toolbar to switch between models (DeepSeek, Claude, GPT-4o, etc.) mid-conversation via `set_model` backend command
+- **Stop/cancel generation** — Stop button in input bar and inline during streaming. Uses `CancellationToken` in backend to abort API request mid-stream. Partial text preserved with "[Generation stopped]" marker
+- **Message editing** — Edit button on user messages opens inline editor. Save & Resend re-sends the edited message
+- **Response regeneration** — Retry button on assistant messages re-sends the last user message to get a different response
+- **Export conversations** — Export as Markdown or JSON via toolbar dropdown. Downloads file directly
+- **Keyboard shortcuts** — Ctrl+N (new chat), Ctrl+Shift+S (search), Ctrl+Shift+E (export), Ctrl+, (system prompt), Ctrl+Shift+M (model selector), Escape (close modals)
+- **System prompt customization** — Modal dialog to set custom instructions. Persisted in API client via `set_system_prompt` / `get_system_prompt` commands
+
+#### Nice to Have (Green)
+- **Syntax highlighting** — Keyword-based highlighting for 12+ languages (JS, TS, Python, Rust, Go, Java, CSS, HTML, JSON, Bash, SQL + aliases). Custom highlighter with keyword/type/builtin/string/comment/number token classes
+- **Dark/light theme persistence** — Theme saved to localStorage and restored on app restart
+
+### Backend Changes
+
+#### New AppEvent Variants (claude_events.rs)
+- `StreamingChunk { text, model }` — Emitted per-token during streaming
+- `GenerationStopped { partial_text, model }` — Emitted when user cancels generation
+
+#### New API Client Features (api_client.rs)
+- `CancellationToken` — Tokio-based cancellation for in-flight API requests
+- `cancel_generation()` — Cancel current streaming request
+- `set_system_prompt()` / `system_prompt()` — Custom system prompt management
+- `set_model()` / `current_model()` — Runtime model switching
+- `edit_message_at()` — Edit and truncate conversation history
+- `get_messages()` — Export conversation history
+- `search_conversations()` — Full-text search across saved conversations
+- `ConversationSearchResult` — Search result struct with session_id, snippet, score
+
+#### New Backend Commands (lib.rs — 9 new)
+- `stop_generation` — Cancel in-progress API streaming
+- `set_system_prompt` / `get_system_prompt` — System prompt CRUD
+- `set_model` / `get_current_model` — Model switching
+- `edit_message` — Edit conversation message at index
+- `export_conversation` — Export as markdown or JSON
+- `search_conversations` — Search across saved conversations
+
+#### Dependencies
+- `tokio-util = "0.7"` — For `CancellationToken`
+
+### Frontend Changes
+
+#### Updated Files
+- **`types.ts`** — Added `StreamingChunkEvent`, `GenerationStoppedEvent`, `ConversationSearchResult`, `isStreaming`/`streamingText` to `EventStoreState`
+- **`useEventStore.ts`** — New `streaming_chunk` and `generation_stopped` event handlers, `STOP_STREAMING` action, `stopStreaming` dispatch
+- **`MessageBubble.tsx`** — Complete rewrite: full markdown parser (code blocks, headings, lists, tables, blockquotes, links, images), syntax highlighting (12+ languages), copy/edit/regenerate buttons, streaming bubble component
+- **`TimelineView.tsx`** — Streaming display with real-time text, stop generation button, edit/regenerate callback passthrough
+- **`TimelineEntry.tsx`** — Edit/regenerate callback props passed to MessageBubble
+- **`InputBar.tsx`** — File upload (button + drag-and-drop), attached files preview, stop generation button during streaming
+- **`App.tsx`** — Model selector dropdown, search overlay, export menu, system prompt modal, keyboard shortcuts, theme persistence via localStorage, file upload handler, stop generation handler, message edit/regenerate handlers
+- **`index.css`** — ~600 lines of new styles for streaming cursor, message actions, markdown elements, syntax highlighting, model selector, search panel, export menu, system prompt modal, file attachments, stop button
+
+### Success Criteria
+- [x] Streaming display shows tokens appearing in real-time
+- [x] Markdown rendering handles headings, lists, tables, blockquotes, links, images
+- [x] Copy button available on every message
+- [x] Files can be attached via button or drag-and-drop
+- [x] Conversations searchable across sessions
+- [x] Model switchable via dropdown without restart
+- [x] Generation can be stopped mid-stream
+- [x] User messages editable with re-send
+- [x] Assistant responses regeneratable
+- [x] Conversations exportable as Markdown or JSON
+- [x] Keyboard shortcuts for all major actions
+- [x] System prompt customizable via UI
+- [x] Code blocks have language-specific syntax highlighting
+- [x] Theme preference persists across restarts
+
+### Build Status
+- `npx tsc --noEmit` — 0 errors
+- `npx vite build` — 60 modules, clean
+
+---
+
 ## File Inventory
 
 ### Backend (src-tauri/src/)

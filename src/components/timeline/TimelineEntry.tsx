@@ -16,9 +16,11 @@ interface Props {
   entry: TEntry;
   onViewToolDetail?: (tool: ToolUseData) => void;
   isLast?: boolean;
+  onEditMessage?: (newContent: string) => void;
+  onRegenerateMessage?: () => void;
 }
 
-export default function TimelineEntry({ entry, onViewToolDetail, isLast }: Props) {
+export default function TimelineEntry({ entry, onViewToolDetail, isLast, onEditMessage, onRegenerateMessage }: Props) {
   const time = new Date(entry.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -37,7 +39,7 @@ export default function TimelineEntry({ entry, onViewToolDetail, isLast }: Props
             {!isLast && <div className="tl-connector" />}
           </div>
           <div className="tl-content">
-            <MessageBubble content={d.content} variant="user" />
+            <MessageBubble content={d.content} variant="user" onEdit={onEditMessage} />
             <div className="tl-time">{time}</div>
           </div>
         </div>
@@ -55,7 +57,7 @@ export default function TimelineEntry({ entry, onViewToolDetail, isLast }: Props
             {!isLast && <div className="tl-connector" />}
           </div>
           <div className="tl-content">
-            <MessageBubble content={d.text} variant="assistant" />
+            <MessageBubble content={d.text} variant="assistant" onRegenerate={onRegenerateMessage} />
             <div className="tl-time">
               {time} &middot; {d.model}
             </div>
