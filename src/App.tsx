@@ -698,16 +698,34 @@ function App() {
                   <div className="project-dropdown-divider" />
                 )}
                 {recentProjects.map((p) => (
-                  <button
+                  <div
                     key={p}
                     className={`project-dropdown-item ${
                       p === projectPath ? "active" : ""
                     }`}
-                    onClick={() => switchToProject(p)}
                   >
-                    {p.split(/[/\\]/).pop()}
-                    <span className="project-path-hint">{p}</span>
-                  </button>
+                    <button
+                      className="project-dropdown-select"
+                      onClick={() => switchToProject(p)}
+                    >
+                      {p.split(/[/\\]/).pop()}
+                      <span className="project-path-hint">{p}</span>
+                    </button>
+                    <button
+                      className="project-remove-btn"
+                      title="Remove from recent projects"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRecentProjects((prev) => prev.filter((x) => x !== p));
+                        if (p === projectPath) {
+                          setProjectPath(null);
+                        }
+                        addToast("Project removed from list", "info");
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
