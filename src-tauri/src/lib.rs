@@ -15,7 +15,7 @@ mod token_optimizer;
 mod visual_memory;
 
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 struct AppState {
