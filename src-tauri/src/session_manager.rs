@@ -1,5 +1,5 @@
+use crate::api_client::DirectApiClient;
 use crate::claude_events::AppEvent;
-use crate::claude_process::ClaudeProcess;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -17,6 +17,9 @@ pub struct SessionSnapshot {
     pub status: SessionStatus,
     pub cost_usd: f64,
     pub duration_ms: u64,
+    pub title: Option<String>,
+    #[serde(default)]
+    pub api_session_id: Option<String>,
     pub events: Vec<PersistedEvent>,
 }
 
@@ -49,9 +52,9 @@ pub struct SessionMeta {
     pub cost_usd: f64,
 }
 
-/// Manages Claude process lifecycle and session persistence.
+/// Manages session lifecycle and API communication.
 pub struct SessionManager {
-    pub process: Option<ClaudeProcess>,
+    pub api_client: Option<DirectApiClient>,
     pub working_dir: Option<String>,
     pub session_id: Option<String>,
     pub model: String,
@@ -61,7 +64,7 @@ pub struct SessionManager {
 impl SessionManager {
     pub fn new() -> Self {
         Self {
-            process: None,
+            api_client: None,
             working_dir: None,
             session_id: None,
             model: "unknown".to_string(),
@@ -69,78 +72,126 @@ impl SessionManager {
         }
     }
 
-    /// Start a new Claude session with automatic snapshot creation.
+    /// Start a new session: initialize the direct API client.
     pub async fn start(
         &mut self,
         app_handle: AppHandle,
         working_dir: Option<String>,
-        initial_prompt: Option<String>,
+        _initial_prompt: Option<String>,
     ) -> Result<(), String> {
-        // Kill existing process if any
-        if let Some(ref mut proc) = self.process {
-            let _ = proc.kill().await;
-        }
         self.stop_heartbeat();
-
         self.working_dir = working_dir.clone();
 
         // Generate session ID
         let sid = format!("session-{}", current_timestamp_ms());
         self.session_id = Some(sid.clone());
 
-        let process =
-            ClaudeProcess::spawn(app_handle.clone(), working_dir.clone(), initial_prompt).await?;
-
-        let _ = app_handle.emit(
-            "app-event",
-            AppEvent::StatusUpdate {
-                status: "starting".to_string(),
-                detail: "Claude process spawned, waiting for initialization...".to_string(),
-            },
-        );
+        // Create direct API client
+        match DirectApiClient::new(&app_handle) {
+            Ok(client) => {
+                self.model = client.model().to_string();
+                self.api_client = Some(client);
+            }
+            Err(e) => {
+                let _ = app_handle.emit(
+                    "app-event",
+                    AppEvent::Error {
+                        message: format!("API client init failed: {}", e),
+                        recoverable: true,
+                    },
+                );
+            }
+        }
 
         // Mark any previous crashed sessions
         mark_crashed_sessions();
 
-        // Create initial snapshot
-        let snapshot = SessionSnapshot {
-            session_id: sid.clone(),
-            project_path: self.working_dir.clone(),
-            model: self.model.clone(),
-            created_at: current_timestamp_ms(),
-            updated_at: current_timestamp_ms(),
-            message_count: 0,
-            status: SessionStatus::Active,
-            cost_usd: 0.0,
-            duration_ms: 0,
-            events: Vec::new(),
-        };
-        let _ = save_snapshot(self.working_dir.as_deref(), &snapshot);
+        // Snapshot is created lazily on first message (see send_input)
+        // so empty sessions don't clutter history
+
+        // Emit session ready status
+        let _ = app_handle.emit(
+            "app-event",
+            AppEvent::StatusUpdate {
+                status: "ready".to_string(),
+                detail: "Session ready. Type a message to begin.".to_string(),
+            },
+        );
 
         // Start heartbeat
         self.start_heartbeat(app_handle.clone());
 
-        self.process = Some(process);
         Ok(())
     }
 
-    /// Send user input to the running Claude process.
-    pub async fn send_input(&self, message: &str) -> Result<(), String> {
-        match &self.process {
-            Some(proc) => proc.send_message(message).await,
-            None => Err("No active session".to_string()),
+    /// Send user input via direct API call.
+    pub async fn send_input(
+        &mut self,
+        message: &str,
+        app_handle: AppHandle,
+    ) -> Result<(), String> {
+        // Create snapshot lazily on first message
+        if let Some(ref sid) = self.session_id {
+            ensure_snapshot_exists(
+                self.working_dir.as_deref(),
+                sid,
+                &self.model,
+                self.api_client.as_ref().map(|c| c.session_id().to_string()),
+            );
+            set_session_title_if_empty(self.working_dir.as_deref(), sid, message);
         }
+
+        // Record user message event to snapshot
+        if let Some(ref sid) = self.session_id {
+            append_event_to_snapshot(
+                self.working_dir.as_deref(),
+                sid,
+                &AppEvent::UserMessage {
+                    text: message.to_string(),
+                },
+            );
+        }
+
+        let result = match &mut self.api_client {
+            Some(client) => client.send_message(message, &app_handle).await,
+            None => {
+                let mut client = DirectApiClient::new(&app_handle)?;
+                let result = client.send_message(message, &app_handle).await;
+                self.api_client = Some(client);
+                result
+            }
+        };
+
+        // Record assistant response event to snapshot
+        if result.is_ok() {
+            if let Some(ref client) = self.api_client {
+                if let Some(last_msg) = client.last_assistant_message() {
+                    if let Some(ref sid) = self.session_id {
+                        append_event_to_snapshot(
+                            self.working_dir.as_deref(),
+                            sid,
+                            &AppEvent::AssistantMessage {
+                                text: last_msg,
+                                model: self.model.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        result
     }
 
-    /// Restart the session (kill + spawn new).
+    /// Restart the session.
     pub async fn restart(
         &mut self,
         app_handle: AppHandle,
-        initial_prompt: Option<String>,
+        _initial_prompt: Option<String>,
     ) -> Result<(), String> {
         let working_dir = self.working_dir.clone();
         self.stop().await?;
-        self.start(app_handle, working_dir, initial_prompt).await
+        self.start(app_handle, working_dir, None).await
     }
 
     /// Stop the current session and finalize snapshot.
@@ -151,17 +202,15 @@ impl SessionManager {
             finalize_session(self.working_dir.as_deref(), sid, false);
         }
 
-        if let Some(ref mut proc) = self.process {
-            proc.kill().await?;
-        }
-        self.process = None;
+        self.api_client = None;
         self.session_id = None;
         Ok(())
     }
 
     /// Check if a session is currently active.
+    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
-        self.process.is_some()
+        self.api_client.is_some()
     }
 
     /// Set the working directory for next session.
@@ -170,6 +219,7 @@ impl SessionManager {
     }
 
     /// Record an event to the current session's snapshot.
+    #[allow(dead_code)]
     pub fn record_event(&self, event: &AppEvent) {
         if let Some(ref sid) = self.session_id {
             append_event_to_snapshot(self.working_dir.as_deref(), sid, event);
@@ -250,7 +300,7 @@ fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event:
             snapshot.message_count = snapshot
                 .events
                 .iter()
-                .filter(|e| matches!(e.event, AppEvent::AssistantMessage { .. }))
+                .filter(|e| matches!(e.event, AppEvent::AssistantMessage { .. } | AppEvent::UserMessage { .. }))
                 .count() as u32;
 
             if let AppEvent::TokenUsage { cost_usd, .. } = event {
@@ -260,6 +310,55 @@ fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event:
             let _ = serde_json::to_string_pretty(&snapshot)
                 .ok()
                 .and_then(|json| fs::write(&path, json).ok());
+        }
+    }
+}
+
+/// Create a snapshot file if it doesn't already exist (lazy creation on first message).
+fn ensure_snapshot_exists(
+    project_path: Option<&str>,
+    session_id: &str,
+    model: &str,
+    api_session_id: Option<String>,
+) {
+    let path = snapshot_path(project_path, session_id);
+    if path.exists() {
+        return;
+    }
+    let snapshot = SessionSnapshot {
+        session_id: session_id.to_string(),
+        project_path: project_path.map(|s| s.to_string()),
+        model: model.to_string(),
+        created_at: current_timestamp_ms(),
+        updated_at: current_timestamp_ms(),
+        message_count: 0,
+        status: SessionStatus::Active,
+        cost_usd: 0.0,
+        duration_ms: 0,
+        title: None,
+        api_session_id,
+        events: Vec::new(),
+    };
+    let _ = save_snapshot(project_path, &snapshot);
+}
+
+/// Set the session title from the first user message (only if not yet set).
+fn set_session_title_if_empty(project_path: Option<&str>, session_id: &str, message: &str) {
+    let path = snapshot_path(project_path, session_id);
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(mut snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+            if snapshot.title.is_none() {
+                // Truncate to reasonable length for display
+                let title = if message.len() > 60 {
+                    format!("{}...", &message[..57])
+                } else {
+                    message.to_string()
+                };
+                snapshot.title = Some(title);
+                let _ = serde_json::to_string_pretty(&snapshot)
+                    .ok()
+                    .and_then(|json| fs::write(&path, json).ok());
+            }
         }
     }
 }
@@ -345,9 +444,12 @@ pub fn list_sessions() -> Vec<SessionMeta> {
                 SessionStatus::Crashed => "crashed",
                 SessionStatus::Recovered => "recovered",
             };
+            let title = snapshot.title.clone().unwrap_or_else(|| {
+                format!("Model: {} | Events: {}", snapshot.model, snapshot.events.len())
+            });
             Some(SessionMeta {
                 key,
-                preview: format!("Model: {} | Events: {}", snapshot.model, snapshot.events.len()),
+                preview: title,
                 message_count: snapshot.message_count as usize,
                 status: status_str.to_string(),
                 project_path: snapshot.project_path.clone(),
@@ -364,6 +466,7 @@ pub fn list_sessions() -> Vec<SessionMeta> {
 }
 
 /// Load a session's events for replay.
+/// Falls back to conversation messages if snapshot events are empty.
 pub fn load_session_events(session_id: &str) -> Result<Vec<PersistedEvent>, String> {
     let dir = sessions_dir();
     let entries = fs::read_dir(&dir)
@@ -374,13 +477,86 @@ pub fn load_session_events(session_id: &str) -> Result<Vec<PersistedEvent>, Stri
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
                 if snapshot.session_id == session_id {
-                    return Ok(snapshot.events);
+                    // If snapshot has events, use them
+                    if !snapshot.events.is_empty() {
+                        return Ok(snapshot.events);
+                    }
+
+                    // Fallback: try loading from conversation persistence
+                    if let Some(ref api_sid) = snapshot.api_session_id {
+                        if let Some(messages) = crate::api_client::DirectApiClient::load_messages(api_sid) {
+                            return Ok(convert_messages_to_events(&messages, &snapshot.model));
+                        }
+                    }
+
+                    // Second fallback: scan conversation files by timestamp
+                    let ts_str = session_id.strip_prefix("session-").unwrap_or("");
+                    if let Ok(ts) = ts_str.parse::<u64>() {
+                        if let Some(events) = find_conversation_by_timestamp(ts, &snapshot.model) {
+                            return Ok(events);
+                        }
+                    }
+
+                    return Ok(Vec::new());
                 }
             }
         }
     }
 
     Err(format!("Session not found: {}", session_id))
+}
+
+/// Convert ChatMessage list into PersistedEvent list for replay.
+fn convert_messages_to_events(messages: &[crate::api_client::ChatMessage], model: &str) -> Vec<PersistedEvent> {
+    let mut events = Vec::new();
+    let base_ts = current_timestamp_ms();
+    for (i, msg) in messages.iter().enumerate() {
+        // Skip system messages
+        if msg.role == "system" {
+            continue;
+        }
+        let event = if msg.role == "user" {
+            AppEvent::UserMessage {
+                text: msg.content.clone(),
+            }
+        } else {
+            AppEvent::AssistantMessage {
+                text: msg.content.clone(),
+                model: model.to_string(),
+            }
+        };
+        events.push(PersistedEvent {
+            timestamp_ms: base_ts + i as u64,
+            event,
+        });
+    }
+    events
+}
+
+/// Scan conversation files to find one created near the given timestamp.
+fn find_conversation_by_timestamp(session_ts: u64, model: &str) -> Option<Vec<PersistedEvent>> {
+    let conv_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude")
+        .join("conversations");
+    let entries = fs::read_dir(&conv_dir).ok()?;
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(ts_str) = name.strip_prefix("direct-").and_then(|s| s.strip_suffix(".json")) {
+            if let Ok(conv_ts) = ts_str.parse::<u64>() {
+                // Match if timestamps are within 5 seconds of each other
+                if conv_ts.abs_diff(session_ts) < 5000 {
+                    if let Some(messages) = crate::api_client::DirectApiClient::load_messages(&format!("direct-{}", ts_str)) {
+                        if messages.len() > 1 {
+                            return Some(convert_messages_to_events(&messages, model));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Get a session's snapshot for restore.

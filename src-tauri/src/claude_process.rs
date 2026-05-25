@@ -1,3 +1,6 @@
+// This module is kept for future Claude CLI mode support.
+// Currently, the app uses api_client.rs (direct API) instead.
+
 use crate::claude_events::{
     parse_stream_line, AppEvent, ClaudeStreamEvent, ContentBlock, Usage,
 };
@@ -19,32 +22,76 @@ pub struct ClaudeProcess {
     model: Arc<Mutex<String>>,
 }
 
+/// On Windows, find the actual Node.js entry point for the claude CLI.
+/// This bypasses cmd.exe which breaks stdin piping for interactive processes.
+fn find_claude_cli_js() -> Option<String> {
+    let output = std::process::Command::new("where.exe")
+        .arg("claude.cmd")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let paths = String::from_utf8_lossy(&output.stdout);
+    let cmd_path = paths.lines().next()?.trim().to_string();
+    let dir = std::path::Path::new(&cmd_path).parent()?;
+    // npm global layout: prefix/claude.cmd + prefix/node_modules/@anthropic-ai/claude-code/cli.js
+    let cli_js = dir
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code")
+        .join("cli.js");
+    if cli_js.exists() {
+        return Some(cli_js.to_string_lossy().to_string());
+    }
+    None
+}
+
 impl ClaudeProcess {
-    /// Spawn `claude --output-format stream-json` and start streaming events.
+    /// Spawn `claude -p "prompt" --output-format stream-json` for a single turn.
+    /// Uses `--resume` with a session ID for follow-up messages in the same conversation.
     pub async fn spawn(
         app_handle: AppHandle,
         working_dir: Option<String>,
-        initial_prompt: Option<String>,
+        prompt: Option<String>,
+        resume_session_id: Option<String>,
     ) -> Result<Self, String> {
-        let mut cmd = Command::new("claude");
-        cmd.arg("--output-format")
-            .arg("stream-json")
-            .stdin(Stdio::piped())
+        // On Windows, npm-installed CLIs are .cmd wrappers. Resolve the
+        // actual Node.js entry point to get clean stdin/stdout pipes.
+        let mut cmd = if cfg!(windows) {
+            if let Some(cli_path) = find_claude_cli_js() {
+                let mut c = Command::new("node");
+                c.arg(&cli_path);
+                c
+            } else {
+                let mut c = Command::new("cmd");
+                c.args(["/C", "claude"]);
+                c
+            }
+        } else {
+            Command::new("claude")
+        };
+
+        // Always use -p for single-turn stream-json mode
+        if let Some(ref p) = prompt {
+            cmd.arg("-p").arg(p);
+        }
+
+        cmd.arg("--output-format").arg("stream-json").arg("--verbose");
+
+        // Resume previous conversation if we have a session ID
+        if let Some(ref sid) = resume_session_id {
+            cmd.arg("--resume").arg(sid);
+        }
+
+        // Use null stdin since we pass prompt via -p (avoids 3s stdin warning)
+        cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         if let Some(ref dir) = working_dir {
             cmd.current_dir(dir);
         }
-
-        // If initial prompt provided, pass via --print flag (non-interactive single turn)
-        // Otherwise launch in interactive mode by passing -p with stdin
-        if let Some(ref prompt) = initial_prompt {
-            cmd.arg("-p").arg(prompt);
-        }
-
-        // Remove conflicting auth token
-        cmd.env_remove("ANTHROPIC_AUTH_TOKEN");
 
         let mut child = cmd
             .spawn()
@@ -60,21 +107,9 @@ impl ClaudeProcess {
             .take()
             .ok_or_else(|| "Failed to capture stderr".to_string())?;
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "Failed to capture stdin".to_string())?;
-
-        let (stdin_tx, stdin_rx) = mpsc::channel::<String>(64);
+        let (stdin_tx, _stdin_rx) = mpsc::channel::<String>(64);
         let session_id = Arc::new(Mutex::new(None::<String>));
         let model = Arc::new(Mutex::new("unknown".to_string()));
-
-        // Spawn stdin writer task
-        let stdin_mutex = Arc::new(Mutex::new(stdin));
-        let stdin_clone = stdin_mutex.clone();
-        tokio::spawn(async move {
-            Self::stdin_writer(stdin_clone, stdin_rx).await;
-        });
 
         // Spawn stdout reader task
         let app_clone = app_handle.clone();

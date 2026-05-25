@@ -58,6 +58,9 @@ function App() {
   // Agent panel
   const [showAgentPanel, setShowAgentPanel] = useState(false);
 
+  // Toolbar tools toggle
+  const [showTools, setShowTools] = useState(false);
+
   // Env / Status
   const [envWarning, setEnvWarning] = useState<string | null>(null);
   const [compactWarningDismissed, setCompactWarningDismissed] = useState(false);
@@ -89,11 +92,13 @@ function App() {
 
   // ═══════ Toast ═══════
 
+  const toastCounter = useState(() => ({ current: 0 }))[0];
   const addToast = useCallback(
     (text: string, type: ToastMessage["type"] = "info") => {
-      setToasts((prev) => [...prev, { id: Date.now(), text, type }]);
+      toastCounter.current += 1;
+      setToasts((prev) => [...prev, { id: toastCounter.current, text, type }]);
     },
-    []
+    [toastCounter]
   );
 
   const dismissToast = useCallback((id: number) => {
@@ -339,57 +344,48 @@ function App() {
             </span>
           </div>
 
-          <button className="toolbar-btn" onClick={handleSaveMemory}>
-            Save Memory
-          </button>
           <button
-            className={`toolbar-btn ${
-              showCompactWarning ? "compact-warning" : ""
-            }`}
-            onClick={handleCompact}
-            title={
-              showCompactWarning
-                ? "Context getting full — consider /compact"
-                : "Compact context"
-            }
+            className="toolbar-btn tools-toggle-btn"
+            onClick={() => setShowTools((s) => !s)}
+            title={showTools ? "Hide tools" : "Show tools"}
           >
-            Compact
-            {showCompactWarning && <span className="compact-badge" />}
+            &#9776;
           </button>
-          <button
-            className="toolbar-btn"
-            onClick={() => setShowBrainPanel(true)}
-            title="Workspace intelligence"
-          >
-            Brain
-          </button>
-          <button
-            className="toolbar-btn"
-            onClick={() => setShowGraphPanel(true)}
-            title="Visual memory graphs"
-          >
-            Graphs
-          </button>
-          <button
-            className="toolbar-btn"
-            onClick={() => setShowTokenPanel(true)}
-            title="Token optimization & budgeting"
-          >
-            Tokens
-          </button>
-          <button
-            className="toolbar-btn"
-            onClick={() => setShowAgentPanel(true)}
-            title="Multi-agent workflows & provider routing"
-          >
-            Agents
-          </button>
+
+          {showTools && (
+            <div className="toolbar-tools">
+              <button className="toolbar-btn" onClick={handleSaveMemory} title="Save memory">
+                &#128190; Memory
+              </button>
+              <button
+                className={`toolbar-btn ${showCompactWarning ? "compact-warning" : ""}`}
+                onClick={handleCompact}
+                title={showCompactWarning ? "Context getting full" : "Compact context"}
+              >
+                &#128230; Compact
+                {showCompactWarning && <span className="compact-badge" />}
+              </button>
+              <button className="toolbar-btn" onClick={() => setShowBrainPanel(true)} title="Workspace intelligence">
+                &#129504; Brain
+              </button>
+              <button className="toolbar-btn" onClick={() => setShowGraphPanel(true)} title="Visual memory graphs">
+                &#128200; Graphs
+              </button>
+              <button className="toolbar-btn" onClick={() => setShowTokenPanel(true)} title="Token optimization">
+                &#127919; Tokens
+              </button>
+              <button className="toolbar-btn" onClick={() => setShowAgentPanel(true)} title="Multi-agent workflows">
+                &#129302; Agents
+              </button>
+            </div>
+          )}
+
           <button
             className="toolbar-btn restart-btn"
             onClick={handleRestart}
             title="Restart session"
           >
-            &#8634; Restart
+            &#8634;
           </button>
           <button
             className="theme-toggle"
@@ -469,7 +465,6 @@ function App() {
         onToast={addToast}
         onRestore={(events: PersistedEvent[]) => {
           replayEvents(events.map((e) => e.event));
-          addToast(`Restored ${events.length} events from session`, "success");
         }}
       />
 

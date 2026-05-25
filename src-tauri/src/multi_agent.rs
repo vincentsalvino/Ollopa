@@ -340,6 +340,15 @@ pub fn create_workflow(
     Ok(workflow)
 }
 
+/// Save/update an existing workflow
+pub fn save_workflow(workflow: &Workflow) -> Result<(), String> {
+    ensure_dirs();
+    let json = serde_json::to_string_pretty(workflow)
+        .map_err(|e| format!("Failed to serialize workflow: {}", e))?;
+    let path = workflows_dir().join(format!("{}.json", workflow.id));
+    fs::write(&path, json).map_err(|e| format!("Failed to save workflow: {}", e))
+}
+
 /// List all workflows
 pub fn list_workflows(project_path: Option<&str>) -> Vec<Workflow> {
     let mut results: Vec<Workflow> = Vec::new();
@@ -516,6 +525,7 @@ pub fn complete_task(id: &str, result: &str, success: bool) -> Result<AgentTask,
 }
 
 /// Delete a task
+#[allow(dead_code)]
 pub fn delete_task(id: &str) -> Result<(), String> {
     let path = tasks_dir().join(format!("{}.json", id));
     fs::remove_file(&path).map_err(|e| format!("Failed to delete task: {}", e))

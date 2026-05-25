@@ -109,6 +109,7 @@ fn current_timestamp_ms() -> u64 {
 // ═══════ Session Summaries ═══════
 
 /// Save a session summary
+#[allow(dead_code)]
 pub fn save_summary(summary: &SessionSummary) -> Result<(), String> {
     ensure_dirs();
     let path = summaries_dir().join(format!("{}.json", summary.session_id));
@@ -161,6 +162,7 @@ pub fn list_summaries(project_path: Option<&str>) -> Vec<SessionSummary> {
 }
 
 /// Get a specific summary
+#[allow(dead_code)]
 pub fn get_summary(session_id: &str) -> Result<SessionSummary, String> {
     let path = summaries_dir().join(format!("{}.json", session_id));
     let content = fs::read_to_string(&path)
@@ -176,6 +178,7 @@ pub fn delete_summary(session_id: &str) -> Result<(), String> {
 }
 
 /// Generate a compressed summary from session events (auto-summarize)
+#[allow(dead_code)]
 pub fn auto_summarize_session(
     session_id: &str,
     project_path: Option<&str>,
@@ -635,6 +638,7 @@ fn truncate_str(s: &str, max: usize) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn compact_json_input(input: &serde_json::Value) -> String {
     if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
         return truncate_str(cmd, 60);

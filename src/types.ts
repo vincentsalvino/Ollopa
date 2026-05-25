@@ -120,6 +120,11 @@ export interface SessionStartedEvent {
   tools: string[];
 }
 
+export interface UserMessageEvent {
+  type: "user_message";
+  text: string;
+}
+
 export interface AssistantMessageEvent {
   type: "assistant_message";
   text: string;
@@ -188,6 +193,7 @@ export interface ErrorEvent {
 
 export type AppEvent =
   | SessionStartedEvent
+  | UserMessageEvent
   | AssistantMessageEvent
   | ToolStartedEvent
   | ToolFinishedEvent
