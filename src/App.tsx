@@ -27,6 +27,7 @@ function App() {
     closeDiff,
     replayEvents,
     stopStreaming,
+    setModel,
     toolEntries,
     stats,
   } = useEventStore();
@@ -1046,8 +1047,15 @@ function App() {
         visible={showSessionSidebar}
         onClose={() => setShowSessionSidebar(false)}
         onToast={addToast}
-        onRestore={(events: PersistedEvent[]) => {
+        onRestore={async (events: PersistedEvent[]) => {
           replayEvents(events.map((e) => e.event));
+          // Ensure the model indicator shows the correct model after replay
+          try {
+            const model = await invoke<string>("get_current_model");
+            if (model && model !== "unknown") {
+              setModel(model);
+            }
+          } catch (_) {}
         }}
       />
 

@@ -228,6 +228,7 @@ impl DirectApiClient {
     }
 
     /// Get a fresh cancellation token for the next request.
+    #[allow(dead_code)]
     pub fn new_cancel_token(&mut self) -> Arc<CancellationToken> {
         let token = Arc::new(CancellationToken::new());
         self.cancel_token = token.clone();
@@ -251,6 +252,7 @@ impl DirectApiClient {
     }
 
     /// Get the current model name.
+    #[allow(dead_code)]
     pub fn current_model(&self) -> &str {
         &self.config.model
     }

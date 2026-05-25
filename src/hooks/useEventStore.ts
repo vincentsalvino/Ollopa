@@ -18,7 +18,8 @@ type Action =
   | { type: "RESOLVE_APPROVAL"; decision: "approved" | "denied" }
   | { type: "CLOSE_DIFF" }
   | { type: "REPLAY_EVENTS"; events: AppEvent[] }
-  | { type: "STOP_STREAMING" };
+  | { type: "STOP_STREAMING" }
+  | { type: "SET_MODEL"; model: string };
 
 // ═══════ Helpers ═══════
 
@@ -106,6 +107,9 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
       s.isTyping = false;
       return s;
     }
+
+    case "SET_MODEL":
+      return { ...state, sessionModel: action.model };
 
     case "PROCESS_EVENT":
       return processAppEvent(state, action.event);
@@ -349,6 +353,11 @@ export function useEventStore() {
     []
   );
 
+  const setModel = useCallback(
+    (model: string) => dispatch({ type: "SET_MODEL", model }),
+    []
+  );
+
   // Derived data
   const toolEntries = state.timeline.filter(
     (e) => e.kind === "tool_use"
@@ -377,6 +386,7 @@ export function useEventStore() {
     closeDiff,
     replayEvents,
     stopStreaming,
+    setModel,
     toolEntries,
     runningTools,
     stats,
