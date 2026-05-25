@@ -1,4 +1,5 @@
 mod api_client;
+mod api_keys;
 mod approval_manager;
 mod claude_events;
 #[allow(dead_code)]
@@ -806,6 +807,23 @@ async fn switch_provider(
     }
 }
 
+// ═══════ API Key Management ═══════
+
+#[tauri::command]
+fn list_api_keys() -> Vec<api_keys::ApiKeyInfo> {
+    api_keys::list_api_keys()
+}
+
+#[tauri::command]
+fn save_api_key(env_var: String, key_value: String) -> Result<(), String> {
+    api_keys::save_api_key(&env_var, &key_value)
+}
+
+#[tauri::command]
+fn delete_api_key(env_var: String) -> Result<(), String> {
+    api_keys::delete_api_key(&env_var)
+}
+
 // ═══════ Prompt Transformer ═══════
 
 #[tauri::command]
@@ -906,6 +924,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // Load saved API keys into env vars before anything else
+            api_keys::load_keys_into_env();
+
             let event_bus = Arc::new(event_bus::EventBus::new());
             let session = Arc::new(Mutex::new(session_manager::SessionManager::new()));
 
@@ -1009,6 +1030,9 @@ pub fn run() {
             web_search_save_settings,
             web_search_list_cache,
             web_search_clear_cache,
+            list_api_keys,
+            save_api_key,
+            delete_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

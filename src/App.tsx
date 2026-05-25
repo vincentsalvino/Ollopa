@@ -14,7 +14,7 @@ import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
-import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse } from "./types";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
@@ -101,6 +101,12 @@ function App() {
   // Template editor
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
 
+  // API Key management
+  const [showApiKeys, setShowApiKeys] = useState(false);
+  const [apiKeys, setApiKeys] = useState<ApiKeyInfo[]>([]);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [keyInput, setKeyInput] = useState("");
+
   // Available models (grouped by provider)
   const AVAILABLE_MODELS = [
     { group: "DeepSeek", models: ["deepseek-chat", "deepseek-coder", "deepseek-reasoner"] },
@@ -183,6 +189,7 @@ function App() {
         setShowProjectDropdown(false);
         setShowTransformPreview(false);
         setShowTemplateEditor(false);
+        setShowApiKeys(false);
       }
     };
 
@@ -517,6 +524,38 @@ function App() {
     }
   };
 
+  // ═══════ API Key Management ═══════
+
+  const loadApiKeys = async () => {
+    try {
+      const keys = await invoke<ApiKeyInfo[]>("list_api_keys");
+      setApiKeys(keys);
+    } catch (_) {}
+  };
+
+  const handleSaveApiKey = async (envVar: string) => {
+    if (!keyInput.trim()) return;
+    try {
+      await invoke("save_api_key", { envVar, keyValue: keyInput.trim() });
+      addToast("API key saved", "success");
+      setEditingKey(null);
+      setKeyInput("");
+      loadApiKeys();
+    } catch (e) {
+      addToast(`Failed to save key: ${e}`, "error");
+    }
+  };
+
+  const handleDeleteApiKey = async (envVar: string) => {
+    try {
+      await invoke("delete_api_key", { envVar });
+      addToast("API key removed", "info");
+      loadApiKeys();
+    } catch (e) {
+      addToast(`Failed to delete key: ${e}`, "error");
+    }
+  };
+
   // ═══════ Message Edit & Regenerate ═══════
 
   const handleEditMessage = async (_entryId: string, newContent: string) => {
@@ -612,6 +651,13 @@ function App() {
             </button>
             {showModelSelector && (
               <div className="model-dropdown grouped-model-dropdown">
+                <button
+                  className="model-dropdown-item api-key-btn"
+                  onClick={() => { setShowApiKeys(true); setShowModelSelector(false); loadApiKeys(); }}
+                >
+                  &#128273; Manage API Keys
+                </button>
+                <div className="model-dropdown-divider" />
                 {AVAILABLE_MODELS.map((group) => (
                   <div key={group.group} className="model-group">
                     <div className="model-group-label">{group.group}</div>
@@ -854,6 +900,61 @@ function App() {
                 <button className="system-prompt-cancel" onClick={() => setShowSystemPrompt(false)}>
                   Cancel
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* API Key Management Modal */}
+        {showApiKeys && (
+          <div className="modal-overlay" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>
+            <div className="api-keys-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="api-keys-header">
+                <h3>&#128273; API Keys</h3>
+                <button className="api-keys-close" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>&times;</button>
+              </div>
+              <p className="api-keys-desc">Add API keys for each provider. Keys are saved locally and loaded automatically on startup.</p>
+              <div className="api-keys-list">
+                {apiKeys.map((k) => (
+                  <div key={k.env_var} className="api-key-row">
+                    <div className="api-key-info">
+                      <span className="api-key-provider">{k.provider_name}</span>
+                      <span className="api-key-envvar">{k.env_var}</span>
+                    </div>
+                    {editingKey === k.env_var ? (
+                      <div className="api-key-edit">
+                        <input
+                          type="password"
+                          className="api-key-input"
+                          value={keyInput}
+                          onChange={(e) => setKeyInput(e.target.value)}
+                          placeholder={`Enter ${k.env_var}...`}
+                          autoFocus
+                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveApiKey(k.env_var); if (e.key === "Escape") { setEditingKey(null); setKeyInput(""); } }}
+                        />
+                        <button className="api-key-save-btn" onClick={() => handleSaveApiKey(k.env_var)}>Save</button>
+                        <button className="api-key-cancel-btn" onClick={() => { setEditingKey(null); setKeyInput(""); }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="api-key-actions">
+                        {k.is_set ? (
+                          <>
+                            <span className="api-key-masked">{k.masked_key}</span>
+                            <span className="api-key-status set">Active</span>
+                          </>
+                        ) : (
+                          <span className="api-key-status not-set">Not set</span>
+                        )}
+                        <button className="api-key-edit-btn" onClick={() => { setEditingKey(k.env_var); setKeyInput(""); }}>
+                          {k.is_set ? "Update" : "Add Key"}
+                        </button>
+                        {k.is_set && (
+                          <button className="api-key-delete-btn" onClick={() => handleDeleteApiKey(k.env_var)}>Remove</button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           </div>

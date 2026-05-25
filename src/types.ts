@@ -650,6 +650,16 @@ export interface WebSearchResponse {
   timestamp: number;
 }
 
+// ═══════ API Key Management Types ═══════
+
+export interface ApiKeyInfo {
+  provider_id: string;
+  provider_name: string;
+  env_var: string;
+  is_set: boolean;
+  masked_key: string;
+}
+
 // ═══════ Conversation Search ═══════
 
 export interface ConversationSearchResult {

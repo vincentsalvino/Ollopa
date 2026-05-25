@@ -5817,3 +5817,217 @@ h6.md-heading { font-size: 12px; }
   color: #fff;
   border-color: var(--accent);
 }
+
+/* ═══════ API Key Management Modal ═══════ */
+
+.api-keys-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 520px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.api-keys-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 8px;
+}
+
+.api-keys-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.api-keys-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 20px;
+  padding: 0 4px;
+}
+
+.api-keys-close:hover {
+  color: var(--danger);
+}
+
+.api-keys-desc {
+  margin: 0;
+  padding: 0 20px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.api-keys-list {
+  padding: 0 12px 16px;
+}
+
+.api-key-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--bg-surface);
+}
+
+.api-key-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.api-key-provider {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.api-key-envvar {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: var(--bg-primary);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.api-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.api-key-masked {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.api-key-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.api-key-status.set {
+  background: rgba(45, 212, 123, 0.15);
+  color: var(--success);
+}
+
+.api-key-status.not-set {
+  background: rgba(160, 160, 184, 0.1);
+  color: var(--text-muted);
+}
+
+.api-key-edit-btn,
+.api-key-delete-btn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.2s;
+}
+
+.api-key-edit-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.api-key-delete-btn {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: none;
+}
+
+.api-key-delete-btn:hover {
+  background: rgba(255, 71, 87, 0.1);
+}
+
+.api-key-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.api-key-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border-accent);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  outline: none;
+}
+
+.api-key-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.api-key-save-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+}
+
+.api-key-save-btn:hover {
+  opacity: 0.85;
+}
+
+.api-key-cancel-btn {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.api-key-cancel-btn:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
+/* Model dropdown divider + API key button */
+
+.model-dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.api-key-btn {
+  color: var(--accent) !important;
+  font-weight: 600;
+}
