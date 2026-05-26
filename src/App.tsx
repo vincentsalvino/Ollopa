@@ -70,8 +70,11 @@ function App() {
   // Brain search (Ctrl+K)
   const [showBrainSearch, setShowBrainSearch] = useState(false);
 
-  // Toolbar tools toggle
-  const [showTools, setShowTools] = useState(false);
+  // Settings popover
+  const [showSettingsPopover, setShowSettingsPopover] = useState(false);
+
+  // Dashboard collapsed
+  const [dashboardCollapsed, setDashboardCollapsed] = useState(false);
 
   // Env / Status
   const [envWarning, setEnvWarning] = useState<string | null>(null);
@@ -174,17 +177,9 @@ function App() {
 
   // Available models (grouped by provider)
   const AVAILABLE_MODELS = [
-    { group: "DeepSeek", models: ["deepseek-chat", "deepseek-coder", "deepseek-reasoner"] },
-    { group: "Claude", models: ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"] },
-    { group: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"] },
-    { group: "OpenRouter / Hermes", models: [
-      "nousresearch/hermes-3-llama-3.1-405b",
-      "nousresearch/hermes-3-llama-3.1-70b",
-      "openchat/openchat-3.6-8b",
-      "meta-llama/llama-3.1-405b-instruct",
-      "mistralai/mistral-large-2411",
-    ]},
-    { group: "Nous Research", models: ["hermes-3-llama-3.1-70b"] },
+    { group: "DeepSeek", models: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-coder", "deepseek-reasoner"] },
+    { group: "Anthropic", models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"] },
+    { group: "OpenAI", models: ["gpt-4o", "o3-mini"] },
   ];
   const ALL_MODELS = AVAILABLE_MODELS.flatMap((g) => g.models);
 
@@ -749,59 +744,39 @@ function App() {
       totalCost.input_tokens > 80000 ||
       state.sessionCost.input_tokens > 80000);
 
-  return (
-    <div className="app-container">
-      {/* ═══════ Main Panel ═══════ */}
-      <div className="chat-panel">
-        <div className="panel-bg panel-bg--chat" style={{ backgroundImage: `url(${bgChat})` }} />
-        {/* Env var warning banner */}
-        {envWarning && (
-          <div className="env-warning-banner">
-            <span>&#9888; {envWarning}</span>
-            <button
-              className="env-warning-close"
-              onClick={() => setEnvWarning(null)}
-            >
-              &times;
-            </button>
-          </div>
-        )}
+  const usedTokens = state.sessionCost.input_tokens + state.sessionCost.output_tokens;
+  const ctxPercentage = Math.min(100, (usedTokens / contextWindow) * 100);
+  const ctxClass = ctxPercentage >= 80 ? "danger" : ctxPercentage >= 50 ? "warning" : "";
+  const CIRC = 106.81;
+  const ringOffset = CIRC * (1 - ctxPercentage / 100);
 
-        {/* Toolbar */}
-        <div className="toolbar">
-          <button
-            className="toolbar-btn sessions-btn"
-            onClick={() => setShowSessionSidebar(true)}
-            title="Session history"
-          >
-            &#9776;
+  return (
+    <div className="app">
+      {/* ═══════ TOOLBAR ═══════ */}
+      <header className="toolbar">
+        <div className="toolbar-left">
+          <button className="tbtn" onClick={() => setShowSessionSidebar(true)} title="Session history">
+            <i className="fa-solid fa-bars" />
           </button>
 
-          {/* Model Selector */}
-          <div className="model-selector-wrapper">
+          {/* Model Pill Dropdown */}
+          <div className="dropdown-wrapper">
             <button
-              className="model-indicator model-selector-btn"
-              onClick={() => setShowModelSelector((s) => !s)}
-              title={`Model: ${state.sessionModel} (click to switch)`}
+              className={`model-pill model-indicator${showModelSelector ? " open" : ""}`}
+              onClick={() => { setShowModelSelector((s) => !s); setShowProjectDropdown(false); setShowExportMenu(false); setShowSettingsPopover(false); }}
             >
-              {state.sessionModel} &#9662;
+              <span>{state.sessionModel}</span>
+              <i className="fa-solid fa-chevron-down" />
             </button>
             {showModelSelector && (
-              <div className="model-dropdown grouped-model-dropdown">
-                <button
-                  className="model-dropdown-item api-key-btn"
-                  onClick={() => { setShowApiKeys(true); setShowModelSelector(false); loadApiKeys(); }}
-                >
-                  &#128273; Manage API Keys
-                </button>
-                <div className="model-dropdown-divider" />
+              <div className="dropdown">
                 {AVAILABLE_MODELS.map((group) => (
-                  <div key={group.group} className="model-group">
-                    <div className="model-group-label">{group.group}</div>
+                  <div key={group.group}>
+                    <div className="dropdown-section-label">{group.group}</div>
                     {group.models.map((m) => (
                       <button
                         key={m}
-                        className={`model-dropdown-item ${m === state.sessionModel ? "active" : ""}`}
+                        className={`dropdown-item${m === state.sessionModel ? " active" : ""}`}
                         onClick={() => handleSwitchModel(m)}
                       >
                         {m}
@@ -813,538 +788,387 @@ function App() {
             )}
           </div>
 
-          {/* Project Switcher */}
-          <div className="project-switcher">
+          {/* Project Pill */}
+          <div className="dropdown-wrapper">
             <button
-              className="toolbar-btn project-btn"
-              onClick={() => setShowProjectDropdown((s) => !s)}
-              title="Switch project"
+              className="project-pill"
+              onClick={() => { setShowProjectDropdown((s) => !s); setShowModelSelector(false); setShowExportMenu(false); setShowSettingsPopover(false); }}
             >
-              &#128193; {projectName || "No project"}
+              <i className="fa-solid fa-folder-open" />
+              <span>{projectName || "No project"}</span>
             </button>
             {showProjectDropdown && (
-              <div className="project-dropdown">
-                <button
-                  className="project-dropdown-item pick-folder"
-                  onClick={handlePickProject}
-                >
-                  &#128194; Browse folder...
+              <div className="dropdown">
+                <button className="dropdown-item" onClick={handlePickProject}>
+                  <i className="fa-solid fa-folder-plus" /> Browse folder…
                 </button>
-                {recentProjects.length > 0 && (
-                  <div className="project-dropdown-divider" />
-                )}
+                {recentProjects.length > 0 && <div className="dropdown-divider" />}
                 {recentProjects.map((p) => (
-                  <div
+                  <button
                     key={p}
-                    className={`project-dropdown-item ${
-                      p === projectPath ? "active" : ""
-                    }`}
+                    className={`dropdown-item${p === projectPath ? " active" : ""}`}
+                    onClick={() => switchToProject(p)}
                   >
-                    <button
-                      className="project-dropdown-select"
-                      onClick={() => switchToProject(p)}
-                    >
-                      {p.split(/[/\\]/).pop()}
-                      <span className="project-path-hint">{p}</span>
-                    </button>
-                    <button
-                      className="project-remove-btn"
-                      title="Remove from recent projects"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRecentProjects((prev) => prev.filter((x) => x !== p));
-                        if (p === projectPath) {
-                          setProjectPath(null);
-                        }
-                        addToast("Project removed from list", "info");
-                      }}
-                    >
-                      &times;
-                    </button>
-                  </div>
+                    <i className="fa-solid fa-folder" /> {p.split(/[/\\]/).pop()}
+                  </button>
                 ))}
               </div>
             )}
           </div>
+        </div>
 
+        {/* CENTER: token/cost bar */}
+        <div className="toolbar-center">
           <div className="token-bar">
-            <div className="token-progress">
-              <div
-                className="token-progress-fill"
-                style={{
-                  width: `${Math.min(
-                    (state.sessionCost.cost_usd / 1) * 100,
-                    100
-                  )}%`,
-                }}
-              />
+            <div className="token-track">
+              <div className="token-fill" style={{ width: `${Math.min((state.sessionCost.cost_usd / 1) * 100, 100)}%` }} />
             </div>
-            <span className="token-label">
-              ${state.sessionCost.cost_usd.toFixed(4)}
-            </span>
+            <span className="token-cost">${state.sessionCost.cost_usd.toFixed(4)}</span>
           </div>
+        </div>
 
-          {/* Context Window Usage Bar */}
-          {(() => {
-            const usedTokens = state.sessionCost.input_tokens + state.sessionCost.output_tokens;
-            const percentage = Math.min(100, (usedTokens / contextWindow) * 100);
-            const barColor = percentage > 80 ? 'var(--danger, #e03131)' : percentage > 50 ? 'var(--warning, #fab005)' : 'var(--success, #51cf66)';
-            return (
-              <div
-                className="context-bar"
-                title={`${usedTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${percentage.toFixed(0)}%)`}
-              >
-                <div
-                  className="context-bar-fill"
-                  style={{ width: `${percentage}%`, background: barColor }}
-                />
-              </div>
-            );
-          })()}
-
-          {/* Prompt Enhance toggle */}
+        {/* RIGHT: toggles + actions */}
+        <div className="toolbar-right">
           <button
-            className={`toolbar-btn enhance-toggle ${transformSettings.enabled ? "active" : ""}`}
+            className={`tbtn toggle enhance-toggle${transformSettings.enabled ? " active" : ""}`}
             onClick={handleToggleTransform}
-            title={transformSettings.enabled ? "Auto-enhance ON (click to disable)" : "Auto-enhance OFF (click to enable)"}
+            title={transformSettings.enabled ? "Auto-enhance ON" : "Auto-enhance OFF"}
           >
-            &#10024;
+            <i className="fa-solid fa-wand-magic-sparkles" />
           </button>
-
-          {/* Sound toggle */}
           <button
-            className={`toolbar-btn sound-toggle ${soundEnabled ? "active" : ""}`}
+            className={`tbtn toggle sound-toggle${soundEnabled ? " active" : ""}`}
             onClick={toggleSound}
-            title={soundEnabled ? "Sound ON (click to mute)" : "Sound OFF (click to enable)"}
+            title={soundEnabled ? "Sound ON" : "Sound OFF"}
           >
-            {soundEnabled ? "\uD83D\uDD0A" : "\uD83D\uDD07"}
+            <i className={`fa-solid ${soundEnabled ? "fa-volume-high" : "fa-volume-xmark"}`} />
           </button>
-
-          {/* Web Search toggle */}
           <button
-            className={`toolbar-btn web-search-toggle ${webSearchSettings.enabled ? "active" : ""}`}
+            className={`tbtn toggle web-search-toggle${webSearchSettings.enabled ? " active" : ""}`}
             onClick={handleToggleWebSearch}
-            title={webSearchSettings.enabled ? "Web search ON (click to disable)" : "Web search OFF (click to enable)"}
+            title={webSearchSettings.enabled ? "Web Search ON" : "Web Search OFF"}
           >
-            &#127760;{isSearching && <span className="search-spinner" />}
+            <i className="fa-solid fa-globe" />
+          </button>
+          <div className="toolbar-divider" />
+          <button className="tbtn" onClick={() => setShowSearch((s) => !s)} title="Search conversations">
+            <i className="fa-solid fa-magnifying-glass" />
           </button>
 
-          {/* Search button */}
-          <button
-            className="toolbar-btn"
-            onClick={() => setShowSearch((s) => !s)}
-            title="Search conversations (Ctrl+Shift+S)"
-          >
-            &#128269;
-          </button>
-
-          {/* Export button */}
-          <div className="export-wrapper">
+          {/* Export Dropdown */}
+          <div className="dropdown-wrapper">
             <button
-              className="toolbar-btn"
-              onClick={() => setShowExportMenu((s) => !s)}
-              title="Export conversation (Ctrl+Shift+E)"
+              className="tbtn"
+              onClick={() => { setShowExportMenu((s) => !s); setShowModelSelector(false); setShowProjectDropdown(false); setShowSettingsPopover(false); }}
+              title="Export"
             >
-              &#128190;
+              <i className="fa-solid fa-file-export" />
             </button>
             {showExportMenu && (
-              <div className="export-dropdown">
-                <button className="export-dropdown-item" onClick={() => handleExport("markdown")}>
-                  Export as Markdown
+              <div className="dropdown" style={{ minWidth: 176, right: 0, left: "auto" }}>
+                <button className="dropdown-item" onClick={() => handleExport("markdown")}>
+                  <i className="fa-brands fa-markdown" /> Export as Markdown
                 </button>
-                <button className="export-dropdown-item" onClick={() => handleExport("json")}>
-                  Export as JSON
+                <button className="dropdown-item" onClick={() => handleExport("json")}>
+                  <i className="fa-solid fa-code" /> Export as JSON
+                </button>
+              </div>
+            )}
+          </div>
+          <div className="toolbar-divider" />
+
+          {/* Settings Popover */}
+          <div className="popover-wrapper">
+            <button
+              className="tbtn"
+              onClick={() => { setShowSettingsPopover((s) => !s); setShowModelSelector(false); setShowProjectDropdown(false); setShowExportMenu(false); }}
+              title="Settings & Tools"
+            >
+              <i className="fa-solid fa-gear" style={{ transition: "transform 0.3s ease", transform: showSettingsPopover ? "rotate(55deg)" : "" }} />
+            </button>
+            {showSettingsPopover && (
+              <div className="settings-popover">
+                <div className="popover-title">Tools &amp; Settings</div>
+                <button className="popover-item" onClick={() => { handleSaveMemory(); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-floppy-disk" /><span>Memory</span>
+                </button>
+                <button className={`popover-item${showCompactWarning ? " compact-item warn" : ""}`} onClick={() => { handleCompact(); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-compress" /><span>Compact Context</span>
+                  {showCompactWarning && <span className="compact-badge">!</span>}
+                </button>
+                <div className="popover-divider" />
+                <button className="popover-item" onClick={() => { setShowBrainPanel(true); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-brain" /><span>Brain</span>
+                </button>
+                <button className="popover-item" onClick={() => { setShowGraphPanel(true); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-diagram-project" /><span>Graphs</span>
+                </button>
+                <button className="popover-item" onClick={() => { setShowTokenPanel(true); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-microchip" /><span>Tokens</span>
+                </button>
+                <button className="popover-item" onClick={() => { setShowAgentPanel(true); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-robot" /><span>Agents</span>
+                </button>
+                <button className="popover-item" onClick={() => { handleOpenSystemPrompt(); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-terminal" /><span>Prompt</span>
+                </button>
+                <div className="popover-divider" />
+                <button className="popover-item" onClick={() => { setShowApiKeys(true); loadApiKeys(); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-key" /><span>Manage API Keys</span>
                 </button>
               </div>
             )}
           </div>
 
-          <button
-            className="toolbar-btn tools-toggle-btn"
-            onClick={() => setShowTools((s) => !s)}
-            title={showTools ? "Hide tools" : "Show tools"}
-          >
-            &#9776;
+          <button className="tbtn restart-btn" onClick={handleRestart} title="New Chat (Ctrl+N)">
+            <i className="fa-solid fa-rotate-right" />
           </button>
+          <button className="tbtn theme-toggle" onClick={toggleTheme} title="Toggle theme">
+            <i className={`fa-solid ${theme === "dark" ? "fa-moon" : "fa-sun"}`} />
+          </button>
+        </div>
+      </header>
 
-          {showTools && (
-            <div className="toolbar-tools">
-              <button className="toolbar-btn" onClick={handleSaveMemory} title="Save memory">
-                &#128190; Memory
-              </button>
-              <button
-                className={`toolbar-btn ${showCompactWarning ? "compact-warning" : ""}`}
-                onClick={handleCompact}
-                title={showCompactWarning ? "Context getting full" : "Compact context"}
-              >
-                &#128230; Compact
-                {showCompactWarning && <span className="compact-badge" />}
-              </button>
-              <button className="toolbar-btn" onClick={() => setShowBrainPanel(true)} title="Workspace intelligence">
-                &#129504; Brain
-              </button>
-              <button className="toolbar-btn" onClick={() => setShowGraphPanel(true)} title="Visual memory graphs">
-                &#128200; Graphs
-              </button>
-              <button className="toolbar-btn" onClick={() => setShowTokenPanel(true)} title="Token optimization">
-                &#127919; Tokens
-              </button>
-              <button className="toolbar-btn" onClick={() => setShowAgentPanel(true)} title="Multi-agent workflows">
-                &#129302; Agents
-              </button>
-              <button className="toolbar-btn" onClick={handleOpenSystemPrompt} title="Custom instructions (Ctrl+,)">
-                &#9881; Prompt
-              </button>
+      {/* ═══════ COMPACT BANNER ═══════ */}
+      {showCompactWarning && !compactWarningDismissed && (
+        <div className="compact-banner">
+          <i className="fa-solid fa-triangle-exclamation" />
+          <span>Context at ~{Math.round(ctxPercentage)}% — compact now to preserve the window</span>
+          <button className="compact-now-btn" onClick={handleCompact}>Compact now</button>
+          <button className="compact-dismiss" onClick={() => setCompactWarningDismissed(true)}>&times;</button>
+        </div>
+      )}
+
+      {/* ═══════ ENV WARNING ═══════ */}
+      {envWarning && (
+        <div className="compact-banner" style={{ background: "rgba(245,166,35,0.09)", borderColor: "rgba(245,166,35,0.28)", color: "var(--warning)" }}>
+          <i className="fa-solid fa-triangle-exclamation" />
+          <span>{envWarning}</span>
+          <button className="compact-dismiss" onClick={() => setEnvWarning(null)}>&times;</button>
+        </div>
+      )}
+
+      {/* ═══════ MAIN ROW ═══════ */}
+      <div className="main-row">
+        {/* CHAT AREA */}
+        <main className="chat-area chat-panel">
+          <div className="panel-bg panel-bg--chat" style={{ backgroundImage: `url(${bgChat})` }} />
+
+          {/* Search overlay */}
+          {showSearch && (
+            <div className="search-overlay">
+              <div className="search-panel">
+                <div className="search-header">
+                  <input
+                    className="search-input"
+                    type="text"
+                    placeholder="Search conversations..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    autoFocus
+                  />
+                  <button className="search-btn" onClick={handleSearch}>Search</button>
+                  <button className="search-close" onClick={() => setShowSearch(false)}>&times;</button>
+                </div>
+                {searchResults.length > 0 && (
+                  <div className="search-results">
+                    {searchResults.map((r, i) => (
+                      <div key={i} className="search-result-item">
+                        <span className="search-result-role">{r.role}</span>
+                        <span className="search-result-session">{r.session_id}</span>
+                        <p className="search-result-snippet">{r.snippet}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
-          <button
-            className="toolbar-btn restart-btn"
-            onClick={handleRestart}
-            title="New chat (Ctrl+N)"
-          >
-            &#8634;
-          </button>
-          <button
-            className="theme-toggle"
-            onClick={toggleTheme}
-            title="Toggle theme"
-          >
-            {theme === "dark" ? "\u263E" : "\u2600"}
-          </button>
-        </div>
-
-        {/* Auto-compact warning bar */}
-        {showCompactWarning && (
-          <div className="compact-warning-bar">
-            <span>Context at ~80% — run /compact to save tokens</span>
-            <button className="compact-now-btn" onClick={handleCompact}>
-              Compact now
-            </button>
-            <button
-              className="compact-dismiss-btn"
-              onClick={() => setCompactWarningDismissed(true)}
-            >
-              &times;
-            </button>
-          </div>
-        )}
-
-        {/* Search overlay */}
-        {showSearch && (
-          <div className="search-overlay">
-            <div className="search-panel">
-              <div className="search-header">
-                <input
-                  className="search-input"
-                  type="text"
-                  placeholder="Search conversations..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                  autoFocus
-                />
-                <button className="search-btn" onClick={handleSearch}>Search</button>
-                <button className="search-close" onClick={() => setShowSearch(false)}>&times;</button>
-              </div>
-              {searchResults.length > 0 && (
-                <div className="search-results">
-                  {searchResults.map((r, i) => (
-                    <div key={i} className="search-result-item">
-                      <span className="search-result-role">{r.role}</span>
-                      <span className="search-result-session">{r.session_id}</span>
-                      <p className="search-result-snippet">{r.snippet}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* System Prompt Modal */}
-        {showSystemPrompt && (
-          <div className="modal-overlay" onClick={() => setShowSystemPrompt(false)}>
-            <div className="system-prompt-modal" onClick={(e) => e.stopPropagation()}>
-              <h3>Custom Instructions</h3>
-              <p className="system-prompt-desc">Set a system prompt to customize how the assistant behaves.</p>
-
-              {/* Template picker */}
-              {promptTemplates.length > 0 && (
-                <div className="template-picker">
-                  <select
-                    className="template-select"
-                    onChange={(e) => {
-                      const t = promptTemplates.find((t) => t.id === e.target.value);
-                      if (t) setSystemPrompt(t.template);
-                    }}
-                    defaultValue=""
-                  >
-                    <option value="" disabled>Load template...</option>
-                    {promptTemplates.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} {t.is_builtin ? "(built-in)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  {promptTemplates.filter((t) => !t.is_builtin).map((t) => (
-                    <button
-                      key={t.id}
-                      className="template-delete-btn"
-                      onClick={() => handleDeleteTemplate(t.id)}
-                      title={`Delete "${t.name}"`}
+          {/* System Prompt Modal */}
+          {showSystemPrompt && (
+            <div className="modal-overlay" onClick={() => setShowSystemPrompt(false)}>
+              <div className="system-prompt-modal" onClick={(e) => e.stopPropagation()}>
+                <h3>Custom Instructions</h3>
+                <p className="system-prompt-desc">Set a system prompt to customize how the assistant behaves.</p>
+                {promptTemplates.length > 0 && (
+                  <div className="template-picker">
+                    <select
+                      className="template-select"
+                      onChange={(e) => { const t = promptTemplates.find((t) => t.id === e.target.value); if (t) setSystemPrompt(t.template); }}
+                      defaultValue=""
                     >
-                      &times; {t.name}
-                    </button>
+                      <option value="" disabled>Load template...</option>
+                      {promptTemplates.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name} {t.is_builtin ? "(built-in)" : ""}</option>
+                      ))}
+                    </select>
+                    {promptTemplates.filter((t) => !t.is_builtin).map((t) => (
+                      <button key={t.id} className="template-delete-btn" onClick={() => handleDeleteTemplate(t.id)} title={`Delete "${t.name}"`}>
+                        &times; {t.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <textarea className="system-prompt-textarea" value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} rows={8} placeholder="You are a helpful assistant..." />
+                <div className="template-save-row">
+                  <input className="template-name-input" type="text" placeholder="Template name..." value={saveTemplateName} onChange={(e) => setSaveTemplateName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSaveAsTemplate()} />
+                  <button className="template-save-btn" onClick={handleSaveAsTemplate} disabled={!saveTemplateName.trim() || !systemPrompt.trim()}>Save as Template</button>
+                </div>
+                <div className="system-prompt-actions">
+                  <button className="system-prompt-save" onClick={handleSaveSystemPrompt}>Save</button>
+                  <button className="system-prompt-cancel" onClick={() => setShowSystemPrompt(false)}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* API Key Management Modal */}
+          {showApiKeys && (
+            <div className="modal-overlay" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>
+              <div className="api-keys-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="api-keys-header">
+                  <h3><i className="fa-solid fa-key" /> API Keys</h3>
+                  <button className="api-keys-close" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>&times;</button>
+                </div>
+                <p className="api-keys-desc">Add API keys for each provider. Keys are saved locally and loaded automatically on startup.</p>
+                <div className="api-keys-list">
+                  {apiKeys.map((k) => (
+                    <div key={k.env_var} className="api-key-row">
+                      <div className="api-key-info">
+                        <span className="api-key-provider">{k.provider_name}</span>
+                        <span className="api-key-envvar">{k.env_var}</span>
+                      </div>
+                      {editingKey === k.env_var ? (
+                        <div className="api-key-edit">
+                          <input type="password" className="api-key-input" value={keyInput} onChange={(e) => setKeyInput(e.target.value)} placeholder={`Enter ${k.env_var}...`} autoFocus onKeyDown={(e) => { if (e.key === "Enter") handleSaveApiKey(k.env_var); if (e.key === "Escape") { setEditingKey(null); setKeyInput(""); } }} />
+                          <button className="api-key-save-btn" onClick={() => handleSaveApiKey(k.env_var)}>Save</button>
+                          <button className="api-key-cancel-btn" onClick={() => { setEditingKey(null); setKeyInput(""); }}>Cancel</button>
+                        </div>
+                      ) : (
+                        <div className="api-key-actions">
+                          {k.is_set ? (<><span className="api-key-masked">{k.masked_key}</span><span className="api-key-status set">Active</span></>) : (<span className="api-key-status not-set">Not set</span>)}
+                          <button className="api-key-edit-btn" onClick={() => { setEditingKey(k.env_var); setKeyInput(""); }}>{k.is_set ? "Update" : "Add Key"}</button>
+                          {k.is_set && (<button className="api-key-delete-btn" onClick={() => handleDeleteApiKey(k.env_var)}>Remove</button>)}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
-              )}
-
-              <textarea
-                className="system-prompt-textarea"
-                value={systemPrompt}
-                onChange={(e) => setSystemPrompt(e.target.value)}
-                rows={8}
-                placeholder="You are a helpful assistant..."
-              />
-
-              {/* Save as template */}
-              <div className="template-save-row">
-                <input
-                  className="template-name-input"
-                  type="text"
-                  placeholder="Template name..."
-                  value={saveTemplateName}
-                  onChange={(e) => setSaveTemplateName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSaveAsTemplate()}
-                />
-                <button
-                  className="template-save-btn"
-                  onClick={handleSaveAsTemplate}
-                  disabled={!saveTemplateName.trim() || !systemPrompt.trim()}
-                >
-                  Save as Template
-                </button>
-              </div>
-
-              <div className="system-prompt-actions">
-                <button className="system-prompt-save" onClick={handleSaveSystemPrompt}>
-                  Save
-                </button>
-                <button className="system-prompt-cancel" onClick={() => setShowSystemPrompt(false)}>
-                  Cancel
-                </button>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* API Key Management Modal */}
-        {showApiKeys && (
-          <div className="modal-overlay" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>
-            <div className="api-keys-modal" onClick={(e) => e.stopPropagation()}>
-              <div className="api-keys-header">
-                <h3>&#128273; API Keys</h3>
-                <button className="api-keys-close" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>&times;</button>
-              </div>
-              <p className="api-keys-desc">Add API keys for each provider. Keys are saved locally and loaded automatically on startup.</p>
-              <div className="api-keys-list">
-                {apiKeys.map((k) => (
-                  <div key={k.env_var} className="api-key-row">
-                    <div className="api-key-info">
-                      <span className="api-key-provider">{k.provider_name}</span>
-                      <span className="api-key-envvar">{k.env_var}</span>
-                    </div>
-                    {editingKey === k.env_var ? (
-                      <div className="api-key-edit">
-                        <input
-                          type="password"
-                          className="api-key-input"
-                          value={keyInput}
-                          onChange={(e) => setKeyInput(e.target.value)}
-                          placeholder={`Enter ${k.env_var}...`}
-                          autoFocus
-                          onKeyDown={(e) => { if (e.key === "Enter") handleSaveApiKey(k.env_var); if (e.key === "Escape") { setEditingKey(null); setKeyInput(""); } }}
-                        />
-                        <button className="api-key-save-btn" onClick={() => handleSaveApiKey(k.env_var)}>Save</button>
-                        <button className="api-key-cancel-btn" onClick={() => { setEditingKey(null); setKeyInput(""); }}>Cancel</button>
-                      </div>
-                    ) : (
-                      <div className="api-key-actions">
-                        {k.is_set ? (
-                          <>
-                            <span className="api-key-masked">{k.masked_key}</span>
-                            <span className="api-key-status set">Active</span>
-                          </>
-                        ) : (
-                          <span className="api-key-status not-set">Not set</span>
-                        )}
-                        <button className="api-key-edit-btn" onClick={() => { setEditingKey(k.env_var); setKeyInput(""); }}>
-                          {k.is_set ? "Update" : "Add Key"}
-                        </button>
-                        {k.is_set && (
-                          <button className="api-key-delete-btn" onClick={() => handleDeleteApiKey(k.env_var)}>Remove</button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+          {/* Timeline */}
+          <TimelineView
+            entries={state.timeline}
+            isTyping={state.isTyping}
+            isStreaming={state.isStreaming}
+            streamingText={state.streamingText}
+            onViewToolDetail={(tool) => setViewingTool(tool)}
+            onStopGeneration={handleStopGeneration}
+            onEditMessage={handleEditMessage}
+            onRegenerateMessage={handleRegenerateMessage}
+          />
+
+          {/* Web search results indicator */}
+          {webSearchResults && (
+            <div className="web-search-results-bar">
+              <span className="web-search-indicator"><i className="fa-solid fa-globe" /> Web results for: <em>{webSearchResults.query}</em></span>
+              <span className="web-search-count">{webSearchResults.results.length} results</span>
+              <button className="web-search-dismiss" onClick={() => setWebSearchResults(null)}>&times;</button>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Timeline — replaces ChatPane messages */}
-        <TimelineView
-          entries={state.timeline}
-          isTyping={state.isTyping}
-          isStreaming={state.isStreaming}
-          streamingText={state.streamingText}
-          onViewToolDetail={(tool) => setViewingTool(tool)}
-          onStopGeneration={handleStopGeneration}
-          onEditMessage={handleEditMessage}
-          onRegenerateMessage={handleRegenerateMessage}
-        />
-
-        {/* Web search results indicator */}
-        {webSearchResults && (
-          <div className="web-search-results-bar">
-            <span className="web-search-indicator">&#127760; Web results for: <em>{webSearchResults.query}</em></span>
-            <span className="web-search-count">{webSearchResults.results.length} results</span>
-            <button className="web-search-dismiss" onClick={() => setWebSearchResults(null)}>&times;</button>
-          </div>
-        )}
-
-        {/* Transform preview */}
-        {showTransformPreview && transformPreview && (
-          <div className="transform-preview-bar">
-            <div className="transform-preview-header">
-              <span className="transform-mode-badge">{transformPreview.mode}</span>
-              {transformPreview.web_search_triggered && (
-                <span className="transform-search-badge">&#127760; Web search</span>
-              )}
-              <button className="transform-preview-close" onClick={() => setShowTransformPreview(false)}>&times;</button>
+          {/* Transform preview */}
+          {showTransformPreview && transformPreview && (
+            <div className="transform-preview-bar">
+              <div className="transform-preview-header">
+                <span className="transform-mode-badge">{transformPreview.mode}</span>
+                {transformPreview.web_search_triggered && (<span className="transform-search-badge"><i className="fa-solid fa-globe" /> Web search</span>)}
+                <button className="transform-preview-close" onClick={() => setShowTransformPreview(false)}>&times;</button>
+              </div>
+              <pre className="transform-preview-content">{transformPreview.transformed}</pre>
             </div>
-            <pre className="transform-preview-content">{transformPreview.transformed}</pre>
-          </div>
-        )}
+          )}
 
-        {/* Input */}
-        <InputBar
-          slashCommands={SLASH_COMMANDS}
-          onSend={handleSend}
-          onSendWithFiles={handleSendWithFiles}
-          isStreaming={state.isStreaming}
-          onStopGeneration={handleStopGeneration}
-          transformEnabled={transformSettings.enabled}
-          onPreviewTransform={handlePreviewTransform}
-          onTogglePreview={() => setShowTransformPreview((s) => !s)}
-          showTransformPreview={showTransformPreview}
+          {/* Input Area with Context Ring */}
+          <footer className="input-area">
+            <button
+              className={`ctx-ring-btn${ctxClass ? ` ${ctxClass}` : ""}`}
+              onClick={handleCompact}
+              title={`${Math.round(ctxPercentage)}% of context used · Click to compact`}
+            >
+              <svg viewBox="0 0 44 44" className="ctx-ring-svg">
+                <circle className="ring-bg" cx="22" cy="22" r="17" />
+                <circle className="ring-progress" cx="22" cy="22" r="17" style={{ strokeDasharray: CIRC, strokeDashoffset: ringOffset }} />
+              </svg>
+              <div className="ring-center">
+                <i className="fa-solid fa-compress ring-icon" />
+                <span className="ring-pct">{Math.round(ctxPercentage)}%</span>
+              </div>
+            </button>
+            <InputBar
+              slashCommands={SLASH_COMMANDS}
+              onSend={handleSend}
+              onSendWithFiles={handleSendWithFiles}
+              isStreaming={state.isStreaming}
+              onStopGeneration={handleStopGeneration}
+              transformEnabled={transformSettings.enabled}
+              onPreviewTransform={handlePreviewTransform}
+              onTogglePreview={() => setShowTransformPreview((s) => !s)}
+              showTransformPreview={showTransformPreview}
+            />
+          </footer>
+        </main>
+
+        {/* ═══════ Resize Handle ═══════ */}
+        <div className="resize-handle" onMouseDown={handleResizeStart} />
+
+        {/* ═══════ Dashboard ═══════ */}
+        <Dashboard
+          sessionCost={state.sessionCost}
+          totalCost={totalCost}
+          memoryLines={memoryLines}
+          toolEntries={toolEntries}
+          stats={stats}
+          projectPath={projectPath}
+          projectName={projectName}
+          onMemoryReload={loadDashboardData}
+          bgImage={bgDashboard}
+          width={dashboardCollapsed ? 50 : dashboardWidth}
+          collapsed={dashboardCollapsed}
+          onToggleCollapse={() => setDashboardCollapsed((c) => !c)}
         />
       </div>
 
-      {/* ═══════ Resize Handle ═══════ */}
-      <div className="resize-handle" onMouseDown={handleResizeStart} />
-
-      {/* ═══════ Dashboard Sidebar ═══════ */}
-      <Dashboard
-        sessionCost={state.sessionCost}
-        totalCost={totalCost}
-        memoryLines={memoryLines}
-        toolEntries={toolEntries}
-        stats={stats}
-        projectPath={projectPath}
-        projectName={projectName}
-        onMemoryReload={loadDashboardData}
-        bgImage={bgDashboard}
-        width={dashboardWidth}
-      />
-
       {/* ═══════ Modals ═══════ */}
       {state.activeApproval && state.activeApproval.status === "pending" && (
-        <ApprovalModal
-          approval={state.activeApproval}
-          onApprove={handleApprove}
-          onDeny={handleDeny}
-        />
+        <ApprovalModal approval={state.activeApproval} onApprove={handleApprove} onDeny={handleDeny} />
       )}
-
       {state.activeDiff && (
-        <FileDiffModal
-          filePath={state.activeDiff.filePath}
-          oldContent={state.activeDiff.oldContent}
-          newContent={state.activeDiff.newContent}
-          onApprove={handleDiffApprove}
-          onDeny={handleDiffDeny}
-          onClose={closeDiff}
-        />
+        <FileDiffModal filePath={state.activeDiff.filePath} oldContent={state.activeDiff.oldContent} newContent={state.activeDiff.newContent} onApprove={handleDiffApprove} onDeny={handleDiffDeny} onClose={closeDiff} />
       )}
 
-      {/* ═══════ Session Sidebar ═══════ */}
+      {/* ═══════ Session Sidebar Overlay ═══════ */}
       <SessionSidebar
         visible={showSessionSidebar}
         onClose={() => setShowSessionSidebar(false)}
         onToast={addToast}
         onRestore={async (events: PersistedEvent[]) => {
           replayEvents(events.map((e) => e.event));
-          // Ensure the model indicator shows the correct model after replay
-          try {
-            const model = await invoke<string>("get_current_model");
-            if (model && model !== "unknown") {
-              setModel(model);
-            }
-          } catch (_) {}
+          try { const model = await invoke<string>("get_current_model"); if (model && model !== "unknown") setModel(model); } catch (_) {}
         }}
       />
 
-      {/* ═══════ Tool Detail Panel ═══════ */}
-      {viewingTool && (
-        <ToolDetailPanel
-          tool={viewingTool}
-          onClose={() => setViewingTool(null)}
-        />
-      )}
-
-      {/* ═══════ Brain Panel ═══════ */}
-      <BrainPanel
-        visible={showBrainPanel}
-        onClose={() => setShowBrainPanel(false)}
-        onToast={addToast}
-        projectPath={projectPath}
-      />
-
-      {/* ═══════ Graph Panel ═══════ */}
-      <GraphPanel
-        visible={showGraphPanel}
-        onClose={() => setShowGraphPanel(false)}
-        onToast={addToast}
-        projectPath={projectPath}
-      />
-
-      {/* ═══════ Token Panel ═══════ */}
-      <TokenPanel
-        visible={showTokenPanel}
-        onClose={() => setShowTokenPanel(false)}
-        onToast={addToast}
-        projectPath={projectPath}
-      />
-
-      {/* ═══════ Agent Panel ═══════ */}
-      <AgentPanel
-        visible={showAgentPanel}
-        onClose={() => setShowAgentPanel(false)}
-        onToast={addToast}
-        projectPath={projectPath}
-      />
-
-      {/* ═══════ Brain Search (Ctrl+K) ═══════ */}
-      <BrainSearchModal
-        visible={showBrainSearch}
-        onClose={() => setShowBrainSearch(false)}
-        projectPath={projectPath}
-      />
-
-      {/* ═══════ Toasts ═══════ */}
+      {/* ═══════ Panels ═══════ */}
+      {viewingTool && <ToolDetailPanel tool={viewingTool} onClose={() => setViewingTool(null)} />}
+      <BrainPanel visible={showBrainPanel} onClose={() => setShowBrainPanel(false)} onToast={addToast} projectPath={projectPath} />
+      <GraphPanel visible={showGraphPanel} onClose={() => setShowGraphPanel(false)} onToast={addToast} projectPath={projectPath} />
+      <TokenPanel visible={showTokenPanel} onClose={() => setShowTokenPanel(false)} onToast={addToast} projectPath={projectPath} />
+      <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} />
+      <BrainSearchModal visible={showBrainSearch} onClose={() => setShowBrainSearch(false)} projectPath={projectPath} />
       <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

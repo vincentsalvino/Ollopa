@@ -41,13 +41,13 @@ test.describe("Feature 9: Streaming Token Counter", () => {
     await expect(tokenBar).toBeVisible();
   });
 
-  test("token label displays token count", async ({ page }) => {
-    const label = page.locator(".token-label");
+  test("token cost label displays", async ({ page }) => {
+    const label = page.locator(".token-cost");
     await expect(label).toBeVisible();
   });
 
-  test("token progress bar exists", async ({ page }) => {
-    const progress = page.locator(".token-progress");
-    await expect(progress).toBeVisible();
+  test("token track bar exists", async ({ page }) => {
+    const track = page.locator(".token-track");
+    await expect(track).toBeVisible();
   });
 });

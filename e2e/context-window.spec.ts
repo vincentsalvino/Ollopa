@@ -7,45 +7,43 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector(".toolbar");
 });
 
-test.describe("Feature 4: Context Window Usage Indicator", () => {
-  test("context bar is visible", async ({ page }) => {
-    const bar = page.locator(".context-bar");
-    await expect(bar).toBeVisible();
+test.describe("Feature 4: Context Window Usage Indicator (Ring)", () => {
+  test("context ring is visible", async ({ page }) => {
+    const ring = page.locator(".ctx-ring-btn");
+    await expect(ring).toBeVisible();
   });
 
-  test("context bar fill element exists in the DOM", async ({ page }) => {
-    const fill = page.locator(".context-bar-fill");
-    await expect(fill).toBeAttached();
+  test("context ring SVG exists", async ({ page }) => {
+    const svg = page.locator(".ctx-ring-svg");
+    await expect(svg).toBeAttached();
   });
 
-  test("context bar has tooltip with token info", async ({ page }) => {
-    const bar = page.locator(".context-bar");
-    const title = await bar.getAttribute("title");
-    expect(title).toContain("tokens");
+  test("ring progress circle exists", async ({ page }) => {
+    const progress = page.locator(".ring-progress");
+    await expect(progress).toBeAttached();
   });
 
-  test("context bar fill starts at 0% width when no tokens used", async ({ page }) => {
-    const fill = page.locator(".context-bar-fill");
-    const width = await fill.evaluate((el) => el.style.width);
-    expect(width).toBe("0%");
+  test("ring shows percentage text", async ({ page }) => {
+    const pct = page.locator(".ring-pct");
+    await expect(pct).toBeAttached();
+    const text = await pct.textContent();
+    expect(text).toMatch(/\d+%/);
   });
 
-  test("context bar tooltip shows 0 tokens initially", async ({ page }) => {
-    const bar = page.locator(".context-bar");
-    const title = await bar.getAttribute("title");
-    expect(title).toMatch(/^0/);
+  test("context ring has tooltip with usage info", async ({ page }) => {
+    const ring = page.locator(".ctx-ring-btn");
+    const title = await ring.getAttribute("title");
+    expect(title).toContain("context used");
   });
 
-  test("context bar has correct CSS styles", async ({ page }) => {
-    const bar = page.locator(".context-bar");
-    const cursor = await bar.evaluate((el) => getComputedStyle(el).cursor);
-    expect(cursor).toBe("help");
+  test("ring starts at 0% when no tokens used", async ({ page }) => {
+    const pct = page.locator(".ring-pct");
+    const text = await pct.textContent();
+    expect(text).toBe("0%");
   });
 
-  test("context bar fill has color-coded background", async ({ page }) => {
-    const fill = page.locator(".context-bar-fill");
-    const bg = await fill.evaluate((el) => el.style.background);
-    // At 0%, color should be success (green)
-    expect(bg).toContain("51cf66");
+  test("context ring has compress icon", async ({ page }) => {
+    const icon = page.locator(".ring-icon");
+    await expect(icon).toBeAttached();
   });
 });

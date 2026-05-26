@@ -9,16 +9,15 @@ test.beforeEach(async ({ page }) => {
 
 test.describe("API Key Management Modal", () => {
   async function openApiKeysModal(page: import("@playwright/test").Page) {
-    await page.locator(".model-selector-btn").click();
-    await page.locator(".api-key-btn").click();
+    await page.locator('.tbtn[title="Settings & Tools"]').click();
+    await page.locator('.popover-item:has-text("Manage API Keys")').click();
     await page.waitForSelector(".api-keys-modal");
   }
 
-  test("opens from model dropdown", async ({ page }) => {
+  test("opens from settings popover", async ({ page }) => {
     await openApiKeysModal(page);
     await expect(page.locator(".api-keys-modal")).toBeVisible();
-    // Model dropdown should close
-    await expect(page.locator(".grouped-model-dropdown")).not.toBeVisible();
+    await expect(page.locator(".settings-popover")).not.toBeVisible();
   });
 
   test("shows all 6 providers", async ({ page }) => {
@@ -49,7 +48,6 @@ test.describe("API Key Management Modal", () => {
   test("shows Active status for set keys", async ({ page }) => {
     await openApiKeysModal(page);
     const activeStatuses = page.locator(".api-key-status.set");
-    // Claude is set in our mock
     await expect(activeStatuses).toHaveCount(1);
     await expect(activeStatuses.first()).toContainText("Active");
   });
@@ -69,7 +67,6 @@ test.describe("API Key Management Modal", () => {
 
   test("clicking Add Key shows input field", async ({ page }) => {
     await openApiKeysModal(page);
-    // Click "Add Key" on the first unset provider (DeepSeek)
     const addBtns = page.locator(".api-key-edit-btn");
     await addBtns.first().click();
     await expect(page.locator(".api-key-input")).toBeVisible();
@@ -102,7 +99,6 @@ test.describe("API Key Management Modal", () => {
 
   test("clicking overlay dismisses modal", async ({ page }) => {
     await openApiKeysModal(page);
-    // Click on the overlay (outside the modal)
     await page.locator(".modal-overlay").click({ position: { x: 10, y: 10 } });
     await expect(page.locator(".api-keys-modal")).not.toBeVisible();
   });
