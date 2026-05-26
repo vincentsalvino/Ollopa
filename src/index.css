@@ -3841,6 +3841,9 @@ pre.code-block code { background: transparent; }
   gap: 10px;
   padding: 6px 4px;
   margin-bottom: 8px;
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
 }
 
 .graph-info {
@@ -3909,14 +3912,27 @@ pre.code-block code { background: transparent; }
   text-align: center;
 }
 
-/* Graph canvas */
-.graph-canvas {
+/* Graph canvas wrapper - prevents zoom from overflowing */
+.graph-canvas-wrapper {
   flex: 1;
   border: 1px solid var(--border);
   border-radius: 2px;
   overflow: hidden;
   background: var(--bg-secondary);
   min-height: 300px;
+  position: relative;
+  isolation: isolate;
+}
+
+/* Graph canvas */
+.graph-canvas {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
 }
 
 .force-graph-svg,
@@ -3933,6 +3949,9 @@ pre.code-block code { background: transparent; }
   gap: 12px;
   padding: 8px 4px;
   margin-top: 8px;
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
 }
 
 .graph-legend-item {
@@ -6643,4 +6662,145 @@ h6.md-heading { font-size: 12px; }
   text-align: center;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+/* ═══════ PROVIDER INDICATORS ═══════ */
+
+/* Provider badge on model pill */
+.provider-badge {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.provider-badge--deepseek { background: rgba(59, 130, 246, 0.18); color: #60a5fa; }
+.provider-badge--anthropic { background: rgba(217, 119, 6, 0.18); color: #fbbf24; }
+.provider-badge--openai { background: rgba(16, 185, 129, 0.18); color: #34d399; }
+
+/* API key active dot on model pill */
+.api-key-active-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success, #22c55e);
+  flex-shrink: 0;
+  box-shadow: 0 0 4px var(--success, #22c55e);
+}
+
+/* Dropdown: disabled provider group label */
+.dropdown-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dropdown-section-label.provider-disabled {
+  opacity: 0.45;
+}
+
+/* Provider OFF badge in dropdown */
+.provider-off-badge {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 71, 87, 0.15);
+  color: var(--danger, #ff4757);
+  letter-spacing: 0.5px;
+  margin-left: auto;
+}
+
+/* Provider key badges in dropdown */
+.provider-key-badge {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--success, #22c55e);
+  opacity: 0.8;
+}
+.provider-no-key-badge {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
+/* Disabled dropdown items (provider turned off) */
+.dropdown-item-disabled {
+  opacity: 0.35;
+  cursor: not-allowed !important;
+  pointer-events: auto;
+}
+.dropdown-item-disabled:hover {
+  background: transparent !important;
+}
+
+/* Active model indicator in dropdown */
+.model-active-indicator {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+/* Model dropdown wider to fit indicators */
+.model-dropdown {
+  min-width: 260px;
+}
+
+/* API Key row active indicator */
+.api-key-row--active {
+  border-color: var(--accent);
+  background: var(--accent-glow, rgba(129, 11, 56, 0.06));
+}
+
+/* In Use badge for API keys */
+.api-key-in-use-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--accent-glow, rgba(129, 11, 56, 0.15));
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* Agent provider card active state */
+.agent-provider-card--active {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 1px var(--accent), 0 0 12px rgba(129, 11, 56, 0.12);
+}
+
+/* Agent provider "In Use" badge */
+.agent-provider-in-use {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: var(--accent-glow, rgba(129, 11, 56, 0.15));
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* Agent model row active */
+.agent-model-row--active {
+  background: var(--accent-glow, rgba(129, 11, 56, 0.06));
+  border-radius: 3px;
+}
+
+/* Agent model active badge */
+.agent-model-active-badge {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  flex-shrink: 0;
 }

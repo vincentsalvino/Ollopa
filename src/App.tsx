@@ -17,7 +17,7 @@ import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
 import BrainSearchModal from "./components/memory/BrainSearchModal";
-import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo, PromptTemplate } from "./types";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo, PromptTemplate, ProviderDef } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
@@ -120,6 +120,9 @@ function App() {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [keyInput, setKeyInput] = useState("");
 
+  // Provider state for model selection gating
+  const [providers, setProviders] = useState<ProviderDef[]>([]);
+
   // Context window tracking
   const [contextWindow, setContextWindow] = useState(64000);
 
@@ -183,6 +186,43 @@ function App() {
   ];
   const ALL_MODELS = AVAILABLE_MODELS.flatMap((g) => g.models);
 
+  // Map provider group names to provider_type for matching
+  const GROUP_TO_PROVIDER_TYPE: Record<string, string> = {
+    "DeepSeek": "DeepSeek",
+    "Anthropic": "Claude",
+    "OpenAI": "OpenAI",
+  };
+
+  // Check if a provider group is enabled
+  const isProviderGroupEnabled = (groupName: string): boolean => {
+    const providerType = GROUP_TO_PROVIDER_TYPE[groupName];
+    if (!providerType) return true;
+    const matchedProvider = providers.find((p) => p.provider_type === providerType);
+    if (!matchedProvider) return true; // If provider not found, allow selection
+    return matchedProvider.enabled;
+  };
+
+  // Get the provider name for the currently selected model
+  const getProviderForModel = (model: string): string | null => {
+    for (const group of AVAILABLE_MODELS) {
+      if (group.models.includes(model)) return group.group;
+    }
+    return null;
+  };
+
+  // Check if a provider has an active API key
+  const isProviderApiKeySet = (groupName: string): boolean => {
+    const providerType = GROUP_TO_PROVIDER_TYPE[groupName];
+    if (!providerType) return false;
+    const matchedKey = apiKeys.find((k) => {
+      const name = k.provider_name.toLowerCase();
+      return name.includes(providerType.toLowerCase()) || name.includes(groupName.toLowerCase());
+    });
+    return matchedKey ? matchedKey.is_set : false;
+  };
+
+  const currentProvider = getProviderForModel(state.sessionModel);
+
   // ═══════ Theme (with persistence) ═══════
 
   useEffect(() => {
@@ -198,6 +238,8 @@ function App() {
     loadDashboardData();
     loadTransformSettings();
     loadWebSearchSettings();
+    loadProviders();
+    loadApiKeys();
 
     const unlistenAppEvent = listen<AppEvent>("app-event", (event) => {
       processEvent(event.payload);
@@ -261,6 +303,24 @@ function App() {
 
     window.addEventListener("keydown", handleKeyboard);
     return () => window.removeEventListener("keydown", handleKeyboard);
+  }, []);
+
+  // ═══════ Click-Outside: close dropdowns & popovers ═══════
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".dropdown-wrapper") && !target.closest(".dropdown")) {
+        setShowModelSelector(false);
+        setShowProjectDropdown(false);
+        setShowExportMenu(false);
+      }
+      if (!target.closest(".popover-wrapper") && !target.closest(".settings-popover")) {
+        setShowSettingsPopover(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   // ═══════ Toast ═══════
@@ -632,6 +692,15 @@ function App() {
     }
   };
 
+  // ═══════ Providers ═══════
+
+  const loadProviders = async () => {
+    try {
+      const p = await invoke<ProviderDef[]>("router_list_providers");
+      setProviders(p);
+    } catch (_) {}
+  };
+
   // ═══════ API Key Management ═══════
 
   const loadApiKeys = async () => {
@@ -765,25 +834,45 @@ function App() {
               className={`model-pill model-indicator${showModelSelector ? " open" : ""}`}
               onClick={() => { setShowModelSelector((s) => !s); setShowProjectDropdown(false); setShowExportMenu(false); setShowSettingsPopover(false); }}
             >
+              {currentProvider && (
+                <span className={`provider-badge provider-badge--${currentProvider.toLowerCase()}`}>{currentProvider}</span>
+              )}
               <span>{state.sessionModel}</span>
+              {currentProvider && isProviderApiKeySet(currentProvider) && (
+                <span className="api-key-active-dot" title="API key active" />
+              )}
               <i className="fa-solid fa-chevron-down" />
             </button>
             {showModelSelector && (
-              <div className="dropdown">
-                {AVAILABLE_MODELS.map((group) => (
-                  <div key={group.group}>
-                    <div className="dropdown-section-label">{group.group}</div>
-                    {group.models.map((m) => (
-                      <button
-                        key={m}
-                        className={`dropdown-item${m === state.sessionModel ? " active" : ""}`}
-                        onClick={() => handleSwitchModel(m)}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                ))}
+              <div className="dropdown model-dropdown">
+                {AVAILABLE_MODELS.map((group) => {
+                  const groupEnabled = isProviderGroupEnabled(group.group);
+                  const hasApiKey = isProviderApiKeySet(group.group);
+                  return (
+                    <div key={group.group}>
+                      <div className={`dropdown-section-label${!groupEnabled ? " provider-disabled" : ""}`}>
+                        <span>{group.group}</span>
+                        {!groupEnabled && <span className="provider-off-badge">OFF</span>}
+                        {groupEnabled && hasApiKey && <span className="provider-key-badge" title="API key set"><i className="fa-solid fa-key" /></span>}
+                        {groupEnabled && !hasApiKey && <span className="provider-no-key-badge" title="No API key"><i className="fa-solid fa-key" /></span>}
+                      </div>
+                      {group.models.map((m) => (
+                        <button
+                          key={m}
+                          className={`dropdown-item${m === state.sessionModel ? " active" : ""}${!groupEnabled ? " dropdown-item-disabled" : ""}`}
+                          onClick={() => { if (groupEnabled) handleSwitchModel(m); }}
+                          disabled={!groupEnabled}
+                          title={!groupEnabled ? `${group.group} provider is turned off` : m}
+                        >
+                          {m}
+                          {m === state.sessionModel && currentProvider && (
+                            <span className="model-active-indicator"><i className="fa-solid fa-circle-check" /></span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1048,10 +1137,13 @@ function App() {
                 </div>
                 <p className="api-keys-desc">Add API keys for each provider. Keys are saved locally and loaded automatically on startup.</p>
                 <div className="api-keys-list">
-                  {apiKeys.map((k) => (
-                    <div key={k.env_var} className="api-key-row">
+                  {apiKeys.map((k) => {
+                    const isCurrentProvider = currentProvider && k.provider_name.toLowerCase().includes(currentProvider.toLowerCase());
+                    return (
+                    <div key={k.env_var} className={`api-key-row${isCurrentProvider ? " api-key-row--active" : ""}`}>
                       <div className="api-key-info">
                         <span className="api-key-provider">{k.provider_name}</span>
+                        {isCurrentProvider && <span className="api-key-in-use-badge">In Use</span>}
                         <span className="api-key-envvar">{k.env_var}</span>
                       </div>
                       {editingKey === k.env_var ? (
@@ -1068,7 +1160,8 @@ function App() {
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1182,7 +1275,7 @@ function App() {
       <BrainPanel visible={showBrainPanel} onClose={() => setShowBrainPanel(false)} onToast={addToast} projectPath={projectPath} />
       <GraphPanel visible={showGraphPanel} onClose={() => setShowGraphPanel(false)} onToast={addToast} projectPath={projectPath} />
       <TokenPanel visible={showTokenPanel} onClose={() => setShowTokenPanel(false)} onToast={addToast} projectPath={projectPath} />
-      <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} />
+      <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} currentModel={state.sessionModel} />
       <BrainSearchModal visible={showBrainSearch} onClose={() => setShowBrainSearch(false)} projectPath={projectPath} />
       <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
