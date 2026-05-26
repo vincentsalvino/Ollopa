@@ -6011,12 +6011,14 @@ h6.md-heading { font-size: 12px; }
 .attach-btn {
   padding: 6px 10px;
   background: transparent;
-  border: none;
+  border: 1px solid var(--border);
+  border-radius: 2px;
   color: var(--text-muted);
   cursor: pointer;
   font-size: 16px;
   transition: color 0.2s;
   flex-shrink: 0;
+  height: 45px;
 }
 
 .attach-btn:hover {
@@ -6290,6 +6292,7 @@ h6.md-heading { font-size: 12px; }
   font-size: 14px;
   transition: all 0.2s;
   flex-shrink: 0;
+  height: 45px;
 }
 
 .preview-btn:hover {
