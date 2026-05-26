@@ -17,6 +17,7 @@ interface DashboardProps {
   projectPath: string | null;
   projectName: string | null;
   onMemoryReload: () => void;
+  bgImage?: string;
 }
 
 export default function Dashboard({
@@ -28,6 +29,7 @@ export default function Dashboard({
   projectPath,
   projectName,
   onMemoryReload,
+  bgImage,
 }: DashboardProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -75,6 +77,7 @@ export default function Dashboard({
 
   return (
     <div className={`dashboard-panel ${collapsed ? "collapsed" : ""}`}>
+      {bgImage && <div className="panel-bg panel-bg--dashboard" style={{ backgroundImage: `url(${bgImage})` }} />}
       {/* Mini view (collapsed) */}
       <div className="dashboard-mini">
         <span className="mini-icon" onClick={toggleSidebar} title="Expand sidebar">

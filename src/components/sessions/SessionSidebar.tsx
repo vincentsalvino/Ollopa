@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { SessionMeta, PersistedEvent, ToastMessage } from "../../types";
+import bgDashboard from "../../assets/bg-dashboard.png";
 
 interface SessionSidebarProps {
   visible: boolean;
@@ -139,6 +140,7 @@ export default function SessionSidebar({
   return (
     <div className="sidebar-overlay" onClick={onClose}>
       <div className="session-sidebar ss-v2" onClick={(e) => e.stopPropagation()}>
+        <div className="panel-bg panel-bg--sidebar" style={{ backgroundImage: `url(${bgDashboard})` }} />
         {/* Header */}
         <div className="sidebar-header">
           <h3>Session History</h3>
