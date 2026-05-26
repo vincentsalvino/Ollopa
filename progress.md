@@ -468,7 +468,7 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 **Status: COMPLETE**
 
 ### Goals
-- Close critical UX gaps vs ChatGPT Desktop, Claude Desktop, Cursor, etc.
+- Close critical UX gaps vs ChatGPT Desktop, Ollopa, Cursor, etc.
 - Streaming display, markdown rendering, message actions, file upload, search, model selector, keyboard shortcuts
 
 ### What Was Built

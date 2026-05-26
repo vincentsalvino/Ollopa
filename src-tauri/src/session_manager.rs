@@ -1,5 +1,5 @@
 use crate::api_client::DirectApiClient;
-use crate::claude_events::AppEvent;
+use crate::ollopa_events::AppEvent;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -268,7 +268,7 @@ impl SessionManager {
 fn sessions_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/home/ubuntu"))
-        .join(".claude")
+        .join(".ollopa")
         .join("workspace-sessions")
 }
 
@@ -625,7 +625,7 @@ fn convert_messages_to_events(messages: &[crate::api_client::ChatMessage], model
 fn find_conversation_by_timestamp(session_ts: u64, model: &str) -> Option<Vec<PersistedEvent>> {
     let conv_dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".claude")
+        .join(".ollopa")
         .join("conversations");
     let entries = fs::read_dir(&conv_dir).ok()?;
 

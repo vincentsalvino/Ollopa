@@ -78,7 +78,7 @@ pub struct BrainStats {
 fn brain_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/home/ubuntu"))
-        .join(".claude")
+        .join(".ollopa")
         .join("workspace-brain")
 }
 
@@ -182,7 +182,7 @@ pub fn delete_summary(session_id: &str) -> Result<(), String> {
 pub fn auto_summarize_session(
     session_id: &str,
     project_path: Option<&str>,
-    events: &[crate::claude_events::AppEvent],
+    events: &[crate::ollopa_events::AppEvent],
 ) -> SessionSummary {
     let mut title = String::from("Untitled session");
     let mut key_actions: Vec<String> = Vec::new();
@@ -194,13 +194,13 @@ pub fn auto_summarize_session(
 
     for event in events {
         match event {
-            crate::claude_events::AppEvent::AssistantMessage { text, .. } => {
+            crate::ollopa_events::AppEvent::AssistantMessage { text, .. } => {
                 assistant_texts.push(text.clone());
                 if title == "Untitled session" && text.len() > 10 {
                     title = truncate_str(text, 80);
                 }
             }
-            crate::claude_events::AppEvent::ToolStarted { tool_name, input, .. } => {
+            crate::ollopa_events::AppEvent::ToolStarted { tool_name, input, .. } => {
                 tool_count += 1;
                 let summary = format!("{}: {}", tool_name, compact_json_input(input));
                 key_actions.push(truncate_str(&summary, 120));
@@ -219,7 +219,7 @@ pub fn auto_summarize_session(
 
                 tags.push(tool_name.clone());
             }
-            crate::claude_events::AppEvent::ToolFinished { is_error, .. } => {
+            crate::ollopa_events::AppEvent::ToolFinished { is_error, .. } => {
                 if *is_error {
                     error_count += 1;
                 }
@@ -543,7 +543,7 @@ pub fn get_brain_stats() -> BrainStats {
     let memory_size = fs::metadata(
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/home/ubuntu"))
-            .join(".claude")
+            .join(".ollopa")
             .join("deepseek_memory.md"),
     )
     .map(|m| m.len() as usize)

@@ -65,7 +65,7 @@ pub struct TransformResult {
 fn transformer_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/home/ubuntu"))
-        .join(".claude")
+        .join(".ollopa")
         .join("workspace-brain")
         .join("transformer")
 }

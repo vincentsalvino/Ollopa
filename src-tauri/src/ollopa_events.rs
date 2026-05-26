@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-// ═══════ Claude stream-json event types (from `claude --output-format stream-json`) ═══════
+// ═══════ Ollopa stream-json event types (from `claude --output-format stream-json`) ═══════
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type")]
 #[allow(dead_code)]
-pub enum ClaudeStreamEvent {
+pub enum OllopaStreamEvent {
     #[serde(rename = "system")]
     System {
         subtype: String,
@@ -216,12 +216,12 @@ pub enum AppEvent {
 
 // ═══════ Parsing ═══════
 
-pub fn parse_stream_line(line: &str) -> Option<ClaudeStreamEvent> {
+pub fn parse_stream_line(line: &str) -> Option<OllopaStreamEvent> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
     }
-    serde_json::from_str::<ClaudeStreamEvent>(trimmed).ok()
+    serde_json::from_str::<OllopaStreamEvent>(trimmed).ok()
 }
 
 #[cfg(test)]
@@ -233,7 +233,7 @@ mod tests {
         let json = r#"{"type":"system","subtype":"init","cwd":"/home/user/project","session_id":"abc123","tools":["bash","read_file"],"model":"claude-sonnet-4-20250514","mcp_servers":[]}"#;
         let event = parse_stream_line(json);
         assert!(event.is_some());
-        if let Some(ClaudeStreamEvent::System { subtype, cwd, .. }) = event {
+        if let Some(OllopaStreamEvent::System { subtype, cwd, .. }) = event {
             assert_eq!(subtype, "init");
             assert_eq!(cwd, Some("/home/user/project".to_string()));
         }
@@ -244,7 +244,7 @@ mod tests {
         let json = r#"{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Hello!"}],"model":"claude-sonnet-4-20250514","stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":10}}}"#;
         let event = parse_stream_line(json);
         assert!(event.is_some());
-        if let Some(ClaudeStreamEvent::Assistant { message, .. }) = event {
+        if let Some(OllopaStreamEvent::Assistant { message, .. }) = event {
             assert_eq!(message.content.len(), 1);
         }
     }
@@ -254,7 +254,7 @@ mod tests {
         let json = r#"{"type":"result","subtype":"success","cost_usd":0.005,"duration_ms":1234,"duration_api_ms":1000,"is_error":false,"num_turns":3,"session_id":"abc"}"#;
         let event = parse_stream_line(json);
         assert!(event.is_some());
-        if let Some(ClaudeStreamEvent::Result { subtype, cost_usd, .. }) = event {
+        if let Some(OllopaStreamEvent::Result { subtype, cost_usd, .. }) = event {
             assert_eq!(subtype, "success");
             assert_eq!(cost_usd, Some(0.005));
         }

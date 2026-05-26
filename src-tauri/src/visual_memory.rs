@@ -61,7 +61,7 @@ pub struct SessionTimelineData {
 fn visual_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/home/ubuntu"))
-        .join(".claude")
+        .join(".ollopa")
         .join("workspace-brain")
         .join("visual")
 }
@@ -536,7 +536,7 @@ pub fn build_session_timeline(session_id: &str) -> Result<SessionTimelineData, S
         let ts = pe.timestamp_ms;
 
         match evt {
-            crate::claude_events::AppEvent::SessionStarted { session_id, model, cwd, .. } => {
+            crate::ollopa_events::AppEvent::SessionStarted { session_id, model, cwd, .. } => {
                 events.push(TimelineEvent {
                     id: format!("tl-{}", counter),
                     session_id: session_id.clone(),
@@ -548,7 +548,7 @@ pub fn build_session_timeline(session_id: &str) -> Result<SessionTimelineData, S
                     status: "success".to_string(),
                 });
             }
-            crate::claude_events::AppEvent::AssistantMessage { text, model } => {
+            crate::ollopa_events::AppEvent::AssistantMessage { text, model } => {
                 events.push(TimelineEvent {
                     id: format!("tl-{}", counter),
                     session_id: session_id.to_string(),
@@ -560,7 +560,7 @@ pub fn build_session_timeline(session_id: &str) -> Result<SessionTimelineData, S
                     status: "success".to_string(),
                 });
             }
-            crate::claude_events::AppEvent::ToolStarted { tool_use_id, tool_name, .. } => {
+            crate::ollopa_events::AppEvent::ToolStarted { tool_use_id, tool_name, .. } => {
                 events.push(TimelineEvent {
                     id: format!("tl-{}", counter),
                     session_id: session_id.to_string(),
@@ -572,7 +572,7 @@ pub fn build_session_timeline(session_id: &str) -> Result<SessionTimelineData, S
                     status: "running".to_string(),
                 });
             }
-            crate::claude_events::AppEvent::ToolFinished { tool_use_id, tool_name, is_error, .. } => {
+            crate::ollopa_events::AppEvent::ToolFinished { tool_use_id, tool_name, is_error, .. } => {
                 // Find matching start to compute duration
                 let start_ts = events.iter()
                     .rfind(|e| e.event_type == "tool_start" && e.detail == *tool_use_id)
@@ -590,7 +590,7 @@ pub fn build_session_timeline(session_id: &str) -> Result<SessionTimelineData, S
                     status: if *is_error { "error".to_string() } else { "success".to_string() },
                 });
             }
-            crate::claude_events::AppEvent::SessionFinished { duration_ms, is_error, .. } => {
+            crate::ollopa_events::AppEvent::SessionFinished { duration_ms, is_error, .. } => {
                 events.push(TimelineEvent {
                     id: format!("tl-{}", counter),
                     session_id: session_id.to_string(),
@@ -602,7 +602,7 @@ pub fn build_session_timeline(session_id: &str) -> Result<SessionTimelineData, S
                     status: if *is_error { "error".to_string() } else { "success".to_string() },
                 });
             }
-            crate::claude_events::AppEvent::Error { message, .. } => {
+            crate::ollopa_events::AppEvent::Error { message, .. } => {
                 events.push(TimelineEvent {
                     id: format!("tl-{}", counter),
                     session_id: session_id.to_string(),

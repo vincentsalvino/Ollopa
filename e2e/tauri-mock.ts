@@ -29,7 +29,7 @@ export async function injectTauriMock(page: Page) {
       check_env_vars: () => null,
 
       // Dashboard / Memory
-      get_memory_data: () => ({ claude_md: "", memory_lines: [] }),
+      get_memory_data: () => ({ ollopa_md: "", memory_lines: [] }),
 
       // Session Management
       list_sessions: () => [],
@@ -39,7 +39,7 @@ export async function injectTauriMock(page: Page) {
       get_session_snapshot: () => null,
       get_recent_events: () => [],
       get_current_model: () => "deepseek-chat",
-      get_system_prompt: () => "",
+      get_system_prompt: () => "You are a helpful assistant.",
       set_model: () => null,
       start_session: () => "mock-session-id",
       restart_session: () => "mock-session-id",
@@ -53,7 +53,27 @@ export async function injectTauriMock(page: Page) {
       search_conversations: () => [],
 
       // Brain
-      brain_search: () => [],
+      brain_search: (args?: any) => {
+        if (args?.query) {
+          return [
+            {
+              entry: {
+                id: "brain-1",
+                source_type: "conversation",
+                source_id: "session-1",
+                content: "Mock brain search result content",
+                keywords: ["test", "mock", "brain"],
+                project_path: null,
+                created_at: Date.now(),
+                relevance_score: 0.95,
+              },
+              score: 0.95,
+              snippet: "Mock brain search result for: " + args.query,
+            },
+          ];
+        }
+        return [];
+      },
       brain_stats: () => ({ total_summaries: 0, total_decisions: 0, total_notes: 0 }),
       brain_save_decision: () => null,
       brain_list_decisions: () => [],
@@ -91,7 +111,7 @@ export async function injectTauriMock(page: Page) {
       agent_list: () => [],
       agent_save: () => null,
       agent_delete: () => null,
-      agent_stats: () => ({ total: 0 }),
+      agent_stats: () => ({ total_agents: 0, total_workflows: 0, active_tasks: 0 }),
       agent_route_task: () => null,
       agent_create_task: () => null,
       agent_list_tasks: () => [],
@@ -112,7 +132,21 @@ export async function injectTauriMock(page: Page) {
       router_stats: () => ({ total_requests: 0 }),
 
       // Git/Repo
-      git_info: () => ({ branch: "main", remote: "", dirty: false }),
+      git_info: () => ({
+        is_git_repo: true,
+        branch: "main",
+        remote_url: "https://github.com/test/repo.git",
+        ahead: 2,
+        behind: 0,
+        staged: 1,
+        modified: 3,
+        untracked: 2,
+        recent_commits: [
+          { hash: "abc1234567", short_hash: "abc1234", message: "feat: add tests", author: "Test User", date: "2025-01-01" },
+          { hash: "def5678901", short_hash: "def5678", message: "fix: resolve bug", author: "Test User", date: "2025-01-01" },
+        ],
+        contributors: ["Test User"],
+      }),
       repo_analyze: () => ({ files: 0, languages: [] }),
       switch_provider: () => null,
 
@@ -120,7 +154,16 @@ export async function injectTauriMock(page: Page) {
       transform_preview: () => ({ mode: "AutoEnhance", original: "", transformed: "", changes: [] }),
       transform_get_settings: () => ({ enabled: true, mode: "AutoEnhance", show_preview: true }),
       transform_save_settings: () => null,
-      transform_list_templates: () => [],
+      transform_list_templates: () => [
+        {
+          id: "builtin-1",
+          name: "Code Assistant",
+          mode: "AutoEnhance",
+          template: "You are a helpful code assistant.",
+          is_builtin: true,
+          created_at: Date.now(),
+        },
+      ],
       transform_save_template: () => null,
       transform_delete_template: () => null,
 
@@ -131,6 +174,12 @@ export async function injectTauriMock(page: Page) {
       web_search_save_settings: () => null,
       web_search_list_cache: () => [],
       web_search_clear_cache: () => null,
+
+      // New feature commands
+      get_model_context_window: () => 128000,
+      truncate_conversation: () => null,
+      get_full_memory: () => "Memory line 1\nMemory line 2",
+      write_full_memory: () => null,
 
       // Event plugin — listen returns an event ID, unlisten is a no-op
       "plugin:event|listen": () => Math.floor(Math.random() * 1e9),

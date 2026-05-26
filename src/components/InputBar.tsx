@@ -27,7 +27,7 @@ export default function InputBar({
   showTransformPreview,
 }: InputBarProps) {
   const [input, setInput] = useState(() => {
-    const saved = localStorage.getItem("claude-input-draft");
+    const saved = localStorage.getItem("ollopa-input-draft");
     return saved || "";
   });
 
@@ -35,9 +35,9 @@ export default function InputBar({
   useEffect(() => {
     const timer = setTimeout(() => {
       if (input.trim()) {
-        localStorage.setItem("claude-input-draft", input);
+        localStorage.setItem("ollopa-input-draft", input);
       } else {
-        localStorage.removeItem("claude-input-draft");
+        localStorage.removeItem("ollopa-input-draft");
       }
     }, 300);
     return () => clearTimeout(timer);
@@ -134,7 +134,7 @@ export default function InputBar({
       onSend(input.trim());
     }
     setInput("");
-    localStorage.removeItem("claude-input-draft");
+    localStorage.removeItem("ollopa-input-draft");
     setAttachedFiles([]);
     setShowSlash(false);
     if (textareaRef.current) {
@@ -233,7 +233,7 @@ export default function InputBar({
           value={input}
           onChange={handleInputChange}
           onKeyDown={handleKeydown}
-          placeholder={isDragOver ? "Drop files here..." : "Ask Claude anything... (/ for commands)"}
+          placeholder={isDragOver ? "Drop files here..." : "Ask Ollopa anything... (/ for commands)"}
           rows={1}
           disabled={disabled}
         />

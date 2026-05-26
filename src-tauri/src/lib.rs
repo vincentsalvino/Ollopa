@@ -1,9 +1,9 @@
 mod api_client;
 mod api_keys;
 mod approval_manager;
-mod claude_events;
+mod ollopa_events;
 #[allow(dead_code)]
-mod claude_process;
+mod ollopa_process;
 mod event_bus;
 mod git_intelligence;
 mod memory;
@@ -119,7 +119,7 @@ async fn resume_conversation(
     // Emit session_started with correct model so frontend picks it up
     let _ = app_handle.emit(
         "app-event",
-        claude_events::AppEvent::SessionStarted {
+        ollopa_events::AppEvent::SessionStarted {
             session_id: session_id.clone(),
             model: model.clone(),
             cwd: std::env::current_dir()
@@ -193,7 +193,7 @@ fn get_token_cost() -> memory::CostData {
 #[tauri::command]
 fn get_memory_data() -> memory::MemoryData {
     memory::MemoryData {
-        claude_md: memory::read_claude_md(),
+        ollopa_md: memory::read_ollopa_md(),
         memory_lines: memory::read_memory_last_lines(),
     }
 }

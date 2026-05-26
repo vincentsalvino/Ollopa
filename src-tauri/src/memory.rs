@@ -15,7 +15,7 @@ pub struct CostData {
 
 #[derive(Clone, serde::Serialize)]
 pub struct MemoryData {
-    pub claude_md: String,
+    pub ollopa_md: String,
     pub memory_lines: Vec<String>,
 }
 
@@ -33,29 +33,29 @@ struct UsageEntry {
     output_tokens: u64,
 }
 
-/// Get the path to ~/.claude/
-fn claude_dir() -> PathBuf {
+/// Get the path to ~/.ollopa/
+fn ollopa_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/home/ubuntu"))
-        .join(".claude")
+        .join(".ollopa")
 }
 
-/// Read ~/.claude/CLAUDE.md
-pub fn read_claude_md() -> String {
-    let path = claude_dir().join("CLAUDE.md");
+/// Read ~/.ollopa/OLLOPA.md
+pub fn read_ollopa_md() -> String {
+    let path = ollopa_dir().join("OLLOPA.md");
     fs::read_to_string(&path).unwrap_or_default()
 }
 
-/// Read <project_path>/CLAUDE.md if it exists
+/// Read <project_path>/OLLOPA.md if it exists
 #[allow(dead_code)]
-pub fn read_project_claude_md(project_path: &str) -> String {
-    let path = PathBuf::from(project_path).join("CLAUDE.md");
+pub fn read_project_ollopa_md(project_path: &str) -> String {
+    let path = PathBuf::from(project_path).join("OLLOPA.md");
     fs::read_to_string(&path).unwrap_or_default()
 }
 
-/// Read last 3 lines of ~/.claude/deepseek_memory.md
+/// Read last 3 lines of ~/.ollopa/deepseek_memory.md
 pub fn read_memory_last_lines() -> Vec<String> {
-    let path = claude_dir().join("deepseek_memory.md");
+    let path = ollopa_dir().join("deepseek_memory.md");
     match fs::read_to_string(&path) {
         Ok(content) => {
             let lines: Vec<&str> = content.lines().collect();
@@ -68,19 +68,19 @@ pub fn read_memory_last_lines() -> Vec<String> {
 
 /// Read full memory file for injection
 pub fn read_memory_full() -> String {
-    let path = claude_dir().join("deepseek_memory.md");
+    let path = ollopa_dir().join("deepseek_memory.md");
     fs::read_to_string(&path).unwrap_or_default()
 }
 
 /// Write full memory file content (memory editor)
 pub fn write_memory_full(content: &str) -> Result<(), String> {
-    let path = claude_dir().join("deepseek_memory.md");
+    let path = ollopa_dir().join("deepseek_memory.md");
     fs::write(&path, content).map_err(|e| format!("Failed to write memory: {}", e))
 }
 
-/// Parse JSONL session logs from ~/.claude/projects/ to compute total token cost
+/// Parse JSONL session logs from ~/.ollopa/projects/ to compute total token cost
 pub fn compute_token_cost() -> CostData {
-    let projects_dir = claude_dir().join("projects");
+    let projects_dir = ollopa_dir().join("projects");
     let mut total_input: u64 = 0;
     let mut total_output: u64 = 0;
 
@@ -123,7 +123,7 @@ pub fn compute_token_cost() -> CostData {
 
 /// Append a decision to the memory file
 pub fn append_memory(entry: &str) -> Result<(), String> {
-    let path = claude_dir().join("deepseek_memory.md");
+    let path = ollopa_dir().join("deepseek_memory.md");
     let mut content = fs::read_to_string(&path).unwrap_or_default();
     if !content.ends_with('\n') && !content.is_empty() {
         content.push('\n');

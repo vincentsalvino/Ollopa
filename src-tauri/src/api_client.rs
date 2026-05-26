@@ -1,4 +1,4 @@
-use crate::claude_events::AppEvent;
+use crate::ollopa_events::AppEvent;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -117,7 +117,7 @@ pub struct DirectApiClient {
 fn conversations_dir() -> std::path::PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".claude")
+        .join(".ollopa")
         .join("conversations")
 }
 
@@ -366,8 +366,8 @@ impl DirectApiClient {
         // Add OpenRouter-specific headers
         if is_openrouter_url(&self.config.base_url) {
             req_builder = req_builder
-                .header("HTTP-Referer", "https://claude-desktop.app")
-                .header("X-Title", "Claude Desktop");
+                .header("HTTP-Referer", "https://ollopa.app")
+                .header("X-Title", "Ollopa");
         }
 
         let response = req_builder

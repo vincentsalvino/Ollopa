@@ -129,7 +129,7 @@ pub struct RouterStats {
 fn router_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/home/ubuntu"))
-        .join(".claude")
+        .join(".ollopa")
         .join("workspace-brain")
         .join("router")
 }
