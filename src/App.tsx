@@ -804,13 +804,27 @@ function App() {
                 </button>
                 {recentProjects.length > 0 && <div className="dropdown-divider" />}
                 {recentProjects.map((p) => (
-                  <button
+                  <div
                     key={p}
                     className={`dropdown-item${p === projectPath ? " active" : ""}`}
                     onClick={() => switchToProject(p)}
                   >
                     <i className="fa-solid fa-folder" /> {p.split(/[/\\]/).pop()}
-                  </button>
+                    <button
+                      className="project-remove-btn"
+                      title="Remove from recent projects"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRecentProjects((prev) => prev.filter((x) => x !== p));
+                        if (p === projectPath) {
+                          setProjectPath(null);
+                        }
+                        addToast("Project removed from list", "info");
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -1093,34 +1107,6 @@ function App() {
             </div>
           )}
 
-          {/* Input Area with Context Ring */}
-          <footer className="input-area">
-            <button
-              className={`ctx-ring-btn${ctxClass ? ` ${ctxClass}` : ""}`}
-              onClick={handleCompact}
-              title={`${Math.round(ctxPercentage)}% of context used · Click to compact`}
-            >
-              <svg viewBox="0 0 44 44" className="ctx-ring-svg">
-                <circle className="ring-bg" cx="22" cy="22" r="17" />
-                <circle className="ring-progress" cx="22" cy="22" r="17" style={{ strokeDasharray: CIRC, strokeDashoffset: ringOffset }} />
-              </svg>
-              <div className="ring-center">
-                <i className="fa-solid fa-compress ring-icon" />
-                <span className="ring-pct">{Math.round(ctxPercentage)}%</span>
-              </div>
-            </button>
-            <InputBar
-              slashCommands={SLASH_COMMANDS}
-              onSend={handleSend}
-              onSendWithFiles={handleSendWithFiles}
-              isStreaming={state.isStreaming}
-              onStopGeneration={handleStopGeneration}
-              transformEnabled={transformSettings.enabled}
-              onPreviewTransform={handlePreviewTransform}
-              onTogglePreview={() => setShowTransformPreview((s) => !s)}
-              showTransformPreview={showTransformPreview}
-            />
-          </footer>
         </main>
 
         {/* ═══════ Resize Handle ═══════ */}
@@ -1142,6 +1128,35 @@ function App() {
           onToggleCollapse={() => setDashboardCollapsed((c) => !c)}
         />
       </div>
+
+      {/* ═══════ Input Area with Context Ring ═══════ */}
+      <footer className="input-area">
+        <button
+          className={`ctx-ring-btn${ctxClass ? ` ${ctxClass}` : ""}`}
+          onClick={handleCompact}
+          title={`${Math.round(ctxPercentage)}% of context used · Click to compact`}
+        >
+          <svg viewBox="0 0 44 44" className="ctx-ring-svg">
+            <circle className="ring-bg" cx="22" cy="22" r="17" />
+            <circle className="ring-progress" cx="22" cy="22" r="17" style={{ strokeDasharray: CIRC, strokeDashoffset: ringOffset }} />
+          </svg>
+          <div className="ring-center">
+            <i className="fa-solid fa-compress ring-icon" />
+            <span className="ring-pct">{Math.round(ctxPercentage)}%</span>
+          </div>
+        </button>
+        <InputBar
+          slashCommands={SLASH_COMMANDS}
+          onSend={handleSend}
+          onSendWithFiles={handleSendWithFiles}
+          isStreaming={state.isStreaming}
+          onStopGeneration={handleStopGeneration}
+          transformEnabled={transformSettings.enabled}
+          onPreviewTransform={handlePreviewTransform}
+          onTogglePreview={() => setShowTransformPreview((s) => !s)}
+          showTransformPreview={showTransformPreview}
+        />
+      </footer>
 
       {/* ═══════ Modals ═══════ */}
       {state.activeApproval && state.activeApproval.status === "pending" && (
