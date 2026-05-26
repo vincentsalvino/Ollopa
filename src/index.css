@@ -77,19 +77,43 @@ body {
   position: relative;
 }
 
-.chat-panel::before {
-  content: '';
+/* ═══════ PANEL BACKGROUND OVERLAYS ═══════ */
+.panel-bg {
   position: absolute;
   top: 0;
-  left: 0;
-  width: 50%;
   height: 100%;
-  background: url('/bg-chat.png') center / cover no-repeat;
-  opacity: 0.07;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   pointer-events: none;
   z-index: 0;
-  mask-image: linear-gradient(to right, rgba(0,0,0,0.6) 0%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, rgba(0,0,0,0.6) 0%, transparent 100%);
+}
+
+.panel-bg--chat {
+  left: 0;
+  width: 50%;
+  opacity: 0.45;
+  filter: brightness(3) saturate(1.5);
+  mask-image: linear-gradient(to right, rgba(0,0,0,0.8) 0%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, rgba(0,0,0,0.8) 0%, transparent 100%);
+}
+
+.panel-bg--dashboard {
+  right: 0;
+  width: 50%;
+  opacity: 0.45;
+  filter: brightness(3) saturate(1.5);
+  mask-image: linear-gradient(to left, rgba(0,0,0,0.8) 0%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to left, rgba(0,0,0,0.8) 0%, transparent 100%);
+}
+
+.panel-bg--sidebar {
+  left: 0;
+  width: 50%;
+  opacity: 0.45;
+  filter: brightness(3) saturate(1.5);
+  mask-image: linear-gradient(to right, rgba(0,0,0,0.8) 0%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, rgba(0,0,0,0.8) 0%, transparent 100%);
 }
 
 .toolbar {
@@ -653,25 +677,7 @@ body {
   position: relative;
 }
 
-.dashboard-panel::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 50%;
-  height: 100%;
-  background: url('/bg-dashboard.png') center / cover no-repeat;
-  opacity: 0.06;
-  pointer-events: none;
-  z-index: 0;
-  mask-image: linear-gradient(to left, rgba(0,0,0,0.6) 0%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to left, rgba(0,0,0,0.6) 0%, transparent 100%);
-}
 
-.dashboard-panel > * {
-  position: relative;
-  z-index: 1;
-}
 
 .dashboard-panel.collapsed {
   width: 52px;
@@ -2027,25 +2033,7 @@ body {
   animation: slideInLeft 0.2s ease;
 }
 
-.session-sidebar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 50%;
-  height: 100%;
-  background: url('/bg-dashboard.png') center / cover no-repeat;
-  opacity: 0.06;
-  pointer-events: none;
-  z-index: 0;
-  mask-image: linear-gradient(to right, rgba(0,0,0,0.6) 0%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, rgba(0,0,0,0.6) 0%, transparent 100%);
-}
 
-.session-sidebar > * {
-  position: relative;
-  z-index: 1;
-}
 
 @keyframes slideInLeft {
   from { transform: translateX(-100%); }

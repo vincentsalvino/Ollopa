@@ -9,6 +9,8 @@ import Toast from "./components/Toast";
 import ApprovalModal from "./components/approvals/ApprovalModal";
 import FileDiffModal from "./components/approvals/FileDiffModal";
 import SessionSidebar from "./components/sessions/SessionSidebar";
+import bgChat from "./assets/bg-chat.png";
+import bgDashboard from "./assets/bg-dashboard.png";
 import ToolDetailPanel from "./components/tools/ToolDetailPanel";
 import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
@@ -618,6 +620,7 @@ function App() {
     <div className="app-container">
       {/* ═══════ Main Panel ═══════ */}
       <div className="chat-panel">
+        <div className="panel-bg panel-bg--chat" style={{ backgroundImage: `url(${bgChat})` }} />
         {/* Env var warning banner */}
         {envWarning && (
           <div className="env-warning-banner">
@@ -1038,6 +1041,7 @@ function App() {
         projectPath={projectPath}
         projectName={projectName}
         onMemoryReload={loadDashboardData}
+        bgImage={bgDashboard}
       />
 
       {/* ═══════ Modals ═══════ */}
