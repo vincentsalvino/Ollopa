@@ -10,16 +10,16 @@ test.beforeEach(async ({ page }) => {
 test.describe("App Launch", () => {
   test("renders the main layout", async ({ page }) => {
     await expect(page.locator(".toolbar")).toBeVisible();
-    await expect(page.locator(".input-bar-wrapper")).toBeVisible();
+    await expect(page.locator("footer.input-area")).toBeVisible();
   });
 
   test("shows the model indicator in toolbar", async ({ page }) => {
-    const modelBtn = page.locator(".model-selector-btn");
+    const modelBtn = page.locator(".model-pill");
     await expect(modelBtn).toBeVisible();
   });
 
   test("shows the session history button", async ({ page }) => {
-    const btn = page.locator(".sessions-btn");
+    const btn = page.locator('.tbtn[title="Session history"]');
     await expect(btn).toBeVisible();
   });
 

@@ -31,6 +31,8 @@ interface DashboardProps {
   onMemoryReload: () => void;
   bgImage?: string;
   width?: number;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 export default function Dashboard({
@@ -44,8 +46,11 @@ export default function Dashboard({
   onMemoryReload,
   bgImage,
   width,
+  collapsed: collapsedProp,
+  onToggleCollapse,
 }: DashboardProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsedLocal, setCollapsedLocal] = useState(false);
+  const collapsed = collapsedProp !== undefined ? collapsedProp : collapsedLocal;
 
   // Git Status
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
@@ -61,7 +66,10 @@ export default function Dashboard({
   const [memoryContent, setMemoryContent] = useState("");
   const [memorySaving, setMemorySaving] = useState(false);
 
-  const toggleSidebar = () => setCollapsed((c) => !c);
+  const toggleSidebar = () => {
+    if (onToggleCollapse) onToggleCollapse();
+    else setCollapsedLocal((c) => !c);
+  };
 
   const handleEditMemory = async () => {
     try {
@@ -106,9 +114,9 @@ export default function Dashboard({
       {bgImage && <div className="panel-bg panel-bg--dashboard" style={{ backgroundImage: `url(${bgImage})` }} />}
       {/* Mini view (collapsed) */}
       <div className="dashboard-mini">
-        <span className="mini-icon" onClick={toggleSidebar} title="Expand sidebar">
-          &#9776;
-        </span>
+        <button className="mini-icon-btn" onClick={toggleSidebar} title="Expand sidebar">
+          <i className="fa-solid fa-bars" />
+        </button>
         <div className="mini-divider" />
         <div className="mini-cost">${sessionCost.cost_usd.toFixed(4)}</div>
         <div className="mini-divider" />
@@ -126,10 +134,11 @@ export default function Dashboard({
 
       {/* Full view (expanded) */}
       <div className="dashboard-full dashboard">
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
-          <span className="mini-icon" onClick={toggleSidebar} title="Collapse sidebar">
-            &#9776;
-          </span>
+        <div className="dash-header">
+          <span className="dash-header-title">Dashboard</span>
+          <button className="mini-icon-btn" onClick={toggleSidebar} title="Collapse sidebar">
+            <i className="fa-solid fa-chevron-right" />
+          </button>
         </div>
 
         {/* Project Info */}
@@ -236,7 +245,7 @@ export default function Dashboard({
                 <p className="calibration-text">No memory entries</p>
               )}
               <button className="btn-edit-memory" onClick={handleEditMemory}>
-                Edit Memory
+                <i className="fa-solid fa-pen" style={{ fontSize: 9, marginRight: 4 }} />Edit Memory
               </button>
             </>
           )}
@@ -247,7 +256,7 @@ export default function Dashboard({
           <div className="card">
             <h3 className="card-title">Git Status</h3>
             <div className="git-branch-row">
-              <span className="git-branch-icon">&#9095;</span>
+              <i className="fa-solid fa-code-branch" style={{ fontSize: 11, color: 'var(--text-2, var(--text-1))' }} />
               <span className="git-branch-name">{gitInfo.branch}</span>
               {gitInfo.ahead > 0 && <span className="git-badge git-ahead">&uarr;{gitInfo.ahead}</span>}
               {gitInfo.behind > 0 && <span className="git-badge git-behind">&darr;{gitInfo.behind}</span>}

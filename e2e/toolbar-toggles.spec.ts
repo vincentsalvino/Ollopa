@@ -46,12 +46,12 @@ test.describe("Toolbar Toggles", () => {
   });
 
   test("search button is visible", async ({ page }) => {
-    const btns = page.locator('.toolbar-btn[title*="Search"]');
-    await expect(btns.first()).toBeVisible();
+    const btn = page.locator('.tbtn[title="Search conversations"]');
+    await expect(btn).toBeVisible();
   });
 
   test("export button is visible", async ({ page }) => {
-    const btn = page.locator('.toolbar-btn[title*="Export"]');
+    const btn = page.locator('.tbtn[title*="Export"]');
     await expect(btn).toBeVisible();
   });
 });

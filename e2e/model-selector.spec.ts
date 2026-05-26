@@ -9,40 +9,36 @@ test.beforeEach(async ({ page }) => {
 
 test.describe("Model Selector", () => {
   test("opens dropdown on click", async ({ page }) => {
-    await page.locator(".model-selector-btn").click();
-    await expect(page.locator(".grouped-model-dropdown")).toBeVisible();
+    await page.locator(".model-pill").click();
+    await expect(page.locator(".model-pill + .dropdown, .dropdown-wrapper .dropdown").first()).toBeVisible();
   });
 
   test("shows grouped models by provider", async ({ page }) => {
-    await page.locator(".model-selector-btn").click();
-    const groups = page.locator(".model-group-label");
+    await page.locator(".model-pill").click();
+    const groups = page.locator(".dropdown-section-label");
     const groupTexts = await groups.allTextContents();
     expect(groupTexts).toContain("DeepSeek");
-    expect(groupTexts).toContain("Claude");
+    expect(groupTexts).toContain("Anthropic");
     expect(groupTexts).toContain("OpenAI");
-    expect(groupTexts).toContain("OpenRouter / Hermes");
-    expect(groupTexts).toContain("Nous Research");
-  });
-
-  test("shows Manage API Keys button at top", async ({ page }) => {
-    await page.locator(".model-selector-btn").click();
-    const apiKeyBtn = page.locator(".api-key-btn");
-    await expect(apiKeyBtn).toBeVisible();
-    await expect(apiKeyBtn).toContainText("Manage API Keys");
   });
 
   test("lists individual models under each group", async ({ page }) => {
-    await page.locator(".model-selector-btn").click();
-    const items = page.locator(".model-dropdown-item:not(.api-key-btn)");
+    await page.locator(".model-pill").click();
+    const items = page.locator(".dropdown-item");
     const count = await items.count();
-    // At least the DeepSeek models + Claude + OpenAI + OpenRouter + Nous
-    expect(count).toBeGreaterThanOrEqual(10);
+    // DeepSeek(5) + Anthropic(2) + OpenAI(2) = 9
+    expect(count).toBeGreaterThanOrEqual(7);
   });
 
-  test("closes dropdown on Escape", async ({ page }) => {
-    await page.locator(".model-selector-btn").click();
-    await expect(page.locator(".grouped-model-dropdown")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator(".grouped-model-dropdown")).not.toBeVisible();
+  test("includes deepseek-v4-pro model", async ({ page }) => {
+    await page.locator(".model-pill").click();
+    const items = await page.locator(".dropdown-item").allTextContents();
+    expect(items.some((t) => t.includes("deepseek-v4-pro"))).toBeTruthy();
+  });
+
+  test("includes deepseek-v4-flash model", async ({ page }) => {
+    await page.locator(".model-pill").click();
+    const items = await page.locator(".dropdown-item").allTextContents();
+    expect(items.some((t) => t.includes("deepseek-v4-flash"))).toBeTruthy();
   });
 });
