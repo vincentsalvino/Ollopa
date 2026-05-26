@@ -3,7 +3,7 @@ import { injectTauriMock } from "./tauri-mock";
 
 test.beforeEach(async ({ page }) => {
   await injectTauriMock(page);
-  await page.goto("/");
+  await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.waitForSelector(".toolbar");
 });
 

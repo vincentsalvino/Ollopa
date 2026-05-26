@@ -4,15 +4,19 @@ export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
   retries: 1,
+  workers: 1,
+  fullyParallel: false,
   use: {
     baseURL: "http://localhost:5173",
     headless: true,
     screenshot: "only-on-failure",
+    navigationTimeout: 15_000,
   },
   webServer: {
     command: "npm run dev",
-    port: 5173,
+    url: "http://localhost:5173",
     reuseExistingServer: true,
-    timeout: 15_000,
+    timeout: 30_000,
+    stdout: "pipe",
   },
 });
