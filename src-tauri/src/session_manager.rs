@@ -213,6 +213,13 @@ impl SessionManager {
         self.api_client.is_some()
     }
 
+    /// Truncate conversation history at a given index.
+    pub async fn truncate_at(&mut self, message_index: usize) {
+        if let Some(ref mut client) = self.api_client {
+            client.truncate_history(message_index);
+        }
+    }
+
     /// Set the working directory for next session.
     pub fn set_working_dir(&mut self, dir: String) {
         self.working_dir = Some(dir);

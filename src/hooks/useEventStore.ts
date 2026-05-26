@@ -19,7 +19,8 @@ type Action =
   | { type: "CLOSE_DIFF" }
   | { type: "REPLAY_EVENTS"; events: AppEvent[] }
   | { type: "STOP_STREAMING" }
-  | { type: "SET_MODEL"; model: string };
+  | { type: "SET_MODEL"; model: string }
+  | { type: "TRUNCATE_AFTER"; entryId: string };
 
 // ═══════ Helpers ═══════
 
@@ -110,6 +111,19 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
 
     case "SET_MODEL":
       return { ...state, sessionModel: action.model };
+
+    case "TRUNCATE_AFTER": {
+      const idx = state.timeline.findIndex((e) => e.id === action.entryId);
+      if (idx >= 0) {
+        return {
+          ...state,
+          timeline: state.timeline.slice(0, idx + 1),
+          isStreaming: false,
+          streamingText: "",
+        };
+      }
+      return state;
+    }
 
     case "PROCESS_EVENT":
       return processAppEvent(state, action.event);
@@ -358,6 +372,11 @@ export function useEventStore() {
     []
   );
 
+  const truncateAfter = useCallback(
+    (entryId: string) => dispatch({ type: "TRUNCATE_AFTER", entryId }),
+    []
+  );
+
   // Derived data
   const toolEntries = state.timeline.filter(
     (e) => e.kind === "tool_use"
@@ -387,6 +406,7 @@ export function useEventStore() {
     replayEvents,
     stopStreaming,
     setModel,
+    truncateAfter,
     toolEntries,
     runningTools,
     stats,

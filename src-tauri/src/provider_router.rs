@@ -705,6 +705,18 @@ pub fn update_health(
 // ═══════ Stats ═══════
 
 /// Get router statistics
+pub fn get_context_window(model: &str) -> usize {
+    let providers = list_providers();
+    for provider in &providers {
+        for m in &provider.models {
+            if m.id == model {
+                return m.context_window;
+            }
+        }
+    }
+    64000
+}
+
 pub fn get_router_stats() -> RouterStats {
     let config = load_config();
     let providers = list_providers();

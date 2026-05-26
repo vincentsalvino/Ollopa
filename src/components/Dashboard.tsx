@@ -1,6 +1,18 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { CostData, TimelineEntry, ToolUseData } from "../types";
+
+interface GitInfo {
+  is_git_repo: boolean;
+  branch: string;
+  remote_url: string | null;
+  ahead: number;
+  behind: number;
+  staged: number;
+  modified: number;
+  untracked: number;
+  recent_commits: { short_hash: string; message: string; author: string }[];
+}
 
 interface DashboardProps {
   sessionCost: CostData;
@@ -18,6 +30,7 @@ interface DashboardProps {
   projectName: string | null;
   onMemoryReload: () => void;
   bgImage?: string;
+  width?: number;
 }
 
 export default function Dashboard({
@@ -30,8 +43,18 @@ export default function Dashboard({
   projectName,
   onMemoryReload,
   bgImage,
+  width,
 }: DashboardProps) {
   const [collapsed, setCollapsed] = useState(false);
+
+  // Git Status
+  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
+
+  useEffect(() => {
+    if (projectPath) {
+      invoke<GitInfo>("git_info", { projectPath }).then(setGitInfo).catch(() => setGitInfo(null));
+    }
+  }, [projectPath]);
 
   // Memory Editor
   const [editingMemory, setEditingMemory] = useState(false);
@@ -76,7 +99,10 @@ export default function Dashboard({
   const recentTools = toolEntries.slice(-8).reverse();
 
   return (
-    <div className={`dashboard-panel ${collapsed ? "collapsed" : ""}`}>
+    <div
+      className={`dashboard-panel ${collapsed ? "collapsed" : ""}`}
+      style={!collapsed && width ? { width } : undefined}
+    >
       {bgImage && <div className="panel-bg panel-bg--dashboard" style={{ backgroundImage: `url(${bgImage})` }} />}
       {/* Mini view (collapsed) */}
       <div className="dashboard-mini">
@@ -215,6 +241,37 @@ export default function Dashboard({
             </>
           )}
         </div>
+
+        {/* Git Status */}
+        {gitInfo && gitInfo.is_git_repo && (
+          <div className="card">
+            <h3 className="card-title">Git Status</h3>
+            <div className="git-branch-row">
+              <span className="git-branch-icon">&#9095;</span>
+              <span className="git-branch-name">{gitInfo.branch}</span>
+              {gitInfo.ahead > 0 && <span className="git-badge git-ahead">&uarr;{gitInfo.ahead}</span>}
+              {gitInfo.behind > 0 && <span className="git-badge git-behind">&darr;{gitInfo.behind}</span>}
+            </div>
+            <div className="git-stats-row">
+              {gitInfo.staged > 0 && <span className="git-stat staged">{gitInfo.staged} staged</span>}
+              {gitInfo.modified > 0 && <span className="git-stat modified">{gitInfo.modified} modified</span>}
+              {gitInfo.untracked > 0 && <span className="git-stat untracked">{gitInfo.untracked} untracked</span>}
+              {gitInfo.staged === 0 && gitInfo.modified === 0 && gitInfo.untracked === 0 && (
+                <span className="git-stat clean">Clean working tree</span>
+              )}
+            </div>
+            {gitInfo.recent_commits.length > 0 && (
+              <div className="git-commits">
+                {gitInfo.recent_commits.slice(0, 3).map((c) => (
+                  <div key={c.short_hash} className="git-commit-row">
+                    <span className="git-commit-hash">{c.short_hash}</span>
+                    <span className="git-commit-msg">{c.message}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Session Cost */}
         <div className="card">

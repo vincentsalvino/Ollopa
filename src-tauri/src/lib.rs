@@ -777,6 +777,22 @@ fn router_stats() -> provider_router::RouterStats {
     provider_router::get_router_stats()
 }
 
+// ═══════ Conversation Truncation ═══════
+
+#[tauri::command]
+async fn truncate_conversation(index: usize, state: State<'_, AppState>) -> Result<(), String> {
+    let mut session = state.session.lock().await;
+    session.truncate_at(index).await;
+    Ok(())
+}
+
+// ═══════ Context Window ═══════
+
+#[tauri::command]
+fn get_model_context_window(model: String) -> usize {
+    provider_router::get_context_window(&model)
+}
+
 // ═══════ Git Intelligence ═══════
 
 #[tauri::command]
@@ -1015,6 +1031,8 @@ pub fn run() {
             router_save_config,
             router_route,
             router_stats,
+            truncate_conversation,
+            get_model_context_window,
             git_info,
             repo_analyze,
             switch_provider,
