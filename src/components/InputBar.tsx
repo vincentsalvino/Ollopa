@@ -203,7 +203,7 @@ export default function InputBar({
         </div>
       )}
 
-      <div className="input-area">
+      <div className="input-controls">
         <button
           className="attach-btn"
           onClick={() => fileInputRef.current?.click()}
