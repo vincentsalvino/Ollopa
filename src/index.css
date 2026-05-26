@@ -1,8 +1,8 @@
+@import 'highlight.js/styles/atom-one-dark.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import 'highlight.js/styles/atom-one-dark.css';
 
 :root[data-theme="dark"] {
   --bg-primary: #1a1a2e;
@@ -40,7 +40,7 @@
   --border-accent: #c0c0d8;
   --user-bubble: #e8e8f0;
   --ai-bubble: #ffffff;
-  --code-bg: #1a1a2e;
+  --code-bg: #f0f0f5;
   --success: #2dd47b;
   --danger: #ff4757;
   --warning: #ffa502;
@@ -48,6 +48,10 @@
 
 :root {
   color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -99,12 +103,27 @@ body {
   -webkit-mask-image: linear-gradient(to right, rgba(0, 0, 0, 0.8) 0%, transparent 100%);
 }
 
+:root[data-theme="light"] .panel-bg--chat {
+  opacity: 0.06;
+  filter: brightness(1.3) saturate(0.3);
+}
+
 .panel-bg--dashboard {
     right: 0;
     width: 90%;
     opacity: 0.85;
     mask-image: linear-gradient(to left, rgba(0, 0, 0, 0.8) 0%, transparent 100%);
     -webkit-mask-image: linear-gradient(to left, rgba(0, 0, 0, 0.8) 0%, transparent 100%);
+}
+
+:root[data-theme="light"] .panel-bg--dashboard {
+  opacity: 0.06;
+  filter: brightness(1.3) saturate(0.3);
+}
+
+:root[data-theme="light"] .panel-bg--sidebar {
+  opacity: 0.06;
+  filter: brightness(1.3) saturate(0.3);
 }
 
 .panel-bg--sidebar {
@@ -5506,6 +5525,38 @@ h6.md-heading { font-size: 12px; }
 :root[data-theme="light"] .hl-string { color: #50a14f; }
 :root[data-theme="light"] .hl-comment { color: #a0a1a7; }
 :root[data-theme="light"] .hl-number { color: #986801; }
+
+/* Light mode highlight.js overrides (atom-one-dark -> atom-one-light) */
+:root[data-theme="light"] .hljs {
+  color: #383a42;
+  background: var(--code-bg);
+}
+:root[data-theme="light"] .hljs-keyword,
+:root[data-theme="light"] .hljs-selector-tag { color: #a626a4; }
+:root[data-theme="light"] .hljs-string,
+:root[data-theme="light"] .hljs-addition { color: #50a14f; }
+:root[data-theme="light"] .hljs-number,
+:root[data-theme="light"] .hljs-literal { color: #986801; }
+:root[data-theme="light"] .hljs-comment,
+:root[data-theme="light"] .hljs-quote { color: #a0a1a7; font-style: italic; }
+:root[data-theme="light"] .hljs-title,
+:root[data-theme="light"] .hljs-section { color: #4078f2; }
+:root[data-theme="light"] .hljs-type,
+:root[data-theme="light"] .hljs-built_in { color: #c18401; }
+:root[data-theme="light"] .hljs-attr,
+:root[data-theme="light"] .hljs-attribute { color: #986801; }
+:root[data-theme="light"] .hljs-variable,
+:root[data-theme="light"] .hljs-template-variable { color: #e45649; }
+:root[data-theme="light"] .hljs-deletion { color: #e45649; }
+:root[data-theme="light"] .hljs-meta { color: #4078f2; }
+
+/* Light mode: code block text should be dark */
+:root[data-theme="light"] .code-block {
+  color: #383a42;
+}
+:root[data-theme="light"] .code-block code {
+  color: #383a42;
+}
 
 /* ═══════ Model Selector ═══════ */
 

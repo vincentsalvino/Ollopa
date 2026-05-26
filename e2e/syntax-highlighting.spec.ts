@@ -9,11 +9,6 @@ test.beforeEach(async ({ page }) => {
 
 test.describe("Feature 1: Syntax Highlighting", () => {
   test("highlight.js CSS is loaded", async ({ page }) => {
-    const hlStyle = await page.evaluate(() => {
-      const sheets = Array.from(document.styleSheets);
-      return sheets.some((s) => s.href?.includes("highlight.js") || false);
-    });
-    // The styles are bundled by Vite, so check for hljs class presence in CSS
     const hasHljsRules = await page.evaluate(() => {
       const sheets = Array.from(document.styleSheets);
       for (const sheet of sheets) {
@@ -25,5 +20,26 @@ test.describe("Feature 1: Syntax Highlighting", () => {
       return false;
     });
     expect(hasHljsRules).toBe(true);
+  });
+
+  test("atom-one-dark theme classes are present in stylesheets", async ({ page }) => {
+    const hasAtomTheme = await page.evaluate(() => {
+      const sheets = Array.from(document.styleSheets);
+      for (const sheet of sheets) {
+        try {
+          const rules = Array.from(sheet.cssRules);
+          if (rules.some((r) => r.cssText?.includes(".hljs-keyword"))) return true;
+        } catch (_) {}
+      }
+      return false;
+    });
+    expect(hasAtomTheme).toBe(true);
+  });
+
+  test("code-bg CSS variable is defined for code blocks", async ({ page }) => {
+    const codeBg = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue("--code-bg").trim()
+    );
+    expect(codeBg).toBeTruthy();
   });
 });
