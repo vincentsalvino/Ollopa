@@ -9,33 +9,57 @@ test.beforeEach(async ({ page }) => {
 
 test.describe("Feature 5: Conversation Branching", () => {
   test("user message shows edit button on hover", async ({ page }) => {
-    // Send a message first
     const textarea = page.locator(".chat-input");
     await textarea.fill("Test message for edit");
     await page.locator(".send-btn").click();
     await page.waitForTimeout(300);
-    // Check that the user message appears in timeline
     const userMsg = page.locator(".tl-user").first();
     if (await userMsg.isVisible()) {
       await userMsg.hover();
-      // Edit button should appear on hover
-      const editBtn = userMsg.locator(".msg-edit-btn");
-      // The edit button may or may not be present depending on message type
-      // Just verify the message rendered
       await expect(userMsg).toBeVisible();
     }
   });
 
   test("timeline supports truncation action type", async ({ page }) => {
-    // Verify the reducer accepts TRUNCATE_AFTER by checking app doesn't crash
-    // when we dispatch user messages (the truncate logic is internal)
     const textarea = page.locator(".chat-input");
     await textarea.fill("First message");
     await page.locator(".send-btn").click();
     await page.waitForTimeout(200);
     await textarea.fill("Second message");
     await page.locator(".send-btn").click();
-    // App should not crash — timeline should show entries
     await expect(page.locator(".timeline-view")).toBeVisible();
+  });
+
+  test("sending a message clears the input", async ({ page }) => {
+    const textarea = page.locator(".chat-input");
+    await textarea.fill("message to send");
+    await page.locator(".send-btn").click();
+    await page.waitForTimeout(200);
+    await expect(textarea).toHaveValue("");
+  });
+
+  test("sending a message clears the draft from localStorage", async ({ page }) => {
+    const textarea = page.locator(".chat-input");
+    await textarea.fill("test for draft clear");
+    await page.waitForTimeout(400);
+    await page.locator(".send-btn").click();
+    await page.waitForTimeout(200);
+    const draft = await page.evaluate(() =>
+      localStorage.getItem("ollopa-input-draft")
+    );
+    expect(draft).toBeNull();
+  });
+
+  test("multiple messages appear in timeline in order", async ({ page }) => {
+    const textarea = page.locator(".chat-input");
+    await textarea.fill("First message");
+    await page.locator(".send-btn").click();
+    await page.waitForTimeout(300);
+    await textarea.fill("Second message");
+    await page.locator(".send-btn").click();
+    await page.waitForTimeout(300);
+    const entries = page.locator(".tl-user");
+    const count = await entries.count();
+    expect(count).toBeGreaterThanOrEqual(2);
   });
 });

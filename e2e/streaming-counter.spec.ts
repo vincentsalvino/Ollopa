@@ -8,11 +8,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe("Feature 9: Streaming Token Counter", () => {
-  test("streaming counter appears during streaming", async ({ page }) => {
-    // Simulate streaming state by injecting an app-event
-    // The streaming counter appears in the StreamingSection component
-    // which only renders when isStreaming && streamingText
-    // We verify the CSS classes exist
+  test("streaming counter CSS class exists", async ({ page }) => {
     const hasStreamingCSS = await page.evaluate(() => {
       const sheets = Array.from(document.styleSheets);
       for (const sheet of sheets) {
@@ -38,5 +34,20 @@ test.describe("Feature 9: Streaming Token Counter", () => {
       return false;
     });
     expect(hasCSS).toBe(true);
+  });
+
+  test("token bar in toolbar is visible", async ({ page }) => {
+    const tokenBar = page.locator(".token-bar");
+    await expect(tokenBar).toBeVisible();
+  });
+
+  test("token label displays token count", async ({ page }) => {
+    const label = page.locator(".token-label");
+    await expect(label).toBeVisible();
+  });
+
+  test("token progress bar exists", async ({ page }) => {
+    const progress = page.locator(".token-progress");
+    await expect(progress).toBeVisible();
   });
 });

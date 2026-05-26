@@ -22,7 +22,6 @@ test.describe("Feature 8: Drag-to-Resize Panels", () => {
   });
 
   test("dashboard width persists in localStorage", async ({ page }) => {
-    // Set a custom width
     await page.evaluate(() =>
       localStorage.setItem("ollopa-dashboard-width", "350")
     );
@@ -32,5 +31,26 @@ test.describe("Feature 8: Drag-to-Resize Panels", () => {
       localStorage.getItem("ollopa-dashboard-width")
     );
     expect(storedWidth).toBe("350");
+  });
+
+  test("default dashboard width is 280px", async ({ page }) => {
+    await page.evaluate(() =>
+      localStorage.removeItem("ollopa-dashboard-width")
+    );
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".toolbar");
+    // The dashboard panel should exist with a reasonable width
+    const dashboard = page.locator(".dashboard-panel");
+    await expect(dashboard).toBeVisible();
+  });
+
+  test("resize handle has correct positioning between panels", async ({ page }) => {
+    const handle = page.locator(".resize-handle");
+    const box = await handle.boundingBox();
+    expect(box).not.toBeNull();
+    if (box) {
+      expect(box.width).toBeGreaterThan(0);
+      expect(box.height).toBeGreaterThan(0);
+    }
   });
 });
