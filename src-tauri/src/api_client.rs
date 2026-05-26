@@ -222,6 +222,11 @@ impl DirectApiClient {
         Ok(())
     }
 
+    /// Truncate message history, keeping only the first `keep_count` messages.
+    pub fn truncate_history(&mut self, keep_count: usize) {
+        self.messages.truncate(keep_count);
+    }
+
     /// Cancel in-progress generation.
     pub fn cancel_generation(&self) {
         self.cancel_token.cancel();

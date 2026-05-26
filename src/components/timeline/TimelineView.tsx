@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import type { TimelineEntry as TEntry, ToolUseData } from "../../types";
 import TimelineEntry from "./TimelineEntry";
 import { StreamingBubble } from "./MessageBubble";
@@ -53,22 +53,10 @@ export default function TimelineView({
       ))}
 
       {isStreaming && streamingText && (
-        <div className="timeline-entry tl-assistant">
-          <div className="tl-rail">
-            <div className="tl-icon tl-icon-assistant">
-              <span>A</span>
-            </div>
-            <div className="tl-connector" />
-          </div>
-          <div className="tl-content">
-            <StreamingBubble content={streamingText} />
-            {onStopGeneration && (
-              <button className="stop-generation-btn" onClick={onStopGeneration}>
-                &#9632; Stop generating
-              </button>
-            )}
-          </div>
-        </div>
+        <StreamingSection
+          streamingText={streamingText}
+          onStopGeneration={onStopGeneration}
+        />
       )}
 
       {isTyping && !isStreaming && (
@@ -89,6 +77,50 @@ export default function TimelineView({
       )}
 
       <div ref={bottomRef} />
+    </div>
+  );
+}
+
+function StreamingSection({
+  streamingText,
+  onStopGeneration,
+}: {
+  streamingText: string;
+  onStopGeneration?: () => void;
+}) {
+  const [startTime] = useState(() => Date.now());
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => setElapsed(Date.now() - startTime), 500);
+    return () => clearInterval(interval);
+  }, [startTime]);
+
+  const estimatedTokens = Math.ceil(streamingText.length / 4);
+  const elapsedSec = Math.max(0.1, elapsed / 1000);
+  const tokPerSec = (estimatedTokens / elapsedSec).toFixed(1);
+
+  return (
+    <div className="timeline-entry tl-assistant">
+      <div className="tl-rail">
+        <div className="tl-icon tl-icon-assistant">
+          <span>A</span>
+        </div>
+        <div className="tl-connector" />
+      </div>
+      <div className="tl-content">
+        <StreamingBubble content={streamingText} />
+        <div className="streaming-stats-row">
+          <span className="streaming-counter">
+            ~{estimatedTokens} tokens &middot; {tokPerSec} tok/s &middot; {elapsedSec.toFixed(1)}s
+          </span>
+          {onStopGeneration && (
+            <button className="stop-generation-btn" onClick={onStopGeneration}>
+              &#9632; Stop generating
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

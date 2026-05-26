@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEventStore } from "./hooks/useEventStore";
@@ -16,7 +16,8 @@ import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
-import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo } from "./types";
+import BrainSearchModal from "./components/memory/BrainSearchModal";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo, PromptTemplate } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
     replayEvents,
     stopStreaming,
     setModel,
+    truncateAfter,
     toolEntries,
     stats,
   } = useEventStore();
@@ -65,6 +67,9 @@ function App() {
   // Agent panel
   const [showAgentPanel, setShowAgentPanel] = useState(false);
 
+  // Brain search (Ctrl+K)
+  const [showBrainSearch, setShowBrainSearch] = useState(false);
+
   // Toolbar tools toggle
   const [showTools, setShowTools] = useState(false);
 
@@ -83,6 +88,8 @@ function App() {
   // System prompt
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState("");
+  const [promptTemplates, setPromptTemplates] = useState<PromptTemplate[]>([]);
+  const [saveTemplateName, setSaveTemplateName] = useState("");
 
   // Export
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -109,6 +116,61 @@ function App() {
   const [apiKeys, setApiKeys] = useState<ApiKeyInfo[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [keyInput, setKeyInput] = useState("");
+
+  // Context window tracking
+  const [contextWindow, setContextWindow] = useState(64000);
+
+  // Drag-to-resize panels
+  const [dashboardWidth, setDashboardWidth] = useState(() => {
+    const saved = localStorage.getItem("claude-dashboard-width");
+    return saved ? parseInt(saved, 10) : 280;
+  });
+  const resizing = useRef(false);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizing.current = true;
+    const startX = e.clientX;
+    const startWidth = dashboardWidth;
+    const onMove = (ev: MouseEvent) => {
+      if (!resizing.current) return;
+      const delta = startX - ev.clientX;
+      const newWidth = Math.min(600, Math.max(180, startWidth + delta));
+      setDashboardWidth(newWidth);
+    };
+    const onUp = () => {
+      resizing.current = false;
+      setDashboardWidth((w) => {
+        localStorage.setItem("claude-dashboard-width", String(w));
+        return w;
+      });
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [dashboardWidth]);
+
+  // Sound notification
+  const [soundEnabled, setSoundEnabled] = useState(() =>
+    localStorage.getItem("claude-sound") !== "false"
+  );
+  const prevStreaming = useRef(false);
+
+  useEffect(() => {
+    if (prevStreaming.current && !state.isStreaming && soundEnabled) {
+      new Audio('/notification.wav').play().catch(() => {});
+    }
+    prevStreaming.current = !!state.isStreaming;
+  }, [state.isStreaming, soundEnabled]);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem("claude-sound", String(next));
+      return next;
+    });
+  }, []);
 
   // Available models (grouped by provider)
   const AVAILABLE_MODELS = [
@@ -183,6 +245,11 @@ function App() {
         e.preventDefault();
         setShowModelSelector((s) => !s);
       }
+      // Ctrl+K: Brain search
+      if (e.ctrlKey && e.key === "k") {
+        e.preventDefault();
+        setShowBrainSearch((s) => !s);
+      }
       // Escape: Close modals
       if (e.key === "Escape") {
         setShowSearch(false);
@@ -193,6 +260,7 @@ function App() {
         setShowTransformPreview(false);
         setShowTemplateEditor(false);
         setShowApiKeys(false);
+        setShowBrainSearch(false);
       }
     };
 
@@ -401,6 +469,11 @@ function App() {
       await invoke("set_model", { model });
       addToast(`Switched to ${model}`, "success");
       setShowModelSelector(false);
+      // Update context window for the new model
+      try {
+        const cw = await invoke<number>("get_model_context_window", { model });
+        setContextWindow(cw);
+      } catch (_) {}
     } catch (e) {
       addToast(`Model switch failed: ${e}`, "error");
     }
@@ -415,7 +488,44 @@ function App() {
     } catch (_) {
       setSystemPrompt("You are a helpful assistant.");
     }
+    try {
+      const templates = await invoke<PromptTemplate[]>("transform_list_templates");
+      setPromptTemplates(templates);
+    } catch (_) {}
+    setSaveTemplateName("");
     setShowSystemPrompt(true);
+  };
+
+  const handleSaveAsTemplate = async () => {
+    if (!saveTemplateName.trim() || !systemPrompt.trim()) return;
+    const template: PromptTemplate = {
+      id: `custom-${Date.now()}`,
+      name: saveTemplateName.trim(),
+      mode: "AutoEnhance",
+      template: systemPrompt,
+      is_builtin: false,
+      created_at: Date.now(),
+    };
+    try {
+      await invoke("transform_save_template", { template });
+      addToast("Template saved", "success");
+      const templates = await invoke<PromptTemplate[]>("transform_list_templates");
+      setPromptTemplates(templates);
+      setSaveTemplateName("");
+    } catch (e) {
+      addToast(`Failed to save template: ${e}`, "error");
+    }
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    try {
+      await invoke("transform_delete_template", { id });
+      const templates = await invoke<PromptTemplate[]>("transform_list_templates");
+      setPromptTemplates(templates);
+      addToast("Template deleted", "info");
+    } catch (e) {
+      addToast(`Failed to delete template: ${e}`, "error");
+    }
   };
 
   const handleSaveSystemPrompt = async () => {
@@ -561,7 +671,16 @@ function App() {
 
   // ═══════ Message Edit & Regenerate ═══════
 
-  const handleEditMessage = async (_entryId: string, newContent: string) => {
+  const handleEditMessage = async (entryId: string, newContent: string) => {
+    // Count messages up to (and including) the edited one for backend truncation
+    const idx = state.timeline.findIndex((e) => e.id === entryId);
+    const msgIndex = state.timeline
+      .slice(0, idx + 1)
+      .filter((e) => e.kind === "user_message" || e.kind === "assistant_message").length;
+    try {
+      await invoke("truncate_conversation", { index: msgIndex });
+    } catch (_) {}
+    truncateAfter(entryId);
     addUserMessage(newContent);
     try {
       await invoke("send_input", { message: newContent });
@@ -570,18 +689,32 @@ function App() {
     }
   };
 
-  const handleRegenerateMessage = async (_entryId: string) => {
-    const lastUserMsg = state.timeline
-      .filter((e) => e.kind === "user_message")
-      .pop();
-    if (lastUserMsg) {
-      const content = (lastUserMsg.data as { kind: string; content: string }).content;
-      addUserMessage(content);
-      try {
-        await invoke("send_input", { message: content });
-      } catch (e) {
-        addToast(`Error: ${e}`, "error");
+  const handleRegenerateMessage = async (entryId: string) => {
+    // Find the last user message before this assistant message
+    const idx = state.timeline.findIndex((e) => e.id === entryId);
+    let lastUserContent = "";
+    for (let i = idx - 1; i >= 0; i--) {
+      if (state.timeline[i].kind === "user_message") {
+        lastUserContent = (state.timeline[i].data as { kind: string; content: string }).content;
+        break;
       }
+    }
+    if (!lastUserContent) return;
+    // Truncate to remove this assistant response
+    const msgIndex = state.timeline
+      .slice(0, idx)
+      .filter((e) => e.kind === "user_message" || e.kind === "assistant_message").length;
+    try {
+      await invoke("truncate_conversation", { index: msgIndex });
+    } catch (_) {}
+    // Remove timeline entries from this point onward
+    const prevEntry = state.timeline[idx - 1];
+    if (prevEntry) truncateAfter(prevEntry.id);
+    addUserMessage(lastUserContent);
+    try {
+      await invoke("send_input", { message: lastUserContent });
+    } catch (e) {
+      addToast(`Error: ${e}`, "error");
     }
   };
 
@@ -751,6 +884,24 @@ function App() {
             </span>
           </div>
 
+          {/* Context Window Usage Bar */}
+          {(() => {
+            const usedTokens = state.sessionCost.input_tokens + state.sessionCost.output_tokens;
+            const percentage = Math.min(100, (usedTokens / contextWindow) * 100);
+            const barColor = percentage > 80 ? 'var(--danger, #e03131)' : percentage > 50 ? 'var(--warning, #fab005)' : 'var(--success, #51cf66)';
+            return (
+              <div
+                className="context-bar"
+                title={`${usedTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${percentage.toFixed(0)}%)`}
+              >
+                <div
+                  className="context-bar-fill"
+                  style={{ width: `${percentage}%`, background: barColor }}
+                />
+              </div>
+            );
+          })()}
+
           {/* Prompt Enhance toggle */}
           <button
             className={`toolbar-btn enhance-toggle ${transformSettings.enabled ? "active" : ""}`}
@@ -758,6 +909,15 @@ function App() {
             title={transformSettings.enabled ? "Auto-enhance ON (click to disable)" : "Auto-enhance OFF (click to enable)"}
           >
             &#10024;
+          </button>
+
+          {/* Sound toggle */}
+          <button
+            className={`toolbar-btn sound-toggle ${soundEnabled ? "active" : ""}`}
+            onClick={toggleSound}
+            title={soundEnabled ? "Sound ON (click to mute)" : "Sound OFF (click to enable)"}
+          >
+            {soundEnabled ? "\uD83D\uDD0A" : "\uD83D\uDD07"}
           </button>
 
           {/* Web Search toggle */}
@@ -908,6 +1068,38 @@ function App() {
             <div className="system-prompt-modal" onClick={(e) => e.stopPropagation()}>
               <h3>Custom Instructions</h3>
               <p className="system-prompt-desc">Set a system prompt to customize how the assistant behaves.</p>
+
+              {/* Template picker */}
+              {promptTemplates.length > 0 && (
+                <div className="template-picker">
+                  <select
+                    className="template-select"
+                    onChange={(e) => {
+                      const t = promptTemplates.find((t) => t.id === e.target.value);
+                      if (t) setSystemPrompt(t.template);
+                    }}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Load template...</option>
+                    {promptTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} {t.is_builtin ? "(built-in)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {promptTemplates.filter((t) => !t.is_builtin).map((t) => (
+                    <button
+                      key={t.id}
+                      className="template-delete-btn"
+                      onClick={() => handleDeleteTemplate(t.id)}
+                      title={`Delete "${t.name}"`}
+                    >
+                      &times; {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <textarea
                 className="system-prompt-textarea"
                 value={systemPrompt}
@@ -915,6 +1107,26 @@ function App() {
                 rows={8}
                 placeholder="You are a helpful assistant..."
               />
+
+              {/* Save as template */}
+              <div className="template-save-row">
+                <input
+                  className="template-name-input"
+                  type="text"
+                  placeholder="Template name..."
+                  value={saveTemplateName}
+                  onChange={(e) => setSaveTemplateName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSaveAsTemplate()}
+                />
+                <button
+                  className="template-save-btn"
+                  onClick={handleSaveAsTemplate}
+                  disabled={!saveTemplateName.trim() || !systemPrompt.trim()}
+                >
+                  Save as Template
+                </button>
+              </div>
+
               <div className="system-prompt-actions">
                 <button className="system-prompt-save" onClick={handleSaveSystemPrompt}>
                   Save
@@ -1031,6 +1243,9 @@ function App() {
         />
       </div>
 
+      {/* ═══════ Resize Handle ═══════ */}
+      <div className="resize-handle" onMouseDown={handleResizeStart} />
+
       {/* ═══════ Dashboard Sidebar ═══════ */}
       <Dashboard
         sessionCost={state.sessionCost}
@@ -1042,6 +1257,7 @@ function App() {
         projectName={projectName}
         onMemoryReload={loadDashboardData}
         bgImage={bgDashboard}
+        width={dashboardWidth}
       />
 
       {/* ═══════ Modals ═══════ */}
@@ -1118,6 +1334,13 @@ function App() {
         visible={showAgentPanel}
         onClose={() => setShowAgentPanel(false)}
         onToast={addToast}
+        projectPath={projectPath}
+      />
+
+      {/* ═══════ Brain Search (Ctrl+K) ═══════ */}
+      <BrainSearchModal
+        visible={showBrainSearch}
+        onClose={() => setShowBrainSearch(false)}
         projectPath={projectPath}
       />
 

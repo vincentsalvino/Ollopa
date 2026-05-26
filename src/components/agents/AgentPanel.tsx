@@ -147,6 +147,30 @@ export default function AgentPanel({
     }
   };
 
+  const handleExecuteWorkflow = async (id: string) => {
+    try {
+      await invoke("agent_execute_workflow", { id, projectPath });
+      onToast("Workflow execution started", "success");
+      // Poll for updates
+      const poll = setInterval(async () => {
+        await loadWorkflows();
+      }, 2000);
+      setTimeout(() => clearInterval(poll), 30000);
+    } catch (e) {
+      onToast(`Execution failed: ${e}`, "error");
+    }
+  };
+
+  const handleAdvanceWorkflow = async (id: string) => {
+    try {
+      await invoke("agent_advance_workflow", { id, projectPath });
+      onToast("Workflow advanced", "success");
+      loadWorkflows();
+    } catch (e) {
+      onToast(`Failed: ${e}`, "error");
+    }
+  };
+
   const handleToggleProvider = async (p: ProviderDef) => {
     try {
       await invoke("router_save_provider", {
@@ -325,6 +349,24 @@ export default function AgentPanel({
                         </button>
                       </div>
                       <p className="agent-wf-desc">{wf.description}</p>
+                      <div className="agent-wf-actions">
+                        {wf.status === "Draft" && (
+                          <button
+                            className="agent-action-btn primary"
+                            onClick={() => handleExecuteWorkflow(wf.id)}
+                          >
+                            &#9654; Execute
+                          </button>
+                        )}
+                        {wf.status === "Running" && (
+                          <button
+                            className="agent-action-btn"
+                            onClick={() => handleAdvanceWorkflow(wf.id)}
+                          >
+                            &#9654; Advance Step
+                          </button>
+                        )}
+                      </div>
                       <div className="agent-wf-steps">
                         {wf.steps.map((step, i) => (
                           <div key={step.id} className="agent-wf-step">

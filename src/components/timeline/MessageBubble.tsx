@@ -1,4 +1,64 @@
 import { useState, useCallback, useMemo } from "react";
+import hljs from 'highlight.js/lib/core';
+import typescript from 'highlight.js/lib/languages/typescript';
+import javascript from 'highlight.js/lib/languages/javascript';
+import python from 'highlight.js/lib/languages/python';
+import rust from 'highlight.js/lib/languages/rust';
+import go from 'highlight.js/lib/languages/go';
+import java from 'highlight.js/lib/languages/java';
+import css from 'highlight.js/lib/languages/css';
+import xml from 'highlight.js/lib/languages/xml';
+import json from 'highlight.js/lib/languages/json';
+import bash from 'highlight.js/lib/languages/bash';
+import sql from 'highlight.js/lib/languages/sql';
+import yaml from 'highlight.js/lib/languages/yaml';
+import markdown from 'highlight.js/lib/languages/markdown';
+import cpp from 'highlight.js/lib/languages/cpp';
+import csharp from 'highlight.js/lib/languages/csharp';
+import php from 'highlight.js/lib/languages/php';
+import ruby from 'highlight.js/lib/languages/ruby';
+import swift from 'highlight.js/lib/languages/swift';
+import kotlin from 'highlight.js/lib/languages/kotlin';
+import scala from 'highlight.js/lib/languages/scala';
+import lua from 'highlight.js/lib/languages/lua';
+import r from 'highlight.js/lib/languages/r';
+import scss from 'highlight.js/lib/languages/scss';
+import shell from 'highlight.js/lib/languages/shell';
+
+hljs.registerLanguage('typescript', typescript);
+hljs.registerLanguage('javascript', javascript);
+hljs.registerLanguage('python', python);
+hljs.registerLanguage('rust', rust);
+hljs.registerLanguage('go', go);
+hljs.registerLanguage('java', java);
+hljs.registerLanguage('css', css);
+hljs.registerLanguage('xml', xml);
+hljs.registerLanguage('html', xml);
+hljs.registerLanguage('json', json);
+hljs.registerLanguage('bash', bash);
+hljs.registerLanguage('sql', sql);
+hljs.registerLanguage('yaml', yaml);
+hljs.registerLanguage('markdown', markdown);
+hljs.registerLanguage('cpp', cpp);
+hljs.registerLanguage('c', cpp);
+hljs.registerLanguage('csharp', csharp);
+hljs.registerLanguage('php', php);
+hljs.registerLanguage('ruby', ruby);
+hljs.registerLanguage('swift', swift);
+hljs.registerLanguage('kotlin', kotlin);
+hljs.registerLanguage('scala', scala);
+hljs.registerLanguage('lua', lua);
+hljs.registerLanguage('r', r);
+hljs.registerLanguage('scss', scss);
+hljs.registerLanguage('shell', shell);
+
+const HLJS_ALIASES: Record<string, string> = {
+  js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+  py: 'python', rs: 'rust', sh: 'bash', zsh: 'bash',
+  yml: 'yaml', htm: 'html', 'c++': 'cpp', 'c#': 'csharp',
+  rb: 'ruby', toml: 'json', sass: 'scss', less: 'css',
+  mysql: 'sql', postgresql: 'sql', sqlite: 'sql',
+};
 
 interface MessageBubbleProps {
   content: string;
@@ -404,185 +464,17 @@ function renderInline(text: string): (JSX.Element | string)[] {
   return elements.length > 0 ? elements : [text];
 }
 
-// Syntax highlighting (keyword-based, no external dependency)
-const KEYWORD_SETS: Record<string, { keywords: string[]; types: string[]; builtins: string[] }> = {
-  javascript: {
-    keywords: ["const", "let", "var", "function", "return", "if", "else", "for", "while", "switch", "case", "break", "continue", "try", "catch", "finally", "throw", "new", "class", "extends", "import", "export", "default", "from", "async", "await", "yield", "of", "in", "typeof", "instanceof", "this", "super", "do"],
-    types: ["string", "number", "boolean", "void", "null", "undefined", "any", "never", "object", "symbol", "bigint"],
-    builtins: ["console", "Math", "JSON", "Array", "Object", "String", "Number", "Boolean", "Promise", "Map", "Set", "Date", "RegExp", "Error", "parseInt", "parseFloat", "setTimeout", "setInterval", "fetch", "document", "window"],
-  },
-  typescript: {
-    keywords: ["const", "let", "var", "function", "return", "if", "else", "for", "while", "switch", "case", "break", "continue", "try", "catch", "finally", "throw", "new", "class", "extends", "import", "export", "default", "from", "async", "await", "yield", "of", "in", "typeof", "instanceof", "this", "super", "type", "interface", "enum", "implements", "abstract", "readonly", "private", "protected", "public", "static", "as", "is", "keyof", "infer", "declare", "namespace", "module", "do"],
-    types: ["string", "number", "boolean", "void", "null", "undefined", "any", "never", "object", "symbol", "bigint", "unknown", "Record", "Partial", "Required", "Pick", "Omit"],
-    builtins: ["console", "Math", "JSON", "Array", "Object", "String", "Number", "Boolean", "Promise", "Map", "Set", "Date", "RegExp", "Error", "parseInt", "parseFloat", "setTimeout", "setInterval", "fetch", "document", "window"],
-  },
-  python: {
-    keywords: ["def", "class", "return", "if", "elif", "else", "for", "while", "try", "except", "finally", "raise", "import", "from", "as", "with", "pass", "break", "continue", "yield", "lambda", "and", "or", "not", "in", "is", "global", "nonlocal", "assert", "del", "async", "await"],
-    types: ["int", "float", "str", "bool", "list", "dict", "tuple", "set", "None", "True", "False", "bytes", "complex"],
-    builtins: ["print", "len", "range", "enumerate", "zip", "map", "filter", "sorted", "reversed", "open", "type", "isinstance", "hasattr", "getattr", "setattr", "super", "property", "staticmethod", "classmethod", "input", "abs", "min", "max", "sum", "any", "all"],
-  },
-  rust: {
-    keywords: ["fn", "let", "mut", "const", "struct", "enum", "impl", "trait", "pub", "use", "mod", "match", "if", "else", "for", "while", "loop", "return", "break", "continue", "where", "async", "await", "move", "ref", "self", "super", "crate", "as", "in", "unsafe", "extern", "type", "dyn", "static"],
-    types: ["i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "f32", "f64", "bool", "char", "str", "String", "Vec", "Option", "Result", "Box", "Rc", "Arc", "HashMap", "HashSet", "usize", "isize"],
-    builtins: ["println", "eprintln", "format", "vec", "todo", "unimplemented", "panic", "assert", "assert_eq", "assert_ne", "dbg", "cfg", "include", "include_str", "env"],
-  },
-  go: {
-    keywords: ["func", "return", "if", "else", "for", "range", "switch", "case", "break", "continue", "go", "defer", "select", "chan", "type", "struct", "interface", "map", "var", "const", "import", "package", "default", "fallthrough", "goto"],
-    types: ["int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64", "string", "bool", "byte", "rune", "error", "any", "comparable"],
-    builtins: ["fmt", "make", "new", "len", "cap", "append", "copy", "delete", "close", "panic", "recover", "print", "println", "nil", "true", "false", "iota"],
-  },
-  java: {
-    keywords: ["public", "private", "protected", "static", "final", "abstract", "class", "interface", "extends", "implements", "return", "if", "else", "for", "while", "do", "switch", "case", "break", "continue", "try", "catch", "finally", "throw", "throws", "new", "import", "package", "this", "super", "void", "synchronized", "volatile", "transient", "native", "instanceof", "default", "enum", "assert"],
-    types: ["int", "long", "short", "byte", "float", "double", "boolean", "char", "String", "Integer", "Long", "Double", "Float", "Boolean", "Character", "Object", "List", "Map", "Set", "ArrayList", "HashMap", "HashSet"],
-    builtins: ["System", "Math", "Arrays", "Collections", "Optional", "Stream", "Thread", "Runnable", "Callable", "Future", "null", "true", "false"],
-  },
-  css: {
-    keywords: ["@import", "@media", "@keyframes", "@font-face", "@supports", "@layer", "@container", "!important"],
-    types: ["px", "em", "rem", "%", "vh", "vw", "fr", "ch", "deg", "s", "ms"],
-    builtins: ["var", "calc", "min", "max", "clamp", "rgb", "rgba", "hsl", "hsla", "url", "linear-gradient", "radial-gradient", "repeat", "grid", "flex", "none", "auto", "inherit", "initial", "unset"],
-  },
-  html: {
-    keywords: ["DOCTYPE", "html", "head", "body", "div", "span", "p", "a", "img", "ul", "ol", "li", "table", "tr", "td", "th", "form", "input", "button", "select", "option", "textarea", "script", "style", "link", "meta", "title", "header", "footer", "nav", "main", "section", "article", "aside"],
-    types: ["class", "id", "href", "src", "alt", "type", "name", "value", "placeholder", "action", "method", "target", "rel", "charset", "content"],
-    builtins: [],
-  },
-  json: { keywords: ["true", "false", "null"], types: [], builtins: [] },
-  bash: {
-    keywords: ["if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case", "esac", "in", "function", "return", "exit", "export", "source", "local", "readonly", "declare", "unset", "shift", "break", "continue", "trap", "set"],
-    types: [],
-    builtins: ["echo", "cd", "ls", "cat", "grep", "sed", "awk", "find", "xargs", "sort", "uniq", "wc", "head", "tail", "cut", "tr", "tee", "mkdir", "rm", "cp", "mv", "chmod", "chown", "curl", "wget", "git", "docker", "npm", "yarn", "pip", "python", "node", "cargo", "make", "sudo", "apt", "brew"],
-  },
-  sql: {
-    keywords: ["SELECT", "FROM", "WHERE", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "ON", "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "ORDER", "BY", "GROUP", "HAVING", "LIMIT", "OFFSET", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "ALTER", "DROP", "INDEX", "VIEW", "AS", "DISTINCT", "UNION", "ALL", "CASE", "WHEN", "THEN", "ELSE", "END", "IS", "NULL", "TRUE", "FALSE", "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "CONSTRAINT", "DEFAULT", "AUTO_INCREMENT", "NOT", "UNIQUE", "CASCADE"],
-    types: ["INT", "INTEGER", "BIGINT", "SMALLINT", "VARCHAR", "TEXT", "BOOLEAN", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE", "DECIMAL", "BLOB", "JSON", "UUID", "SERIAL"],
-    builtins: ["COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "IFNULL", "CONCAT", "LENGTH", "SUBSTRING", "TRIM", "UPPER", "LOWER", "NOW", "CURRENT_TIMESTAMP", "CAST", "CONVERT"],
-  },
-};
-
-// Alias map
-const LANG_ALIASES: Record<string, string> = {
-  js: "javascript",
-  jsx: "javascript",
-  ts: "typescript",
-  tsx: "typescript",
-  py: "python",
-  rs: "rust",
-  sh: "bash",
-  shell: "bash",
-  zsh: "bash",
-  yml: "yaml",
-  htm: "html",
-  xml: "html",
-  c: "java",
-  cpp: "java",
-  "c++": "java",
-  csharp: "java",
-  "c#": "java",
-  kotlin: "java",
-  swift: "java",
-  scala: "java",
-  rb: "python",
-  ruby: "python",
-  php: "python",
-  lua: "python",
-  r: "python",
-  sass: "css",
-  scss: "css",
-  less: "css",
-  mysql: "sql",
-  postgresql: "sql",
-  sqlite: "sql",
-  toml: "json",
-  yaml: "json",
-};
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 function highlightCode(code: string, lang: string): string {
-  const normalizedLang = LANG_ALIASES[lang.toLowerCase()] || lang.toLowerCase();
-  const langDef = KEYWORD_SETS[normalizedLang];
-
-  if (!langDef) {
-    return highlightGeneric(code);
+  const resolved = HLJS_ALIASES[lang.toLowerCase()] || lang.toLowerCase();
+  try {
+    if (resolved && hljs.getLanguage(resolved)) {
+      return hljs.highlight(code, { language: resolved }).value;
+    }
+    return hljs.highlightAuto(code).value;
+  } catch {
+    return code
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
-
-  let result = escapeHtml(code);
-
-  // Strings (single and double quoted)
-  result = result.replace(
-    /(&quot;(?:[^&]|&(?!quot;))*?&quot;)|('(?:[^'\\]|\\.)*?')|(`(?:[^`\\]|\\.)*?`)/g,
-    '<span class="hl-string">$&</span>'
-  );
-
-  // Comments
-  result = result.replace(
-    /(\/\/.*$)|(#(?!\s*!).*$)/gm,
-    '<span class="hl-comment">$&</span>'
-  );
-
-  // Multi-line comments
-  result = result.replace(
-    /\/\*[\s\S]*?\*\//g,
-    '<span class="hl-comment">$&</span>'
-  );
-
-  // Numbers
-  result = result.replace(
-    /\b(\d+\.?\d*(?:e[+-]?\d+)?|0x[0-9a-fA-F]+|0b[01]+|0o[0-7]+)\b/g,
-    '<span class="hl-number">$1</span>'
-  );
-
-  // Keywords
-  for (const kw of langDef.keywords) {
-    const re = new RegExp(`\\b(${escapeRegex(kw)})\\b`, "g");
-    result = result.replace(re, '<span class="hl-keyword">$1</span>');
-  }
-
-  // Types
-  for (const t of langDef.types) {
-    const re = new RegExp(`\\b(${escapeRegex(t)})\\b`, "g");
-    result = result.replace(re, '<span class="hl-type">$1</span>');
-  }
-
-  // Builtins
-  for (const b of langDef.builtins) {
-    const re = new RegExp(`\\b(${escapeRegex(b)})\\b`, "g");
-    result = result.replace(re, '<span class="hl-builtin">$1</span>');
-  }
-
-  return result;
-}
-
-function highlightGeneric(code: string): string {
-  let result = escapeHtml(code);
-
-  // Strings
-  result = result.replace(
-    /(&quot;(?:[^&]|&(?!quot;))*?&quot;)|('(?:[^'\\]|\\.)*?')/g,
-    '<span class="hl-string">$&</span>'
-  );
-
-  // Comments
-  result = result.replace(
-    /(\/\/.*$)|(#.*$)/gm,
-    '<span class="hl-comment">$&</span>'
-  );
-
-  // Numbers
-  result = result.replace(
-    /\b(\d+\.?\d*)\b/g,
-    '<span class="hl-number">$1</span>'
-  );
-
-  return result;
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

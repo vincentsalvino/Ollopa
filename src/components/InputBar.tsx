@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type { SlashCommand } from "../types";
 
 interface InputBarProps {
@@ -26,7 +26,22 @@ export default function InputBar({
   onTogglePreview,
   showTransformPreview,
 }: InputBarProps) {
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => {
+    const saved = localStorage.getItem("claude-input-draft");
+    return saved || "";
+  });
+
+  // Persist draft to localStorage (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (input.trim()) {
+        localStorage.setItem("claude-input-draft", input);
+      } else {
+        localStorage.removeItem("claude-input-draft");
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [input]);
   const [showSlash, setShowSlash] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -119,6 +134,7 @@ export default function InputBar({
       onSend(input.trim());
     }
     setInput("");
+    localStorage.removeItem("claude-input-draft");
     setAttachedFiles([]);
     setShowSlash(false);
     if (textareaRef.current) {
