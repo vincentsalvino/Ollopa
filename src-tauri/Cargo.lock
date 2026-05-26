@@ -322,7 +322,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "claude-desktop"
+name = "ollopa"
 version = "0.2.0"
 dependencies = [
  "dirs 5.0.1",

@@ -29,7 +29,7 @@ test.describe("Theme Toggle", () => {
 
   test("persists theme in localStorage", async ({ page }) => {
     await page.locator(".theme-toggle").click();
-    const stored = await page.evaluate(() => localStorage.getItem("claude-desktop-theme"));
+    const stored = await page.evaluate(() => localStorage.getItem("ollopa-desktop-theme"));
     expect(stored).toBe("light");
   });
 });

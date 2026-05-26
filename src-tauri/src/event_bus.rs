@@ -1,4 +1,4 @@
-use crate::claude_events::AppEvent;
+use crate::ollopa_events::AppEvent;
 use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};

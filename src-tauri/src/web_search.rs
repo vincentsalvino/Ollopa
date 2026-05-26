@@ -75,7 +75,7 @@ struct DdgRelatedTopic {
 fn search_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/home/ubuntu"))
-        .join(".claude")
+        .join(".ollopa")
         .join("workspace-brain")
         .join("search")
 }
@@ -120,7 +120,7 @@ async fn search_duckduckgo(query: &str, max_results: usize) -> SearchResponse {
     let mut summary = String::new();
 
     match client.get(&url)
-        .header("User-Agent", "ClaudeDesktop/1.0")
+        .header("User-Agent", "Ollopa/1.0")
         .send()
         .await
     {
@@ -254,7 +254,7 @@ async fn search_searxng(query: &str, max_results: usize) -> SearchResponse {
     );
 
     match client.get(&url)
-        .header("User-Agent", "ClaudeDesktop/1.0")
+        .header("User-Agent", "Ollopa/1.0")
         .send()
         .await
     {

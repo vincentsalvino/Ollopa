@@ -35,6 +35,6 @@ test.describe("Chat Input", () => {
     const textarea = page.locator(".chat-input");
     const placeholder = await textarea.getAttribute("placeholder");
     expect(placeholder).toBeTruthy();
-    expect(placeholder!).toContain("Ask Claude anything");
+    expect(placeholder!).toContain("Ask Ollopa anything");
   });
 });

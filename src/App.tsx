@@ -39,7 +39,7 @@ function App() {
   const [totalCost, setTotalCost] = useState<CostData>(EMPTY_COST);
   const [memoryLines, setMemoryLines] = useState<string[]>([]);
   const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem("claude-desktop-theme");
+    const saved = localStorage.getItem("ollopa-desktop-theme");
     return (saved === "light" || saved === "dark") ? saved : "dark";
   });
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -122,7 +122,7 @@ function App() {
 
   // Drag-to-resize panels
   const [dashboardWidth, setDashboardWidth] = useState(() => {
-    const saved = localStorage.getItem("claude-dashboard-width");
+    const saved = localStorage.getItem("ollopa-dashboard-width");
     return saved ? parseInt(saved, 10) : 280;
   });
   const resizing = useRef(false);
@@ -141,7 +141,7 @@ function App() {
     const onUp = () => {
       resizing.current = false;
       setDashboardWidth((w) => {
-        localStorage.setItem("claude-dashboard-width", String(w));
+        localStorage.setItem("ollopa-dashboard-width", String(w));
         return w;
       });
       document.removeEventListener("mousemove", onMove);
@@ -153,7 +153,7 @@ function App() {
 
   // Sound notification
   const [soundEnabled, setSoundEnabled] = useState(() =>
-    localStorage.getItem("claude-sound") !== "false"
+    localStorage.getItem("ollopa-sound") !== "false"
   );
   const prevStreaming = useRef(false);
 
@@ -167,7 +167,7 @@ function App() {
   const toggleSound = useCallback(() => {
     setSoundEnabled((prev) => {
       const next = !prev;
-      localStorage.setItem("claude-sound", String(next));
+      localStorage.setItem("ollopa-sound", String(next));
       return next;
     });
   }, []);
@@ -192,7 +192,7 @@ function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("claude-desktop-theme", theme);
+    localStorage.setItem("ollopa-desktop-theme", theme);
   }, [theme]);
 
   // ═══════ Boot ═══════
@@ -345,7 +345,7 @@ function App() {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const name = path.split(/[/\\]/).pop() || path;
-        await getCurrentWindow().setTitle(`Claude Desktop — ${name}`);
+        await getCurrentWindow().setTitle(`Ollopa — ${name}`);
       } catch (_) {}
     } catch (e) {
       addToast(`Failed to switch project: ${e}`, "error");
@@ -360,7 +360,7 @@ function App() {
 
   const loadDashboardData = async () => {
     try {
-      const data = await invoke<{ claude_md: string; memory_lines: string[] }>(
+      const data = await invoke<{ ollopa_md: string; memory_lines: string[] }>(
         "get_memory_data"
       );
       setMemoryLines(data.memory_lines);

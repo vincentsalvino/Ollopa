@@ -1,8 +1,8 @@
-// This module is kept for future Claude CLI mode support.
+// This module is kept for future Ollopa CLI mode support.
 // Currently, the app uses api_client.rs (direct API) instead.
 
-use crate::claude_events::{
-    parse_stream_line, AppEvent, ClaudeStreamEvent, ContentBlock, Usage,
+use crate::ollopa_events::{
+    parse_stream_line, AppEvent, OllopaStreamEvent, ContentBlock, Usage,
 };
 use std::process::Stdio;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use tokio::sync::{mpsc, Mutex};
 const INPUT_PRICE_PER_M: f64 = 0.27;
 const OUTPUT_PRICE_PER_M: f64 = 1.10;
 
-pub struct ClaudeProcess {
+pub struct OllopaProcess {
     child: Child,
     stdin_tx: mpsc::Sender<String>,
     session_id: Arc<Mutex<Option<String>>>,
@@ -47,7 +47,7 @@ fn find_claude_cli_js() -> Option<String> {
     None
 }
 
-impl ClaudeProcess {
+impl OllopaProcess {
     /// Spawn `claude -p "prompt" --output-format stream-json` for a single turn.
     /// Uses `--resume` with a session ID for follow-up messages in the same conversation.
     pub async fn spawn(
@@ -133,7 +133,7 @@ impl ClaudeProcess {
         })
     }
 
-    /// Send a message to Claude's stdin (for interactive sessions).
+    /// Send a message to Ollopa's stdin (for interactive sessions).
     pub async fn send_message(&self, message: &str) -> Result<(), String> {
         self.stdin_tx
             .send(message.to_string())
@@ -205,7 +205,7 @@ impl ClaudeProcess {
             "app-event",
             AppEvent::StatusUpdate {
                 status: "process_exited".to_string(),
-                detail: "Claude process has exited".to_string(),
+                detail: "Ollopa process has exited".to_string(),
             },
         );
     }
@@ -230,12 +230,12 @@ impl ClaudeProcess {
 
     async fn process_event(
         app: &AppHandle,
-        event: ClaudeStreamEvent,
+        event: OllopaStreamEvent,
         session_id: &Arc<Mutex<Option<String>>>,
         model: &Arc<Mutex<String>>,
     ) {
         match event {
-            ClaudeStreamEvent::System {
+            OllopaStreamEvent::System {
                 subtype,
                 cwd,
                 session_id: sid,
@@ -264,15 +264,15 @@ impl ClaudeProcess {
                 }
             }
 
-            ClaudeStreamEvent::Assistant { message, .. } => {
+            OllopaStreamEvent::Assistant { message, .. } => {
                 Self::process_assistant_message(app, &message).await;
             }
 
-            ClaudeStreamEvent::User { .. } => {
+            OllopaStreamEvent::User { .. } => {
                 // User messages are echoed back; no action needed
             }
 
-            ClaudeStreamEvent::Result {
+            OllopaStreamEvent::Result {
                 subtype,
                 cost_usd,
                 duration_ms,
@@ -307,7 +307,7 @@ impl ClaudeProcess {
 
     async fn process_assistant_message(
         app: &AppHandle,
-        message: &crate::claude_events::AssistantMessage,
+        message: &crate::ollopa_events::AssistantMessage,
     ) {
         let model_name = message
             .model

@@ -163,7 +163,7 @@ fn detect_config_files(path: &Path) -> Vec<String> {
         "Cargo.toml", "Makefile", "Dockerfile",
         "docker-compose.yml", "docker-compose.yaml",
         ".env", ".env.example", ".gitignore",
-        "tauri.conf.json", "CLAUDE.md",
+        "tauri.conf.json", "OLLOPA.md",
     ];
     candidates
         .iter()

@@ -1,4 +1,4 @@
-# Claude Desktop — User Guide
+# Ollopa — User Guide
 
 A complete guide to using all features of your AI workspace.
 
