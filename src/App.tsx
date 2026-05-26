@@ -17,7 +17,7 @@ import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
 import BrainSearchModal from "./components/memory/BrainSearchModal";
-import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo, PromptTemplate } from "./types";
+import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo, PromptTemplate, ProviderDef } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
 function App() {
@@ -120,6 +120,9 @@ function App() {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [keyInput, setKeyInput] = useState("");
 
+  // Provider state (for model dropdown filtering)
+  const [providers, setProviders] = useState<ProviderDef[]>([]);
+
   // Context window tracking
   const [contextWindow, setContextWindow] = useState(64000);
 
@@ -183,6 +186,34 @@ function App() {
   ];
   const ALL_MODELS = AVAILABLE_MODELS.flatMap((g) => g.models);
 
+  // Map provider group name to ProviderDef enabled status
+  const getProviderEnabled = (groupName: string): boolean => {
+    if (providers.length === 0) return true;
+    const match = providers.find(
+      (p) => p.name.toLowerCase() === groupName.toLowerCase() ||
+             p.provider_type.toLowerCase() === groupName.toLowerCase()
+    );
+    return match ? match.enabled : true;
+  };
+
+  // Determine the provider name for the currently selected model
+  const getModelProvider = (model: string): string | null => {
+    for (const g of AVAILABLE_MODELS) {
+      if (g.models.includes(model)) return g.group;
+    }
+    return null;
+  };
+
+  const currentProvider = getModelProvider(state.sessionModel);
+
+  // Check if API key is set for a provider
+  const isApiKeySet = (providerName: string): boolean => {
+    const match = apiKeys.find(
+      (k) => k.provider_name.toLowerCase() === providerName.toLowerCase()
+    );
+    return match ? match.is_set : false;
+  };
+
   // ═══════ Theme (with persistence) ═══════
 
   useEffect(() => {
@@ -198,6 +229,8 @@ function App() {
     loadDashboardData();
     loadTransformSettings();
     loadWebSearchSettings();
+    loadProvidersList();
+    loadApiKeys();
 
     const unlistenAppEvent = listen<AppEvent>("app-event", (event) => {
       processEvent(event.payload);
@@ -261,6 +294,24 @@ function App() {
 
     window.addEventListener("keydown", handleKeyboard);
     return () => window.removeEventListener("keydown", handleKeyboard);
+  }, []);
+
+  // ═══════ Click-outside to close dropdowns & popovers ═══════
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".dropdown-wrapper") && !target.closest(".dropdown")) {
+        setShowModelSelector(false);
+        setShowProjectDropdown(false);
+        setShowExportMenu(false);
+      }
+      if (!target.closest(".popover-wrapper") && !target.closest(".settings-popover")) {
+        setShowSettingsPopover(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   // ═══════ Toast ═══════
@@ -632,6 +683,15 @@ function App() {
     }
   };
 
+  // ═══════ Provider List (for model dropdown filtering) ═══════
+
+  const loadProvidersList = async () => {
+    try {
+      const p = await invoke<ProviderDef[]>("router_list_providers");
+      setProviders(p);
+    } catch (_) {}
+  };
+
   // ═══════ API Key Management ═══════
 
   const loadApiKeys = async () => {
@@ -765,25 +825,39 @@ function App() {
               className={`model-pill model-indicator${showModelSelector ? " open" : ""}`}
               onClick={() => { setShowModelSelector((s) => !s); setShowProjectDropdown(false); setShowExportMenu(false); setShowSettingsPopover(false); }}
             >
+              {currentProvider && <span className="model-provider-badge">{currentProvider}</span>}
               <span>{state.sessionModel}</span>
+              {currentProvider && isApiKeySet(currentProvider) && <span className="model-apikey-dot" title="API key active" />}
               <i className="fa-solid fa-chevron-down" />
             </button>
             {showModelSelector && (
-              <div className="dropdown">
-                {AVAILABLE_MODELS.map((group) => (
-                  <div key={group.group}>
-                    <div className="dropdown-section-label">{group.group}</div>
-                    {group.models.map((m) => (
-                      <button
-                        key={m}
-                        className={`dropdown-item${m === state.sessionModel ? " active" : ""}`}
-                        onClick={() => handleSwitchModel(m)}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                ))}
+              <div className="dropdown model-dropdown">
+                {AVAILABLE_MODELS.map((group) => {
+                  const enabled = getProviderEnabled(group.group);
+                  const keySet = isApiKeySet(group.group);
+                  return (
+                    <div key={group.group} className={!enabled ? "provider-group-disabled" : ""}>
+                      <div className="dropdown-section-label">
+                        <span>{group.group}</span>
+                        {!enabled && <span className="provider-off-badge">OFF</span>}
+                        {enabled && keySet && <span className="provider-key-badge" title="API key set"><i className="fa-solid fa-key" /></span>}
+                        {enabled && !keySet && <span className="provider-nokey-badge" title="No API key"><i className="fa-solid fa-key" /></span>}
+                      </div>
+                      {group.models.map((m) => (
+                        <button
+                          key={m}
+                          className={`dropdown-item${m === state.sessionModel ? " active" : ""}${!enabled ? " disabled" : ""}`}
+                          onClick={() => { if (enabled) handleSwitchModel(m); }}
+                          disabled={!enabled}
+                          title={!enabled ? `${group.group} provider is turned off` : m}
+                        >
+                          {m}
+                          {m === state.sessionModel && <span className="model-active-indicator"><i className="fa-solid fa-circle-check" /></span>}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -927,7 +1001,7 @@ function App() {
                   <i className="fa-solid fa-terminal" /><span>Prompt</span>
                 </button>
                 <div className="popover-divider" />
-                <button className="popover-item" onClick={() => { setShowApiKeys(true); loadApiKeys(); setShowSettingsPopover(false); }}>
+                <button className="popover-item" onClick={() => { setShowApiKeys(true); loadApiKeys(); loadProvidersList(); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-key" /><span>Manage API Keys</span>
                 </button>
               </div>
@@ -1048,10 +1122,18 @@ function App() {
                 </div>
                 <p className="api-keys-desc">Add API keys for each provider. Keys are saved locally and loaded automatically on startup.</p>
                 <div className="api-keys-list">
-                  {apiKeys.map((k) => (
-                    <div key={k.env_var} className="api-key-row">
+                  {apiKeys.map((k) => {
+                    const isCurrentProvider = currentProvider?.toLowerCase() === k.provider_name.toLowerCase();
+                    const providerDef = providers.find((p) => p.name.toLowerCase() === k.provider_name.toLowerCase());
+                    const providerEnabled = providerDef ? providerDef.enabled : true;
+                    return (
+                    <div key={k.env_var} className={`api-key-row${isCurrentProvider ? " api-key-row--active" : ""}${!providerEnabled ? " api-key-row--disabled" : ""}`}>
                       <div className="api-key-info">
-                        <span className="api-key-provider">{k.provider_name}</span>
+                        <span className="api-key-provider">
+                          {k.provider_name}
+                          {isCurrentProvider && <span className="api-key-active-badge">In Use</span>}
+                          {!providerEnabled && <span className="api-key-off-badge">Provider OFF</span>}
+                        </span>
                         <span className="api-key-envvar">{k.env_var}</span>
                       </div>
                       {editingKey === k.env_var ? (
@@ -1068,7 +1150,8 @@ function App() {
                         </div>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
