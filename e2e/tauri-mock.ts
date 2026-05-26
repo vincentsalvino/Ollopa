@@ -25,6 +25,12 @@ export async function injectTauriMock(page: Page) {
       // Cost
       get_token_cost: () => ({ input_tokens: 0, output_tokens: 0, cost_usd: 0 }),
 
+      // Environment
+      check_env_vars: () => null,
+
+      // Dashboard / Memory
+      get_memory_data: () => ({ claude_md: "", memory_lines: [] }),
+
       // Session Management
       list_sessions: () => [],
       list_conversations: () => [],
