@@ -31,6 +31,7 @@ export async function injectTauriMock(page: Page) {
       // Dashboard / Memory
       get_memory_data: () => ({ ollopa_md: "", memory_lines: [] }),
 
+
       // Session Management
       list_sessions: () => [],
       list_conversations: () => [],
