@@ -10,6 +10,12 @@ import type {
 
 type PredictiveTab = "suggestions" | "context" | "workflows";
 
+const TAB_META: Record<PredictiveTab, { icon: string; label: string }> = {
+  suggestions: { icon: "fa-lightbulb", label: "Suggestions" },
+  context: { icon: "fa-puzzle-piece", label: "Context" },
+  workflows: { icon: "fa-route", label: "Workflows" },
+};
+
 interface PredictivePanelProps {
   visible: boolean;
   onClose: () => void;
@@ -61,79 +67,99 @@ export default function PredictivePanel({
           <button className="panel-close" onClick={onClose}><i className="fa-solid fa-xmark" /></button>
         </div>
 
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        {/* Analysis Input */}
+        <div className="predictive-input-section">
+          <div className="predictive-input-row">
             <input
               type="text"
+              className="predictive-prompt-input"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Describe what you're working on..."
               onKeyDown={(e) => e.key === "Enter" && runAnalysis()}
-              style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-secondary)", color: "var(--text)" }}
             />
-            <button className="tab-btn active" onClick={runAnalysis} disabled={loading}>
-              {loading ? "..." : "Analyze"}
+            <button className="predictive-analyze-btn" onClick={runAnalysis} disabled={loading || !prompt.trim()}>
+              {loading ? (
+                <><i className="fa-solid fa-spinner fa-spin" /> Analyzing</>
+              ) : (
+                <><i className="fa-solid fa-bolt" /> Analyze</>
+              )}
             </button>
           </div>
           <input
             type="text"
+            className="predictive-file-input"
             value={currentFile}
             onChange={(e) => setCurrentFile(e.target.value)}
-            placeholder="Current file (optional)..."
-            style={{ width: "100%", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-secondary)", color: "var(--text)", fontSize: "0.85em" }}
+            placeholder="Current file path (optional)"
           />
         </div>
 
+        {/* Tabs */}
         <div className="panel-tabs">
-          {(["suggestions", "context", "workflows"] as PredictiveTab[]).map((t) => (
-            <button key={t} className={`tab-btn ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
-              {t === "suggestions" && suggestions.length > 0 && ` (${suggestions.length})`}
-              {t === "workflows" && recommendations.length > 0 && ` (${recommendations.length})`}
-            </button>
-          ))}
+          {(["suggestions", "context", "workflows"] as PredictiveTab[]).map((t) => {
+            const meta = TAB_META[t];
+            const count = t === "suggestions" ? suggestions.length
+              : t === "workflows" ? recommendations.length
+              : 0;
+            return (
+              <button key={t} className={`tab-btn${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
+                <i className={`fa-solid ${meta.icon}`} />
+                {meta.label}
+                {count > 0 && <span className="tab-count">{count}</span>}
+              </button>
+            );
+          })}
         </div>
 
+        {/* Body */}
         <div className="panel-body">
-          {!analysis && !loading && (
-            <p style={{ color: "var(--text-muted)", textAlign: "center", padding: 20 }}>
-              Enter a prompt to get predictive suggestions, context assembly, and workflow recommendations.
-            </p>
+          {/* Loading state */}
+          {loading && (
+            <div className="predictive-empty-state">
+              <i className="fa-solid fa-spinner fa-spin predictive-empty-icon" />
+              <p>Analyzing your workspace...</p>
+            </div>
           )}
 
-          {tab === "suggestions" && suggestions.length > 0 && (
+          {/* Empty state */}
+          {!analysis && !loading && (
+            <div className="predictive-empty-state">
+              <i className="fa-solid fa-wand-magic-sparkles predictive-empty-icon" />
+              <p className="predictive-empty-title">No analysis yet</p>
+              <p className="predictive-empty-desc">
+                Describe what you're working on above to get predictive suggestions, smart context assembly, and workflow recommendations.
+              </p>
+            </div>
+          )}
+
+          {/* Suggestions tab */}
+          {!loading && tab === "suggestions" && analysis && (
             <div className="data-list">
-              {suggestions.map((s, i) => (
-                <div key={i} style={{
-                  padding: "10px 12px",
-                  marginBottom: 8,
-                  borderRadius: 6,
-                  background: "var(--bg-secondary)",
-                  border: "1px solid var(--border)",
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <strong>{s.title}</strong>
-                    <span style={{
-                      fontSize: "0.75em",
-                      padding: "2px 6px",
-                      borderRadius: 4,
-                      background: s.confidence > 0.7 ? "var(--success)" : "var(--warning)",
-                      color: "#fff",
-                    }}>
+              {suggestions.length === 0 ? (
+                <div className="predictive-empty-state">
+                  <i className="fa-solid fa-lightbulb predictive-empty-icon" />
+                  <p className="predictive-empty-desc">No suggestions found. Try adding a file path or a more detailed prompt.</p>
+                </div>
+              ) : suggestions.map((s, i) => (
+                <div key={i} className="predictive-card">
+                  <div className="predictive-card-header">
+                    <span className="predictive-card-title">{s.title}</span>
+                    <span className={`predictive-confidence${s.confidence > 0.7 ? " high" : s.confidence > 0.4 ? " medium" : " low"}`}>
                       {(s.confidence * 100).toFixed(0)}%
                     </span>
                   </div>
-                  <div style={{ fontSize: "0.85em", color: "var(--text-muted)", marginTop: 4 }}>
-                    {s.description}
-                  </div>
+                  <p className="predictive-card-desc">{s.description}</p>
                   {s.related_files.length > 0 && (
-                    <div style={{ fontSize: "0.8em", marginTop: 4 }}>
-                      Files: {s.related_files.slice(0, 3).join(", ")}
+                    <div className="predictive-card-meta">
+                      <i className="fa-solid fa-file-code" />
+                      {s.related_files.slice(0, 3).join(", ")}
                     </div>
                   )}
                   {s.related_decisions.length > 0 && (
-                    <div style={{ fontSize: "0.8em", marginTop: 2 }}>
-                      Decisions: {s.related_decisions.slice(0, 3).join(", ")}
+                    <div className="predictive-card-meta">
+                      <i className="fa-solid fa-code-branch" />
+                      {s.related_decisions.slice(0, 3).join(", ")}
                     </div>
                   )}
                 </div>
@@ -141,83 +167,88 @@ export default function PredictivePanel({
             </div>
           )}
 
-          {tab === "context" && context && (
+          {/* Context tab */}
+          {!loading && tab === "context" && analysis && (
             <div className="data-list">
-              <div style={{ padding: "8px 12px", background: "var(--bg-secondary)", borderRadius: 6, marginBottom: 12 }}>
-                <strong>Assembled Context</strong>
-                <span style={{ float: "right", fontSize: "0.8em", color: "var(--text-muted)" }}>
-                  ~{context.total_tokens} tokens
-                </span>
-              </div>
-
-              {context.prior_decisions.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <h5>Prior Decisions</h5>
-                  {context.prior_decisions.map((d, i) => (
-                    <div key={i} style={{ fontSize: "0.85em", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>{d}</div>
-                  ))}
+              {!context ? (
+                <div className="predictive-empty-state">
+                  <i className="fa-solid fa-puzzle-piece predictive-empty-icon" />
+                  <p className="predictive-empty-desc">No context assembled yet.</p>
                 </div>
-              )}
+              ) : (
+                <>
+                  <div className="predictive-context-header">
+                    <span>Assembled Context</span>
+                    <span className="predictive-token-badge">~{context.total_tokens} tokens</span>
+                  </div>
 
-              {context.related_summaries.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <h5>Related Context</h5>
-                  {context.related_summaries.map((s, i) => (
-                    <div key={i} style={{ fontSize: "0.85em", padding: "4px 0", color: "var(--text-muted)" }}>{s}</div>
-                  ))}
-                </div>
-              )}
+                  {context.prior_decisions.length > 0 && (
+                    <div className="predictive-section">
+                      <h5><i className="fa-solid fa-gavel" /> Prior Decisions</h5>
+                      {context.prior_decisions.map((d, i) => (
+                        <div key={i} className="predictive-context-item">{d}</div>
+                      ))}
+                    </div>
+                  )}
 
-              {context.architectural_context && (
-                <div style={{ marginBottom: 12 }}>
-                  <h5>Architecture</h5>
-                  <div style={{ fontSize: "0.85em" }}>{context.architectural_context}</div>
-                </div>
-              )}
+                  {context.related_summaries.length > 0 && (
+                    <div className="predictive-section">
+                      <h5><i className="fa-solid fa-layer-group" /> Related Context</h5>
+                      {context.related_summaries.map((s, i) => (
+                        <div key={i} className="predictive-context-item muted">{s}</div>
+                      ))}
+                    </div>
+                  )}
 
-              {context.workflow_hints.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <h5>Workflow Hints</h5>
-                  {context.workflow_hints.map((h, i) => (
-                    <div key={i} style={{ fontSize: "0.85em", color: "var(--text-muted)" }}>{h}</div>
-                  ))}
-                </div>
-              )}
+                  {context.architectural_context && (
+                    <div className="predictive-section">
+                      <h5><i className="fa-solid fa-building" /> Architecture</h5>
+                      <div className="predictive-context-item">{context.architectural_context}</div>
+                    </div>
+                  )}
 
-              {context.relevant_files.length > 0 && (
-                <div>
-                  <h5>Relevant Files</h5>
-                  {context.relevant_files.map((f, i) => (
-                    <div key={i} style={{ fontSize: "0.85em", fontFamily: "monospace" }}>{f}</div>
-                  ))}
-                </div>
+                  {context.workflow_hints.length > 0 && (
+                    <div className="predictive-section">
+                      <h5><i className="fa-solid fa-route" /> Workflow Hints</h5>
+                      {context.workflow_hints.map((h, i) => (
+                        <div key={i} className="predictive-context-item muted">{h}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {context.relevant_files.length > 0 && (
+                    <div className="predictive-section">
+                      <h5><i className="fa-solid fa-file-code" /> Relevant Files</h5>
+                      {context.relevant_files.map((f, i) => (
+                        <div key={i} className="predictive-file-badge">{f}</div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
 
-          {tab === "workflows" && recommendations.length > 0 && (
+          {/* Workflows tab */}
+          {!loading && tab === "workflows" && analysis && (
             <div className="data-list">
-              {recommendations.map((r, i) => (
-                <div key={i} style={{
-                  padding: "10px 12px",
-                  marginBottom: 10,
-                  borderRadius: 6,
-                  background: "var(--bg-secondary)",
-                  border: "1px solid var(--border)",
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <strong>{r.title}</strong>
-                    <span style={{ fontSize: "0.8em", color: "var(--text-muted)" }}>
-                      ~{r.estimated_tokens} tokens
-                    </span>
+              {recommendations.length === 0 ? (
+                <div className="predictive-empty-state">
+                  <i className="fa-solid fa-route predictive-empty-icon" />
+                  <p className="predictive-empty-desc">No workflow recommendations found for this context.</p>
+                </div>
+              ) : recommendations.map((r, i) => (
+                <div key={i} className="predictive-card">
+                  <div className="predictive-card-header">
+                    <span className="predictive-card-title">{r.title}</span>
+                    <span className="predictive-token-badge">~{r.estimated_tokens} tokens</span>
                   </div>
-                  <div style={{ fontSize: "0.85em", color: "var(--text-muted)", marginTop: 4 }}>
-                    {r.description}
-                  </div>
-                  <div style={{ marginTop: 8 }}>
+                  <p className="predictive-card-desc">{r.description}</p>
+                  <div className="predictive-steps">
                     {r.steps.map((step, si) => (
-                      <div key={si} style={{ fontSize: "0.8em", padding: "2px 0", paddingLeft: 12 }}>
-                        {si + 1}. {step}
+                      <div key={si} className="predictive-step">
+                        <span className="predictive-step-num">{si + 1}</span>
+                        <span>{step}</span>
                       </div>
                     ))}
                   </div>
