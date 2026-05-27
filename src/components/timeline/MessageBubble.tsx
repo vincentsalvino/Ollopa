@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import hljs from 'highlight.js/lib/core';
 import typescript from 'highlight.js/lib/languages/typescript';
 import javascript from 'highlight.js/lib/languages/javascript';
@@ -68,7 +68,7 @@ interface MessageBubbleProps {
   messageIndex?: number;
 }
 
-export default function MessageBubble({
+const MessageBubble = memo(function MessageBubble({
   content,
   variant,
   onEdit,
@@ -151,9 +151,10 @@ export default function MessageBubble({
       </div>
     </div>
   );
-}
+});
 
-// Streaming bubble for in-progress responses
+export default MessageBubble;
+
 export function StreamingBubble({ content }: { content: string }) {
   return (
     <div className="msg-bubble msg-assistant msg-streaming">

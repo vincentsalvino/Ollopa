@@ -1,4 +1,4 @@
-import { useReducer, useCallback } from "react";
+import { useReducer, useCallback, useMemo, useRef } from "react";
 import type {
   EventStoreState,
   AppEvent,
@@ -27,6 +27,37 @@ type Action =
 let entryCounter = 0;
 function nextId(): string {
   return `tl-${Date.now()}-${++entryCounter}`;
+}
+
+// Deduplication: track recent non-streaming event fingerprints
+const DEDUP_WINDOW_MS = 100;
+const recentEventHashes: Array<{ hash: string; ts: number }> = [];
+
+function eventFingerprint(event: AppEvent): string {
+  return `${event.type}:${JSON.stringify(event).substring(0, 200)}`;
+}
+
+function isDuplicate(event: AppEvent): boolean {
+  // Streaming chunks are high-frequency and never duplicates by design
+  if (event.type === "streaming_chunk") return false;
+
+  const now = Date.now();
+  const fp = eventFingerprint(event);
+
+  // Prune old entries
+  while (recentEventHashes.length > 0 && now - recentEventHashes[0].ts > DEDUP_WINDOW_MS) {
+    recentEventHashes.shift();
+  }
+
+  if (recentEventHashes.some((e) => e.hash === fp)) {
+    return true;
+  }
+
+  recentEventHashes.push({ hash: fp, ts: now });
+  if (recentEventHashes.length > 50) {
+    recentEventHashes.shift();
+  }
+  return false;
 }
 
 function addEntry(
@@ -125,8 +156,10 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
       return state;
     }
 
-    case "PROCESS_EVENT":
+    case "PROCESS_EVENT": {
+      if (isDuplicate(action.event)) return state;
       return processAppEvent(state, action.event);
+    }
 
     default:
       return state;
@@ -377,24 +410,34 @@ export function useEventStore() {
     []
   );
 
-  // Derived data
-  const toolEntries = state.timeline.filter(
-    (e) => e.kind === "tool_use"
-  ) as (TimelineEntry & { data: ToolUseData })[];
+  // Memoized derived data to prevent unnecessary recalculations
+  const toolEntries = useMemo(
+    () =>
+      state.timeline.filter(
+        (e) => e.kind === "tool_use"
+      ) as (TimelineEntry & { data: ToolUseData })[],
+    [state.timeline]
+  );
 
-  const runningTools = toolEntries.filter((e) => e.data.status === "running");
+  const runningTools = useMemo(
+    () => toolEntries.filter((e) => e.data.status === "running"),
+    [toolEntries]
+  );
 
-  const stats = {
-    totalTools: toolEntries.length,
-    runningTools: runningTools.length,
-    successTools: toolEntries.filter((e) => e.data.status === "success").length,
-    errorTools: toolEntries.filter((e) => e.data.status === "error").length,
-    avgDuration:
-      toolEntries.length > 0
-        ? toolEntries.reduce((sum, e) => sum + (e.data.duration_ms || 0), 0) /
-          toolEntries.filter((e) => e.data.duration_ms).length || 0
-        : 0,
-  };
+  const stats = useMemo(() => {
+    const completedTools = toolEntries.filter((e) => e.data.duration_ms);
+    return {
+      totalTools: toolEntries.length,
+      runningTools: runningTools.length,
+      successTools: toolEntries.filter((e) => e.data.status === "success").length,
+      errorTools: toolEntries.filter((e) => e.data.status === "error").length,
+      avgDuration:
+        completedTools.length > 0
+          ? completedTools.reduce((sum, e) => sum + (e.data.duration_ms || 0), 0) /
+            completedTools.length
+          : 0,
+    };
+  }, [toolEntries, runningTools]);
 
   return {
     state,

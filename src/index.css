@@ -1844,9 +1844,13 @@ pre.code-block code { background: transparent; }
 .tool-card-v2 {
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  border-radius: 2px;
+  border-radius: 6px;
   overflow: hidden;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.tool-card-v2:hover {
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 
 .tool-card-v2.tc-running { border-left: 3px solid var(--warning); }
@@ -2330,9 +2334,9 @@ pre.code-block code { background: transparent; }
 
 .session-item {
   padding: 10px 12px;
-  border-radius: 2px;
+  border-radius: 6px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   margin-bottom: 4px;
   position: relative;
   border: 1px solid transparent;
@@ -2340,9 +2344,9 @@ pre.code-block code { background: transparent; }
 
 .session-item:hover {
   border-color: var(--border);
+  background: var(--bg-tertiary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
-
-.session-item:hover { background: var(--bg-tertiary); }
 
 .session-key {
   font-size: 12px;
@@ -6712,4 +6716,104 @@ h6.md-heading { font-size: 12px; }
   text-align: center;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+/* ═══════ Error Boundary ═══════ */
+
+.error-boundary-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.error-boundary-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.6;
+}
+
+.error-boundary-fallback h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.error-boundary-message {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 400px;
+  margin: 0 0 16px;
+  word-break: break-word;
+}
+
+.error-boundary-retry {
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.error-boundary-retry:hover {
+  background: var(--accent-color);
+  color: #fff;
+}
+
+/* ═══════ Timeline Virtualization ═══════ */
+
+.timeline-virtualization-notice {
+  display: flex;
+  justify-content: center;
+  padding: 12px 16px;
+}
+
+.timeline-show-all-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.timeline-show-all-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-color: var(--accent-color);
+}
+
+/* ═══════ Timeline Polish ═══════ */
+
+.timeline-entry {
+  transition: opacity 0.15s ease;
+}
+
+.timeline-entry + .timeline-entry {
+  margin-top: 2px;
+}
+
+.tl-content {
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* ═══════ Compact Warning ═══════ */
+
+.compact-warning {
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.compact-warning.dismissed {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
 }

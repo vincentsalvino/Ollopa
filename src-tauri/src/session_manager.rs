@@ -295,15 +295,22 @@ pub fn save_snapshot(project_path: Option<&str>, snapshot: &SessionSnapshot) -> 
 }
 
 /// Append an event to the session snapshot for replay.
+/// Uses atomic write (write to temp file, then rename) to prevent corruption.
 fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event: &AppEvent) {
     let path = snapshot_path(project_path, session_id);
     if let Ok(content) = fs::read_to_string(&path) {
         if let Ok(mut snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
+            let now = current_timestamp_ms();
+
+            // Enforce monotonic timestamps (deterministic ordering)
+            let last_ts = snapshot.events.last().map(|e| e.timestamp_ms).unwrap_or(0);
+            let event_ts = now.max(last_ts + 1);
+
             snapshot.events.push(PersistedEvent {
-                timestamp_ms: current_timestamp_ms(),
+                timestamp_ms: event_ts,
                 event: event.clone(),
             });
-            snapshot.updated_at = current_timestamp_ms();
+            snapshot.updated_at = now;
             snapshot.message_count = snapshot
                 .events
                 .iter()
@@ -314,9 +321,13 @@ fn append_event_to_snapshot(project_path: Option<&str>, session_id: &str, event:
                 snapshot.cost_usd += cost_usd;
             }
 
-            let _ = serde_json::to_string_pretty(&snapshot)
-                .ok()
-                .and_then(|json| fs::write(&path, json).ok());
+            // Atomic write: write to temp file then rename to prevent corruption
+            if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+                let tmp_path = path.with_extension("json.tmp");
+                if fs::write(&tmp_path, &json).is_ok() {
+                    let _ = fs::rename(&tmp_path, &path);
+                }
+            }
         }
     }
 }
@@ -370,15 +381,18 @@ fn set_session_title_if_empty(project_path: Option<&str>, session_id: &str, mess
     }
 }
 
-/// Update heartbeat timestamp on a snapshot.
+/// Update heartbeat timestamp on a snapshot (atomic write).
 fn update_heartbeat(project_path: Option<&str>, session_id: &str) {
     let path = snapshot_path(project_path, session_id);
     if let Ok(content) = fs::read_to_string(&path) {
         if let Ok(mut snapshot) = serde_json::from_str::<SessionSnapshot>(&content) {
             snapshot.updated_at = current_timestamp_ms();
-            let _ = serde_json::to_string_pretty(&snapshot)
-                .ok()
-                .and_then(|json| fs::write(&path, json).ok());
+            if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+                let tmp_path = path.with_extension("json.tmp");
+                if fs::write(&tmp_path, &json).is_ok() {
+                    let _ = fs::rename(&tmp_path, &path);
+                }
+            }
         }
     }
 }
@@ -464,7 +478,7 @@ pub fn reactivate_session(_project_path: Option<&str>, session_id: &str) {
     }
 }
 
-/// Finalize a session snapshot (mark as Completed or Crashed).
+/// Finalize a session snapshot (mark as Completed or Crashed). Uses atomic write.
 fn finalize_session(project_path: Option<&str>, session_id: &str, is_crash: bool) {
     let path = snapshot_path(project_path, session_id);
     if let Ok(content) = fs::read_to_string(&path) {
@@ -476,9 +490,12 @@ fn finalize_session(project_path: Option<&str>, session_id: &str, is_crash: bool
             };
             snapshot.updated_at = current_timestamp_ms();
             snapshot.duration_ms = snapshot.updated_at.saturating_sub(snapshot.created_at);
-            let _ = serde_json::to_string_pretty(&snapshot)
-                .ok()
-                .and_then(|json| fs::write(&path, json).ok());
+            if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+                let tmp_path = path.with_extension("json.tmp");
+                if fs::write(&tmp_path, &json).is_ok() {
+                    let _ = fs::rename(&tmp_path, &path);
+                }
+            }
         }
     }
 }

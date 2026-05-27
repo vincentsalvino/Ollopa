@@ -727,6 +727,17 @@ pub fn build_optimized_context(
 
     let mut parts: Vec<String> = Vec::new();
     let mut remaining_tokens = budget.max_context_tokens;
+    // Track content fingerprints to prevent duplicate injection
+    let mut seen_content: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
+    let content_fingerprint = |s: &str| -> u64 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let normalized = s.to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut h = DefaultHasher::new();
+        normalized.hash(&mut h);
+        h.finish()
+    };
 
     // 1. Recent decisions (highest priority, capped)
     let decisions = crate::second_brain::list_decisions(project_path);
@@ -734,10 +745,13 @@ pub fn build_optimized_context(
     let mut decision_tokens = 0;
     for d in decisions.iter().take(5) {
         let entry = format!("[Decision] {} — {} ({})", d.title, d.decision, d.tags.join(", "));
+        let fp = content_fingerprint(&entry);
+        if seen_content.contains(&fp) { continue; }
         let tokens = estimate_tokens(&entry);
         if decision_tokens + tokens > decision_budget {
             break;
         }
+        seen_content.insert(fp);
         parts.push(entry);
         decision_tokens += tokens;
     }
@@ -754,10 +768,13 @@ pub fn build_optimized_context(
             rs.session_count,
             truncate(&rs.content, 300)
         );
+        let fp = content_fingerprint(&entry);
+        if seen_content.contains(&fp) { continue; }
         let tokens = estimate_tokens(&entry);
         if summary_tokens + tokens > summary_budget {
             break;
         }
+        seen_content.insert(fp);
         parts.push(entry);
         summary_tokens += tokens;
     }
@@ -766,10 +783,13 @@ pub fn build_optimized_context(
     let summaries = crate::second_brain::list_summaries(project_path);
     for s in summaries.iter().take(3) {
         let entry = format!("[Session] {} — {}", s.title, truncate(&s.summary, 150));
+        let fp = content_fingerprint(&entry);
+        if seen_content.contains(&fp) { continue; }
         let tokens = estimate_tokens(&entry);
         if summary_tokens + tokens > summary_budget {
             break;
         }
+        seen_content.insert(fp);
         parts.push(entry);
         summary_tokens += tokens;
     }
@@ -783,10 +803,13 @@ pub fn build_optimized_context(
             let mut search_tokens = 0;
             for r in results {
                 let entry = format!("[Relevant] {}", truncate(&r.snippet, 100));
+                let fp = content_fingerprint(&entry);
+                if seen_content.contains(&fp) { continue; }
                 let tokens = estimate_tokens(&entry);
                 if search_tokens + tokens > search_budget {
                     break;
                 }
+                seen_content.insert(fp);
                 parts.push(entry);
                 search_tokens += tokens;
             }

@@ -221,7 +221,43 @@ pub fn parse_stream_line(line: &str) -> Option<OllopaStreamEvent> {
     if trimmed.is_empty() {
         return None;
     }
-    serde_json::from_str::<OllopaStreamEvent>(trimmed).ok()
+    match serde_json::from_str::<OllopaStreamEvent>(trimmed) {
+        Ok(event) => Some(event),
+        Err(_) => {
+            // Attempt recovery: try stripping trailing garbage after valid JSON
+            if let Some(brace_end) = find_json_end(trimmed) {
+                serde_json::from_str::<OllopaStreamEvent>(&trimmed[..=brace_end]).ok()
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Find the position of the closing brace of the top-level JSON object.
+fn find_json_end(s: &str) -> Option<usize> {
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+    for (i, ch) in s.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_string => { escape_next = true; }
+            '"' => { in_string = !in_string; }
+            '{' if !in_string => { depth += 1; }
+            '}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[cfg(test)]

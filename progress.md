@@ -697,3 +697,156 @@ Claude CLI (stream-json) → claude_process.rs → AppEvent → Tauri emit → u
 | `components/Toast.tsx` | 2 | Notifications |
 | `components/InputBar.tsx` | 2+10 | Slash command input + transform preview |
 | `index.css` | 2-10 | All CSS (~5800 lines) |
+| `components/ErrorBoundary.tsx` | 11 | React error boundary with retry |
+| `vite-env.d.ts` | 11 | Asset module type declarations |
+
+---
+
+## Phase 11 — Stabilization Roadmap (All 6 Phases)
+
+**Status: COMPLETE**
+
+### Overview
+This phase implements the AI Workspace Stabilization Roadmap: a foundation-first execution plan focused on making the workspace feel excellent before adding more AI complexity. All 6 stabilization priority phases were completed in a single pass.
+
+---
+
+### Phase 11.1 — Core Runtime Stabilization
+
+**Status: COMPLETE**
+
+#### What Was Done
+
+- [x] **Malformed event recovery** — `parse_stream_line()` in `ollopa_events.rs` now attempts to recover from trailing garbage after valid JSON by finding the closing brace boundary
+- [x] **JSON boundary detection** — Added `find_json_end()` function that properly handles nested objects, string escapes, and brace depth tracking
+- [x] **Stream idle timeout** — API client now aborts after 60 seconds of no data from the provider, emitting a recoverable error event
+- [x] **Consecutive error resilience** — Stream processing tolerates up to 5 transient chunk errors before aborting, rather than failing on the first error
+- [x] **Event deduplication (backend)** — EventBus now fingerprints events and skips identical events within a 50ms window (streaming chunks are exempt)
+- [x] **Event history cleanup** — `clear_history()` now also clears the deduplication fingerprint buffer
+
+#### Files Modified
+- `src-tauri/src/ollopa_events.rs` — Malformed JSON recovery + `find_json_end()`
+- `src-tauri/src/api_client.rs` — Stream timeout, consecutive error handling
+- `src-tauri/src/event_bus.rs` — Event deduplication with fingerprinting
+
+---
+
+### Phase 11.2 — Frontend Stability + UX Hardening
+
+**Status: COMPLETE**
+
+#### What Was Done
+
+- [x] **React ErrorBoundary** — Created `ErrorBoundary.tsx` component that catches rendering crashes, displays a fallback UI with retry button, and logs errors to console
+- [x] **App-level error boundary** — Wrapped the root `<App />` in `<ErrorBoundary>` in `main.tsx`
+- [x] **Per-entry error boundaries** — Each timeline entry in `TimelineView.tsx` is wrapped in its own `<ErrorBoundary>`, preventing a single broken entry from crashing the entire timeline
+- [x] **Event deduplication (frontend)** — Added `isDuplicate()` guard in the `useEventStore` reducer that skips identical non-streaming events within a 100ms window
+- [x] **Timeline virtualization** — Long sessions (>200 entries) only render the most recent 200 entries with a "Show N older entries" button to load all
+- [x] **TypeScript asset declarations** — Created `vite-env.d.ts` with module declarations for `.png`, `.jpg`, `.svg`, `.wav` files, fixing the 3 TypeScript compilation errors
+
+#### Files Created
+- `src/components/ErrorBoundary.tsx`
+- `src/vite-env.d.ts`
+
+#### Files Modified
+- `src/main.tsx` — ErrorBoundary wrapper
+- `src/hooks/useEventStore.ts` — Event deduplication + `useMemo` for derived state
+- `src/components/timeline/TimelineView.tsx` — Virtualization + per-entry error boundaries + `memo(TimelineEntry)`
+- `src/index.css` — Error boundary + virtualization notice CSS
+
+---
+
+### Phase 11.3 — Session System Hardening
+
+**Status: COMPLETE**
+
+#### What Was Done
+
+- [x] **Monotonic event timestamps** — `append_event_to_snapshot()` now enforces strictly increasing timestamps (each event is at least 1ms after the previous), preventing out-of-order events during replay
+- [x] **Atomic snapshot writes** — All snapshot mutations (event append, heartbeat update, session finalize) now write to a `.json.tmp` file first, then rename to the target path, preventing corruption from interrupted writes
+- [x] **Crash recovery hardening** — The startup `mark_crashed_sessions()` already detects stale Active sessions (>60s heartbeat age) and marks them as Crashed, providing automatic crash detection
+
+#### Files Modified
+- `src-tauri/src/session_manager.rs` — Atomic writes + monotonic timestamps in `append_event_to_snapshot()`, `update_heartbeat()`, `finalize_session()`
+
+---
+
+### Phase 11.4 — Token + Context Stabilization
+
+**Status: COMPLETE**
+
+#### What Was Done
+
+- [x] **Duplicate content prevention** — `build_optimized_context()` in `token_optimizer.rs` now tracks content fingerprints (normalized lowercase hash) and skips duplicate entries across decisions, rolling summaries, individual summaries, and search results
+- [x] **Content-aware deduplication** — Normalizes whitespace before hashing to catch near-duplicate content from different sources
+
+#### Files Modified
+- `src-tauri/src/token_optimizer.rs` — Content fingerprinting + dedup in context builder
+
+---
+
+### Phase 11.5 — Performance Optimization
+
+**Status: COMPLETE**
+
+#### What Was Done
+
+- [x] **React.memo on ToolCard** — Prevents unnecessary re-renders of tool cards when parent state changes
+- [x] **React.memo on MessageBubble** — Prevents unnecessary re-renders of message bubbles during streaming
+- [x] **React.memo on TimelineEntry** — `MemoizedTimelineEntry` wrapper in `TimelineView.tsx`
+- [x] **useMemo for derived state** — `toolEntries`, `runningTools`, and `stats` in `useEventStore` are now memoized instead of recomputed on every render
+- [x] **Fixed avgDuration calculation** — Previous code could produce NaN when no tools had duration_ms; now uses `completedTools.length` as denominator
+
+#### Files Modified
+- `src/components/tools/ToolCard.tsx` — `memo()` wrapper
+- `src/components/timeline/MessageBubble.tsx` — `memo()` wrapper
+- `src/components/timeline/TimelineView.tsx` — `MemoizedTimelineEntry`
+- `src/hooks/useEventStore.ts` — `useMemo` for derived data
+
+---
+
+### Phase 11.6 — Visual UX Polish
+
+**Status: COMPLETE**
+
+#### What Was Done
+
+- [x] **Tool card border radius** — Updated from `2px` to `6px` for a smoother look
+- [x] **Tool card hover shadow** — Added subtle `box-shadow` on hover for depth
+- [x] **Session item border radius** — Updated from `2px` to `6px`
+- [x] **Session item hover effect** — Combined hover with shadow for better interactivity feedback
+- [x] **Timeline entry transitions** — Added `opacity 0.15s` transition for smoother entry appearance
+- [x] **Timeline entry spacing** — Added `margin-top: 2px` between consecutive entries for visual clarity
+- [x] **Content overflow** — Added `min-width: 0` and `word-break: break-word` to `.tl-content` for proper text wrapping
+- [x] **Error boundary styling** — Full error recovery UI with icon, message, and retry button
+- [x] **Virtualization notice styling** — Clean button for loading older timeline entries
+
+#### Files Modified
+- `src/index.css` — Tool card, session item, timeline, error boundary, virtualization styles
+
+---
+
+### Build Verification
+
+After all stabilization changes:
+
+```
+npx tsc --noEmit  -> 0 errors
+npx vite build    -> 91 modules transformed, clean build in ~1.5s
+```
+
+### Summary of Changes Across All Stabilization Phases
+
+| Category | Change | Impact |
+|----------|--------|--------|
+| Stream recovery | Malformed JSON recovery + idle timeout | Survives provider failures |
+| Error resilience | Consecutive error tolerance (5) | Handles transient network issues |
+| Event integrity | Backend + frontend deduplication | Prevents duplicate events |
+| Crash safety | Atomic snapshot writes | Prevents data corruption |
+| Event ordering | Monotonic timestamps | Deterministic replay |
+| UI stability | ErrorBoundary (app + per-entry) | Crash isolation |
+| Performance | Timeline virtualization (200 entries) | Handles long sessions |
+| Performance | React.memo on heavy components | Reduced re-renders |
+| Performance | useMemo for derived computations | Avoids unnecessary work |
+| Token efficiency | Context deduplication | Prevents redundant context injection |
+| Visual polish | Rounded corners, shadows, transitions | Premium feel |

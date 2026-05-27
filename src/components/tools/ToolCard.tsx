@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { ToolUseData } from "../../types";
 
 interface ToolCardProps {
@@ -32,7 +32,7 @@ const TOOL_CATEGORIES: Record<string, string> = {
 
 type TabId = "input" | "output" | "files";
 
-export default function ToolCard({ tool, onViewOutput }: ToolCardProps) {
+function ToolCard({ tool, onViewOutput }: ToolCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<TabId>("input");
   const icon = TOOL_ICONS[tool.tool_name] || "\u2699\uFE0F";
@@ -389,3 +389,5 @@ function shortenPath(p: string): string {
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + "..." : s;
 }
+
+export default memo(ToolCard);
