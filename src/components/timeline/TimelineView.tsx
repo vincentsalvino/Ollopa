@@ -1,7 +1,10 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo, memo } from "react";
 import type { TimelineEntry as TEntry, ToolUseData } from "../../types";
 import TimelineEntry from "./TimelineEntry";
 import { StreamingBubble } from "./MessageBubble";
+import ErrorBoundary from "../ErrorBoundary";
+
+const VIRTUALIZATION_THRESHOLD = 200;
 
 interface TimelineViewProps {
   entries: TEntry[];
@@ -25,10 +28,21 @@ export default function TimelineView({
   onRegenerateMessage,
 }: TimelineViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [showAllEntries, setShowAllEntries] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [entries.length, isTyping, isStreaming, streamingText]);
+
+  // Virtualization: for very long sessions, only render the most recent entries
+  const visibleEntries = useMemo(() => {
+    if (showAllEntries || entries.length <= VIRTUALIZATION_THRESHOLD) {
+      return entries;
+    }
+    return entries.slice(-VIRTUALIZATION_THRESHOLD);
+  }, [entries, showAllEntries]);
+
+  const hiddenCount = entries.length - visibleEntries.length;
 
   return (
     <div className="timeline-view">
@@ -41,15 +55,27 @@ export default function TimelineView({
         </div>
       )}
 
-      {entries.map((entry, i) => (
-        <TimelineEntry
-          key={entry.id}
-          entry={entry}
-          isLast={i === entries.length - 1 && !isTyping && !isStreaming}
-          onViewToolDetail={onViewToolDetail}
-          onEditMessage={onEditMessage ? (newContent) => onEditMessage(entry.id, newContent) : undefined}
-          onRegenerateMessage={onRegenerateMessage ? () => onRegenerateMessage(entry.id) : undefined}
-        />
+      {hiddenCount > 0 && (
+        <div className="timeline-virtualization-notice">
+          <button
+            className="timeline-show-all-btn"
+            onClick={() => setShowAllEntries(true)}
+          >
+            Show {hiddenCount} older entries
+          </button>
+        </div>
+      )}
+
+      {visibleEntries.map((entry, i) => (
+        <ErrorBoundary key={entry.id}>
+          <MemoizedTimelineEntry
+            entry={entry}
+            isLast={i === visibleEntries.length - 1 && !isTyping && !isStreaming}
+            onViewToolDetail={onViewToolDetail}
+            onEditMessage={onEditMessage ? (newContent: string) => onEditMessage(entry.id, newContent) : undefined}
+            onRegenerateMessage={onRegenerateMessage ? () => onRegenerateMessage(entry.id) : undefined}
+          />
+        </ErrorBoundary>
       ))}
 
       {isStreaming && streamingText && (
@@ -80,6 +106,8 @@ export default function TimelineView({
     </div>
   );
 }
+
+const MemoizedTimelineEntry = memo(TimelineEntry);
 
 function StreamingSection({
   streamingText,

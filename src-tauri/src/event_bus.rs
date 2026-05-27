@@ -1,9 +1,11 @@
 use crate::ollopa_events::AppEvent;
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex};
 
 const CHANNEL_CAPACITY: usize = 256;
+const DEDUP_WINDOW_MS: u64 = 50;
 
 /// Event history entry with timestamp
 #[derive(Debug, Clone, Serialize)]
@@ -22,6 +24,8 @@ pub struct EventBus {
     sender: broadcast::Sender<AppEvent>,
     history: Arc<Mutex<Vec<TimestampedEvent>>>,
     max_history: usize,
+    /// Recent event fingerprints for deduplication within a short window
+    recent_fingerprints: Arc<Mutex<VecDeque<(u64, u64)>>>,
 }
 
 impl EventBus {
@@ -31,14 +35,47 @@ impl EventBus {
             sender,
             history: Arc::new(Mutex::new(Vec::new())),
             max_history: 1000,
+            recent_fingerprints: Arc::new(Mutex::new(VecDeque::with_capacity(64))),
         }
     }
 
+    /// Compute a simple fingerprint for deduplication of identical events.
+    fn event_fingerprint(event: &AppEvent) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let json = serde_json::to_string(event).unwrap_or_default();
+        let mut hasher = DefaultHasher::new();
+        json.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Publish an event to all subscribers and record in history.
+    /// Returns false if the event was deduplicated (skipped).
     #[allow(dead_code)]
-    pub async fn publish(&self, event: AppEvent) {
+    pub async fn publish(&self, event: AppEvent) -> bool {
+        let now = current_timestamp_ms();
+        let fp = Self::event_fingerprint(&event);
+
+        // Deduplication: skip if identical event was published within DEDUP_WINDOW_MS
+        // (streaming_chunk events are exempt since they are high-frequency by design)
+        let dominated = matches!(event, AppEvent::StreamingChunk { .. });
+        if !dominated {
+            let mut fingerprints = self.recent_fingerprints.lock().await;
+            // Prune old fingerprints
+            while fingerprints.front().map_or(false, |(ts, _)| now - *ts > DEDUP_WINDOW_MS) {
+                fingerprints.pop_front();
+            }
+            if fingerprints.iter().any(|(_, f)| *f == fp) {
+                return false;
+            }
+            fingerprints.push_back((now, fp));
+            if fingerprints.len() > 64 {
+                fingerprints.pop_front();
+            }
+        }
+
         let timestamped = TimestampedEvent {
-            timestamp_ms: current_timestamp_ms(),
+            timestamp_ms: now,
             event: event.clone(),
         };
 
@@ -53,6 +90,7 @@ impl EventBus {
 
         // Broadcast (ignore error if no receivers)
         let _ = self.sender.send(event);
+        true
     }
 
     /// Subscribe to the event stream.
@@ -75,6 +113,7 @@ impl EventBus {
     /// Clear event history (e.g., on session restart).
     pub async fn clear_history(&self) {
         self.history.lock().await.clear();
+        self.recent_fingerprints.lock().await.clear();
     }
 }
 

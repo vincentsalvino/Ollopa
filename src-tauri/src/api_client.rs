@@ -399,10 +399,15 @@ impl DirectApiClient {
         let cancel_token = self.cancel_token.clone();
         let mut was_cancelled = false;
 
+        // Stream timeout: if no data received for 60 seconds, abort
+        const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
         // Stream the response with real-time chunk emission
         let mut full_response = String::new();
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
+        let mut consecutive_errors: u32 = 0;
+        const MAX_CONSECUTIVE_ERRORS: u32 = 5;
 
         loop {
             tokio::select! {
@@ -410,10 +415,20 @@ impl DirectApiClient {
                     was_cancelled = true;
                     break;
                 }
+                _ = tokio::time::sleep(STREAM_IDLE_TIMEOUT) => {
+                    let _ = app_handle.emit(
+                        "app-event",
+                        AppEvent::Error {
+                            message: "Stream idle timeout — no data received for 60 seconds".to_string(),
+                            recoverable: true,
+                        },
+                    );
+                    break;
+                }
                 chunk_opt = stream.next() => {
                     match chunk_opt {
-                        Some(chunk_result) => {
-                            let chunk = chunk_result.map_err(|e| format!("Stream error: {}", e))?;
+                        Some(Ok(chunk)) => {
+                            consecutive_errors = 0;
                             let text = String::from_utf8_lossy(&chunk);
                             buffer.push_str(&text);
 
@@ -452,8 +467,23 @@ impl DirectApiClient {
                                             }
                                         }
                                     }
+                                    // Silently skip malformed SSE data lines
                                 }
                             }
+                        }
+                        Some(Err(e)) => {
+                            consecutive_errors += 1;
+                            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                                let _ = app_handle.emit(
+                                    "app-event",
+                                    AppEvent::Error {
+                                        message: format!("Stream failed after {} consecutive errors: {}", consecutive_errors, e),
+                                        recoverable: true,
+                                    },
+                                );
+                                break;
+                            }
+                            // Continue on transient errors
                         }
                         None => break,
                     }
