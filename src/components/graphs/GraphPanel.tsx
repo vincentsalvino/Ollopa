@@ -250,25 +250,25 @@ export default function GraphPanel({
               </div>
 
               <div className="graph-canvas-wrapper">
-                <div className="graph-canvas" style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center' }}>
-                  {tab === "workflow" ? (
-                    <DAGView
-                      nodes={filteredNodes}
-                      edges={filteredEdges}
-                      width={dimensions.width}
-                      height={dimensions.height}
-                      onNodeClick={setSelectedNode}
-                    />
-                  ) : (
-                    <ForceGraph
-                      nodes={filteredNodes}
-                      edges={filteredEdges}
-                      width={dimensions.width}
-                      height={dimensions.height}
-                      onNodeClick={setSelectedNode}
-                    />
-                  )}
-                </div>
+              <div className="graph-canvas" style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center' }}>
+                {tab === "workflow" ? (
+                  <DAGView
+                    nodes={filteredNodes}
+                    edges={filteredEdges}
+                    width={dimensions.width}
+                    height={dimensions.height}
+                    onNodeClick={setSelectedNode}
+                  />
+                ) : (
+                  <ForceGraph
+                    nodes={filteredNodes}
+                    edges={filteredEdges}
+                    width={dimensions.width}
+                    height={dimensions.height}
+                    onNodeClick={setSelectedNode}
+                  />
+                )}
+              </div>
               </div>
 
               {/* Legend */}

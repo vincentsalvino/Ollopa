@@ -120,7 +120,7 @@ function App() {
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [keyInput, setKeyInput] = useState("");
 
-  // Provider state for model selection gating
+  // Provider state (for model dropdown filtering)
   const [providers, setProviders] = useState<ProviderDef[]>([]);
 
   // Context window tracking
@@ -186,42 +186,33 @@ function App() {
   ];
   const ALL_MODELS = AVAILABLE_MODELS.flatMap((g) => g.models);
 
-  // Map provider group names to provider_type for matching
-  const GROUP_TO_PROVIDER_TYPE: Record<string, string> = {
-    "DeepSeek": "DeepSeek",
-    "Anthropic": "Claude",
-    "OpenAI": "OpenAI",
+  // Map provider group name to ProviderDef enabled status
+  const getProviderEnabled = (groupName: string): boolean => {
+    if (providers.length === 0) return true;
+    const match = providers.find(
+      (p) => p.name.toLowerCase() === groupName.toLowerCase() ||
+             p.provider_type.toLowerCase() === groupName.toLowerCase()
+    );
+    return match ? match.enabled : true;
   };
 
-  // Check if a provider group is enabled
-  const isProviderGroupEnabled = (groupName: string): boolean => {
-    const providerType = GROUP_TO_PROVIDER_TYPE[groupName];
-    if (!providerType) return true;
-    const matchedProvider = providers.find((p) => p.provider_type === providerType);
-    if (!matchedProvider) return true; // If provider not found, allow selection
-    return matchedProvider.enabled;
-  };
-
-  // Get the provider name for the currently selected model
-  const getProviderForModel = (model: string): string | null => {
-    for (const group of AVAILABLE_MODELS) {
-      if (group.models.includes(model)) return group.group;
+  // Determine the provider name for the currently selected model
+  const getModelProvider = (model: string): string | null => {
+    for (const g of AVAILABLE_MODELS) {
+      if (g.models.includes(model)) return g.group;
     }
     return null;
   };
 
-  // Check if a provider has an active API key
-  const isProviderApiKeySet = (groupName: string): boolean => {
-    const providerType = GROUP_TO_PROVIDER_TYPE[groupName];
-    if (!providerType) return false;
-    const matchedKey = apiKeys.find((k) => {
-      const name = k.provider_name.toLowerCase();
-      return name.includes(providerType.toLowerCase()) || name.includes(groupName.toLowerCase());
-    });
-    return matchedKey ? matchedKey.is_set : false;
-  };
+  const currentProvider = getModelProvider(state.sessionModel);
 
-  const currentProvider = getProviderForModel(state.sessionModel);
+  // Check if API key is set for a provider
+  const isApiKeySet = (providerName: string): boolean => {
+    const match = apiKeys.find(
+      (k) => k.provider_name.toLowerCase() === providerName.toLowerCase()
+    );
+    return match ? match.is_set : false;
+  };
 
   // ═══════ Theme (with persistence) ═══════
 
@@ -238,7 +229,7 @@ function App() {
     loadDashboardData();
     loadTransformSettings();
     loadWebSearchSettings();
-    loadProviders();
+    loadProvidersList();
     loadApiKeys();
 
     const unlistenAppEvent = listen<AppEvent>("app-event", (event) => {
@@ -305,7 +296,7 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyboard);
   }, []);
 
-  // ═══════ Click-Outside: close dropdowns & popovers ═══════
+  // ═══════ Click-outside to close dropdowns & popovers ═══════
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -692,9 +683,9 @@ function App() {
     }
   };
 
-  // ═══════ Providers ═══════
+  // ═══════ Provider List (for model dropdown filtering) ═══════
 
-  const loadProviders = async () => {
+  const loadProvidersList = async () => {
     try {
       const p = await invoke<ProviderDef[]>("router_list_providers");
       setProviders(p);
@@ -834,40 +825,34 @@ function App() {
               className={`model-pill model-indicator${showModelSelector ? " open" : ""}`}
               onClick={() => { setShowModelSelector((s) => !s); setShowProjectDropdown(false); setShowExportMenu(false); setShowSettingsPopover(false); }}
             >
-              {currentProvider && (
-                <span className={`provider-badge provider-badge--${currentProvider.toLowerCase()}`}>{currentProvider}</span>
-              )}
+              {currentProvider && <span className="model-provider-badge">{currentProvider}</span>}
               <span>{state.sessionModel}</span>
-              {currentProvider && isProviderApiKeySet(currentProvider) && (
-                <span className="api-key-active-dot" title="API key active" />
-              )}
+              {currentProvider && isApiKeySet(currentProvider) && <span className="model-apikey-dot" title="API key active" />}
               <i className="fa-solid fa-chevron-down" />
             </button>
             {showModelSelector && (
               <div className="dropdown model-dropdown">
                 {AVAILABLE_MODELS.map((group) => {
-                  const groupEnabled = isProviderGroupEnabled(group.group);
-                  const hasApiKey = isProviderApiKeySet(group.group);
+                  const enabled = getProviderEnabled(group.group);
+                  const keySet = isApiKeySet(group.group);
                   return (
-                    <div key={group.group}>
-                      <div className={`dropdown-section-label${!groupEnabled ? " provider-disabled" : ""}`}>
+                    <div key={group.group} className={!enabled ? "provider-group-disabled" : ""}>
+                      <div className="dropdown-section-label">
                         <span>{group.group}</span>
-                        {!groupEnabled && <span className="provider-off-badge">OFF</span>}
-                        {groupEnabled && hasApiKey && <span className="provider-key-badge" title="API key set"><i className="fa-solid fa-key" /></span>}
-                        {groupEnabled && !hasApiKey && <span className="provider-no-key-badge" title="No API key"><i className="fa-solid fa-key" /></span>}
+                        {!enabled && <span className="provider-off-badge">OFF</span>}
+                        {enabled && keySet && <span className="provider-key-badge" title="API key set"><i className="fa-solid fa-key" /></span>}
+                        {enabled && !keySet && <span className="provider-nokey-badge" title="No API key"><i className="fa-solid fa-key" /></span>}
                       </div>
                       {group.models.map((m) => (
                         <button
                           key={m}
-                          className={`dropdown-item${m === state.sessionModel ? " active" : ""}${!groupEnabled ? " dropdown-item-disabled" : ""}`}
-                          onClick={() => { if (groupEnabled) handleSwitchModel(m); }}
-                          disabled={!groupEnabled}
-                          title={!groupEnabled ? `${group.group} provider is turned off` : m}
+                          className={`dropdown-item${m === state.sessionModel ? " active" : ""}${!enabled ? " disabled" : ""}`}
+                          onClick={() => { if (enabled) handleSwitchModel(m); }}
+                          disabled={!enabled}
+                          title={!enabled ? `${group.group} provider is turned off` : m}
                         >
                           {m}
-                          {m === state.sessionModel && currentProvider && (
-                            <span className="model-active-indicator"><i className="fa-solid fa-circle-check" /></span>
-                          )}
+                          {m === state.sessionModel && <span className="model-active-indicator"><i className="fa-solid fa-circle-check" /></span>}
                         </button>
                       ))}
                     </div>
@@ -1016,7 +1001,7 @@ function App() {
                   <i className="fa-solid fa-terminal" /><span>Prompt</span>
                 </button>
                 <div className="popover-divider" />
-                <button className="popover-item" onClick={() => { setShowApiKeys(true); loadApiKeys(); setShowSettingsPopover(false); }}>
+                <button className="popover-item" onClick={() => { setShowApiKeys(true); loadApiKeys(); loadProvidersList(); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-key" /><span>Manage API Keys</span>
                 </button>
               </div>
@@ -1138,12 +1123,17 @@ function App() {
                 <p className="api-keys-desc">Add API keys for each provider. Keys are saved locally and loaded automatically on startup.</p>
                 <div className="api-keys-list">
                   {apiKeys.map((k) => {
-                    const isCurrentProvider = currentProvider && k.provider_name.toLowerCase().includes(currentProvider.toLowerCase());
+                    const isCurrentProvider = currentProvider?.toLowerCase() === k.provider_name.toLowerCase();
+                    const providerDef = providers.find((p) => p.name.toLowerCase() === k.provider_name.toLowerCase());
+                    const providerEnabled = providerDef ? providerDef.enabled : true;
                     return (
-                    <div key={k.env_var} className={`api-key-row${isCurrentProvider ? " api-key-row--active" : ""}`}>
+                    <div key={k.env_var} className={`api-key-row${isCurrentProvider ? " api-key-row--active" : ""}${!providerEnabled ? " api-key-row--disabled" : ""}`}>
                       <div className="api-key-info">
-                        <span className="api-key-provider">{k.provider_name}</span>
-                        {isCurrentProvider && <span className="api-key-in-use-badge">In Use</span>}
+                        <span className="api-key-provider">
+                          {k.provider_name}
+                          {isCurrentProvider && <span className="api-key-active-badge">In Use</span>}
+                          {!providerEnabled && <span className="api-key-off-badge">Provider OFF</span>}
+                        </span>
                         <span className="api-key-envvar">{k.env_var}</span>
                       </div>
                       {editingKey === k.env_var ? (
@@ -1275,7 +1265,7 @@ function App() {
       <BrainPanel visible={showBrainPanel} onClose={() => setShowBrainPanel(false)} onToast={addToast} projectPath={projectPath} />
       <GraphPanel visible={showGraphPanel} onClose={() => setShowGraphPanel(false)} onToast={addToast} projectPath={projectPath} />
       <TokenPanel visible={showTokenPanel} onClose={() => setShowTokenPanel(false)} onToast={addToast} projectPath={projectPath} />
-      <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} currentModel={state.sessionModel} />
+      <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} />
       <BrainSearchModal visible={showBrainSearch} onClose={() => setShowBrainSearch(false)} projectPath={projectPath} />
       <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
