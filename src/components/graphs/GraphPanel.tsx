@@ -249,6 +249,7 @@ export default function GraphPanel({
                 </button>
               </div>
 
+              <div className="graph-canvas-wrapper">
               <div className="graph-canvas" style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center' }}>
                 {tab === "workflow" ? (
                   <DAGView
@@ -267,6 +268,7 @@ export default function GraphPanel({
                     onNodeClick={setSelectedNode}
                   />
                 )}
+              </div>
               </div>
 
               {/* Legend */}
