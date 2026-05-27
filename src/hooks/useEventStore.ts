@@ -112,13 +112,22 @@ function reducer(state: EventStoreState, action: Action): EventStoreState {
     case "CLEAR_SESSION":
       return { ...initialState };
 
-    case "STOP_STREAMING":
-      return {
+    case "STOP_STREAMING": {
+      const stopped = {
         ...state,
         isStreaming: false,
         isTyping: false,
         streamingText: "",
       };
+      if (state.streamingText.trim()) {
+        stopped.timeline = addEntry(state.timeline, "assistant_message", {
+          kind: "assistant_message" as const,
+          text: state.streamingText + "\n\n*(generation stopped)*",
+          model: state.sessionModel,
+        });
+      }
+      return stopped;
+    }
 
     case "RESOLVE_APPROVAL":
       return {
