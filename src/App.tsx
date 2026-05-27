@@ -188,9 +188,9 @@ function App() {
 
   // Available models (grouped by provider)
   const AVAILABLE_MODELS = [
-    { group: "DeepSeek", models: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-coder", "deepseek-reasoner"] },
-    { group: "Anthropic", models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"] },
-    { group: "OpenAI", models: ["gpt-4o", "o3-mini"] },
+    { group: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] },
+    { group: "Anthropic (via DeepSeek)", models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"] },
+    { group: "OpenAI", models: ["gpt-4o", "gpt-4o-mini"] },
   ];
   const ALL_MODELS = AVAILABLE_MODELS.flatMap((g) => g.models);
 

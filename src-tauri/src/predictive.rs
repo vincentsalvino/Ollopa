@@ -50,7 +50,7 @@ pub fn generate_suggestions(
     let mut suggestions: Vec<PredictiveSuggestion> = Vec::new();
 
     let summaries = crate::second_brain::list_summaries(project_path);
-    let decisions = crate::second_brain::list_decisions(project_path);
+    let _decisions = crate::second_brain::list_decisions(project_path);
 
     // Suggest related files based on co-modification history
     if let Some(file) = current_file {
