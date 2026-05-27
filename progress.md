@@ -855,126 +855,401 @@ npx vite build    -> 91 modules transformed, clean build in ~1.5s
 
 ## Post-Stabilization Upgrade — Advanced Systems Expansion
 
+### Core Philosophy Alignment
+
+- [x] Product direction: **Visual AI Workspace Operating System** (NOT another chatbot app)
+- [x] Differentiation: **persistent workspace intelligence + visual cognition**
+- [x] Every feature answers: "Does this improve engineering cognition, clarity, memory, or workflow intelligence?"
+
+---
+
+### Pre-Upgrade Prerequisites (All Verified)
+
+- [x] Runtime stability — malformed JSON recovery, idle timeouts, consecutive error resilience
+- [x] Session reliability — atomic snapshot writes, monotonic timestamps, crash recovery
+- [x] Event consistency — backend + frontend deduplication, bounded history
+- [x] Token optimization — context deduplication, rolling summaries, budget tracking
+- [x] Frontend stability — ErrorBoundary (app + per-entry), timeline virtualization, React.memo
+- [x] Workspace UX polish — rounded corners, hover effects, transitions, content overflow handling
+
+---
+
 ### Upgrade Phase A — Second-Brain Evolution
 
-**Status: COMPLETE**
+**Status: COMPLETE** | Priority 1
 
-#### What Was Built
+**Goal:** Transform memory from session history into persistent engineering intelligence.
+
+#### Semantic Memory
 - [x] TF-IDF based embedding vectors (`EmbeddingVector` struct) for semantic similarity
 - [x] Cosine similarity search engine (`semantic_search`) with recency boost
 - [x] Vocabulary builder from indexed content (`build_vocabulary`)
 - [x] TF-IDF vector computation per document (`compute_tfidf`)
+- [x] Similarity search with configurable result limits
+- [x] Memory ranking by relevance score + recency
+- [x] Persistent embedding storage in `~/.ollopa/workspace-brain/embeddings/`
+
+#### Architectural Decision Memory
+- [x] Decision records (ADR): title, context, decision, rationale, tags, status
 - [x] Decision query engine with relevance ranking (`query_decisions`)
 - [x] Related decision detection via tag overlap
+- [x] Decision status lifecycle: Active → Superseded → Deprecated
+- [x] Supports queries like "Why was X removed?" / "Why did architecture change?"
+- [x] Persistent storage in `~/.ollopa/workspace-brain/decisions/`
+
+#### Repository Intelligence
+- [x] Hot file detection from session modification history
+- [x] Architecture pattern extraction from decisions and file frequency
+- [x] Module relationship tracking via import analysis
+- [x] File co-modification pattern tracking across sessions
+
+#### Knowledge Compression
 - [x] Knowledge snapshot system (`KnowledgeSnapshot`) with layered compression
 - [x] Three knowledge layers: decisions, summaries, architecture
 - [x] Full-layer snapshots combining all three
-- [x] Hot file detection from session history
-- [x] Architecture pattern extraction from decisions and file frequency
+- [x] Rolling summary compression (weekly digests) via token_optimizer
+- [x] Compressed context generation (`get_compressed_context`) for prompt injection
+- [x] Avoids massive raw history replay — priority-ordered injection
+- [x] Persistent snapshot storage in `~/.ollopa/workspace-brain/snapshots/`
+
+#### Storage Structure
+- [x] `~/.ollopa/workspace-brain/semantic/` — semantic index
+- [x] `~/.ollopa/workspace-brain/summaries/` — session summaries
+- [x] `~/.ollopa/workspace-brain/decisions/` — architectural decisions
+- [x] `~/.ollopa/workspace-brain/embeddings/` — TF-IDF embeddings
+- [x] `~/.ollopa/workspace-brain/snapshots/` — knowledge snapshots
+
+#### Enhanced Stats
 - [x] Enhanced brain stats (`EnhancedBrainStats`) with embedding/snapshot counts
 - [x] Semantic coverage tracking across index entries
-- [x] Persistent snapshot storage in `~/.ollopa/workspace-brain/snapshots/`
-- [x] Persistent embedding storage in `~/.ollopa/workspace-brain/embeddings/`
+- [x] Oldest memory age tracking
+
+#### Backend Integration
 - [x] 6 new Tauri commands: `brain_build_embeddings`, `brain_semantic_search`, `brain_query_decisions`, `brain_build_snapshot`, `brain_list_snapshots`, `brain_enhanced_stats`
-- [x] Frontend types: `SimilarityResult`, `KnowledgeSnapshot`, `DecisionQueryResult`, `EnhancedBrainStats`
+
+#### Frontend Integration
+- [x] Types: `SimilarityResult`, `KnowledgeSnapshot`, `DecisionQueryResult`, `EnhancedBrainStats`
+- [x] BrainPanel with Overview, Search, Decisions, and Summaries tabs
+- [x] Brain search modal (Ctrl+K)
+
+#### Success Criteria
+- [x] Workspace remembers engineering context across sessions
+- [x] Semantic retrieval finds relevant content by meaning, not just keywords
+- [x] Architectural decisions are queryable by natural language
 
 ---
 
 ### Upgrade Phase B — Visual Intelligence Systems
 
-**Status: COMPLETE**
+**Status: COMPLETE** | Priority 2
 
-#### What Was Built
+**Goal:** Transform the workspace into visual engineering cognition.
+
+#### Architecture Graphs
+- [x] Architecture graph builder (`build_architecture_graph`) — extracts components from file paths, links decisions via tags
+- [x] Service/module relationship visualization
+- [x] System boundary detection
+
+#### Workflow DAGs
+- [x] Workflow DAG builder (`build_workflow_dag`) — directed acyclic graph from session key_actions
+- [x] DAGView component with BFS-based layer assignment, top-to-bottom flow, arrow markers
+- [x] Execution chain visualization
+
+#### Session Timelines
+- [x] Session timeline builder (`build_session_timeline`) — reconstructs from persisted snapshots
+- [x] SessionTimelineView component with vertical dot-and-rail pattern
+- [x] Event icons, duration badges, expandable detail panels
+- [x] Decisions, edits, approvals, debugging flows visualized
+
+#### Repository Relationship Graphs
+- [x] Relationship graph builder (`build_relationship_graph`) — links sessions → files → tags
+- [x] File dependency graph builder (`build_dependency_graph`) — co-modification relationships weighted by frequency
+- [x] ForceGraph component with physics simulation (repulsion, attraction, damping)
+
+#### Memory Graphs
 - [x] Memory graph builder (`build_memory_graph`) — concept nodes, co-occurrence edges, cluster detection
 - [x] Concept extraction from recurring tags across summaries and decisions
 - [x] Co-occurrence edge detection between concepts
 - [x] Debugging cluster detection (tags containing debug/fix/error/bug)
 - [x] Architecture cluster detection (tags containing arch/design/refactor/migration)
+
+#### Performance (Lightweight Rule)
 - [x] Lazy/progressive graph loading (`build_lazy_graph`) — BFS from root with depth/node limits
-- [x] Supports relationship, architecture, and memory graph types
+- [x] Selective rendering — supports relationship, architecture, and memory graph types
+- [x] Pure SVG rendering — no heavy graph library dependency
+- [x] Custom physics simulation with 120-iteration convergence
+- [x] Auto-generation from existing brain data (no manual entry needed)
+
+#### Frontend Integration
+- [x] GraphPanel with 5-tab navigation: Relationships, Architecture, Workflow DAG, Dependencies, Timeline
+- [x] ForceGraph.tsx — interactive hover/click, node coloring by type, edge highlighting
+- [x] DAGView.tsx — session/step node styling with status indicators
+- [x] SessionTimelineView.tsx — drill-down detail panels
+- [x] NodeDetail.tsx — slide-in metadata panel
+- [x] Auto-sizing via ResizeObserver, graph toolbar with refresh and save
+- [x] Session picker for timeline, legend, stats bar
 - [x] Enhanced visual stats (`EnhancedVisualStats`) with memory graph metrics
+
+#### Backend Integration
 - [x] 3 new Tauri commands: `visual_build_memory_graph`, `visual_build_lazy_graph`, `visual_enhanced_stats`
-- [x] Frontend types: `EnhancedVisualStats`
+
+#### Success Criteria
+- [x] Users can visually explore architecture
+- [x] Users can navigate project intelligence
+- [x] Users can inspect engineering history
+- [x] Users can understand relationships instantly
 
 ---
 
 ### Upgrade Phase C — Intelligent Orchestration
 
-**Status: COMPLETE**
+**Status: COMPLETE** | Priority 3
 
-#### What Was Built
+**Goal:** Build smarter task-aware execution systems.
+
+#### Task-Aware Routing
 - [x] Task type detection from prompt text (`detect_task_type`) — 10 task types
-- [x] Keyword pattern matching for: debugging, code generation, analysis, search, refactoring, documentation, architecture, testing, quick questions
+- [x] Keyword pattern matching: debugging, code_generation, analysis, search, refactoring, documentation, architecture, testing, quick_question, general
 - [x] Smart routing (`smart_route`) — task-aware provider/model selection
+- [x] Maps: Debugging → reasoning model, Large edits → Claude, Quick analysis → flash model, Search → cheap model
 - [x] Quality tier mapping: high (debugging/architecture), medium (refactoring/testing), low (search/docs)
-- [x] Budget-aware execution check (`check_budget`) with cost estimation
+
+#### Budget-Aware Execution
+- [x] Budget-aware execution check (`check_budget`) with cost estimation per model
+- [x] Token budgeting integration with monthly USD limits
+- [x] Provider cost awareness via model pricing configs
+- [x] Dynamic escalation: cheap model first, reasoning escalation only when needed
+
+#### Latency-Aware Routing
 - [x] Latency-aware routing (`route_by_latency`) — picks fastest healthy provider
-- [x] Workflow routing templates (`get_workflow_routes`) — 7 predefined step-action routes
-- [x] Enhanced router stats (`EnhancedRouterStats`) with task distribution and budget status
 - [x] Health-aware filtering (excludes down providers)
+- [x] Provider health tracking: latency averaging, error rate, request counts
+
+#### Workflow Routing
+- [x] Workflow routing templates (`get_workflow_routes`) — 7 predefined step-action routes
+- [x] Specialized workflow support with model tier recommendations
+- [x] Max token allocation per workflow step
+
+#### Design Principles (Kept Simple)
+- [x] Routing is understandable — task type detection uses explicit keyword patterns
+- [x] Routing is deterministic — same input produces same routing decision
+- [x] Routing is inspectable — `RoutingDecision` records reason, cost, fallback status
+
+#### Backend Integration
 - [x] 6 new Tauri commands: `router_smart_route`, `router_detect_task_type`, `router_check_budget`, `router_route_by_latency`, `router_workflow_routes`, `router_enhanced_stats`
-- [x] Frontend types: `TaskTypeLabel`, `TaskRouteRecommendation`, `BudgetCheck`, `WorkflowRoute`, `EnhancedRouterStats`
+
+#### Frontend Integration
+- [x] Types: `TaskTypeLabel`, `TaskRouteRecommendation`, `BudgetCheck`, `WorkflowRoute`, `EnhancedRouterStats`
+- [x] Router tab in AgentPanel with strategy config, live route testing, stats + provider health
+
+#### Success Criteria
+- [x] System routes tasks to appropriate models (smarter)
+- [x] Budget tracking prevents cost overruns (cheaper)
+- [x] Latency-aware routing prioritizes responsiveness (faster)
+- [x] Routing remains understandable, deterministic, inspectable (not overcomplicated)
 
 ---
 
 ### Upgrade Phase D — Lightweight Multi-Agent Systems
 
-**Status: COMPLETE**
+**Status: COMPLETE** | Priority 4
 
-#### What Was Built
+**Goal:** Support scoped collaborative workflows (NOT autonomous agent swarms).
+
+#### Agent Types
+- [x] 8 built-in agents: Coder, Reviewer, Architect, Tester, Documenter, Hermes Reasoner, OpenClaw Coder, Hermes Analyst
+- [x] Custom agent support with role/capabilities/system prompt
+- [x] Agents behave as specialized workspace assistants (not autonomous workers)
+
+#### Delegation
 - [x] Scoped delegation system (`Delegation` struct) — bounded subtasks with depth tracking
 - [x] Delegation limits enforcement (max per task, max recursion depth)
 - [x] Delegation completion with summary results
-- [x] Agent memory isolation (`AgentMemory`) — per-agent context with token budgets
+- [x] Isolated contexts per delegation
+
+#### Agent Memory Isolation
+- [x] Per-agent memory isolation (`AgentMemory`) — separate context per agent
+- [x] Token budget per agent memory (prevents context explosion)
 - [x] FIFO eviction when agent memory exceeds token limit
 - [x] Agent memory clear operation
-- [x] Agent execution summarization (`AgentSummary`) — findings, recommendations, metrics
-- [x] Safety configuration (`SafetyConfig`) — recursion limits, retry ceilings, budget ceilings, inactivity timeout, concurrent agent limits
+- [x] No giant shared contexts or recursive contamination
+
+#### Agent Summarization
+- [x] Agent execution summarization (`AgentSummary`) — findings, recommendations, files affected, metrics
+- [x] Subagents return summaries, not entire internal histories
+- [x] Token usage tracking per summarization
+
+#### Safety (Critical)
+- [x] Recursion limits — configurable max recursion depth
+- [x] Retry ceilings — configurable max retries per step
+- [x] Budget ceilings — configurable max budget in USD
+- [x] Inactivity detection — configurable timeout
+- [x] Max concurrent agents limit
+- [x] Max delegations per task limit
 - [x] Workflow safety check (`check_workflow_safety`) — circular dependency detection, concurrent agent limits, delegation depth validation
-- [x] Enhanced agent stats (`EnhancedAgentStats`) — delegation counts, memory usage, safety config
-- [x] Persistent storage: `~/.ollopa/workspace-brain/agents/delegations/`, `memory/`, `safety.json`
+- [x] Safety config persistence in `~/.ollopa/workspace-brain/agents/safety.json`
+
+#### Workflow Orchestration
+- [x] DAG-based workflows with dependency tracking
+- [x] Step advancement with status propagation
+- [x] Workflow templates: "Code Review" (3 steps), "Feature Dev" (5 steps)
+- [x] Autonomous workflow execution via API client
+
+#### Backend Integration
 - [x] 11 new Tauri commands: `agent_create_delegation`, `agent_complete_delegation`, `agent_list_delegations`, `agent_get_memory`, `agent_add_context`, `agent_clear_memory`, `agent_summarize`, `agent_safety_config`, `agent_save_safety_config`, `agent_check_safety`, `agent_enhanced_stats`
-- [x] Frontend types: `Delegation`, `AgentMemory`, `AgentSummary`, `SafetyConfig`, `SafetyCheckResult`, `EnhancedAgentStats`
+- [x] Persistent storage: `~/.ollopa/workspace-brain/agents/delegations/`, `memory/`, `safety.json`
+
+#### Frontend Integration
+- [x] Types: `Delegation`, `AgentMemory`, `AgentSummary`, `SafetyConfig`, `SafetyCheckResult`, `EnhancedAgentStats`
+- [x] AgentPanel with 5 tabs: Agents, Workflows, Tasks, Providers, Router
+
+#### Success Criteria
+- [x] Multi-agent workflows remain understandable
+- [x] Multi-agent workflows remain controllable
+- [x] Multi-agent workflows remain token-efficient
 
 ---
 
 ### Upgrade Phase E — Workspace Intelligence
 
-**Status: COMPLETE**
+**Status: COMPLETE** | Priority 5
 
-#### What Was Built
+**Goal:** Build deeper repository cognition — engineering situational awareness.
+
+#### Repository Mapping
 - [x] Comprehensive repo mapping (`build_repo_map`) — module scanning, dependency detection, boundary identification
 - [x] Module info extraction: file counts, line counts, primary language, inter-module dependencies
-- [x] Import analysis for TypeScript/JavaScript (from statements) and Rust (use/mod)
+- [x] Import analysis for TypeScript/JavaScript (`from` statements) and Rust (`use`/`mod`)
 - [x] Architectural boundary detection: Frontend, Backend, Configuration layers
 - [x] Hot file detection from session modification history
-- [x] Change impact analysis (`predict_change_impact`) — co-modification tracking, module mapping, risk classification
-- [x] Regression risk detection (test files, config files)
-- [x] Architectural drift detection (`detect_drift`) — coupling analysis, boundary violations, oversized modules
-- [x] Health score computation with weighted violation scoring
-- [x] Workflow pattern recognition (`detect_workflow_patterns`) — debugging flows, repeated edits, common tools
-- [x] Full workspace intelligence report (`get_workspace_intelligence`) combining all analyses
 - [x] Persistent repo map storage in `~/.ollopa/workspace-brain/intelligence/`
+
+#### Change Impact Analysis
+- [x] Change impact prediction (`predict_change_impact`) — co-modification tracking, module mapping
+- [x] Affected files identification from session history
+- [x] Affected modules mapping via dependency analysis
+- [x] Risk level classification (low / medium / high)
+- [x] Dependency depth tracking
+- [x] Regression risk detection (test files, config files)
+
+#### Architectural Drift Detection
+- [x] Drift detection (`detect_drift`) — coupling analysis, boundary violations, oversized modules
+- [x] Pattern violation detection
+- [x] Coupling growth measurement
+- [x] Health score computation with weighted violation scoring
+- [x] Violation types: coupling, boundary, complexity
+
+#### Workflow Pattern Recognition
+- [x] Workflow pattern recognition (`detect_workflow_patterns`)
+- [x] Repeated debugging flow detection
+- [x] Repeated edit pattern detection
+- [x] Common tool usage pattern detection
+- [x] Pattern frequency and involved files tracking
+
+#### Backend Integration
 - [x] 5 new Tauri commands: `workspace_build_map`, `workspace_predict_impact`, `workspace_detect_drift`, `workspace_detect_patterns`, `workspace_intelligence`
-- [x] Frontend types: `ModuleInfo`, `ArchBoundary`, `HotFile`, `RepoMap`, `ChangeImpact`, `DriftViolation`, `DriftReport`, `WorkflowPatternInfo`, `WorkspaceIntelligence`
+- [x] Full workspace intelligence report (`get_workspace_intelligence`) combining all analyses
+
+#### Frontend Integration
+- [x] Types: `ModuleInfo`, `ArchBoundary`, `HotFile`, `RepoMap`, `ChangeImpact`, `DriftViolation`, `DriftReport`, `WorkflowPatternInfo`, `WorkspaceIntelligence`
 - [x] WorkspacePanel component with 5 tabs: Overview, Modules, Drift, Patterns, Impact
+- [x] Change impact analysis tool with file input
+
+#### Success Criteria
+- [x] Workspace develops engineering situational awareness
+- [x] Repository architecture is continuously understood
+- [x] Change impact is predictable
+- [x] Architectural erosion is detectable
 
 ---
 
 ### Upgrade Phase F — Predictive Workflows
 
-**Status: COMPLETE**
+**Status: COMPLETE** | Priority 6
 
-#### What Was Built
-- [x] Predictive suggestion engine (`generate_suggestions`) — related files, relevant decisions, regression risks, workflow patterns
-- [x] Smart context assembly (`assemble_smart_context`) — combines brain search, decisions, semantic search, drift analysis, workflow hints
-- [x] Workflow recommendation engine (`recommend_workflows`) — testing, debugging, architecture review, implementation strategies
-- [x] Confidence scoring for suggestions and recommendations
-- [x] Full predictive analysis (`get_predictive_analysis`) combining all three systems
+**Goal:** Enable proactive workspace assistance.
+
+#### Predictive Suggestions
+- [x] Predictive suggestion engine (`generate_suggestions`)
+- [x] Related files — co-modification history analysis
+- [x] Likely affected systems — change impact integration
+- [x] Probable regressions — risk level assessment
+- [x] Relevant historical decisions — decision query integration
+- [x] Workflow patterns — recurring pattern detection
+- [x] Confidence scoring for all suggestions
+
+#### Smart Context Assembly
+- [x] Smart context assembly (`assemble_smart_context`)
+- [x] Automatically gathers relevant files from semantic search
+- [x] Includes prior decisions from decision query engine
+- [x] Includes related workflow summaries from brain search
+- [x] Includes architectural context from drift analysis
+- [x] Includes workflow hints from pattern recognition
+- [x] Token-budgeted assembly (respects max_tokens parameter)
+
+#### Workflow Recommendations
+- [x] Workflow recommendation engine (`recommend_workflows`)
+- [x] Testing strategy suggestions (test/coverage/spec triggers)
+- [x] Debugging flow suggestions (bug/fix/debug/error triggers)
+- [x] Architecture review suggestions (refactor/migration/architecture triggers)
+- [x] Implementation strategy suggestions (build/implement/create triggers)
+- [x] Step-by-step workflow plans with token estimates
+
+#### Design Principles (Kept Assistive)
+- [x] Predictions remain assistive — shown as suggestions, not forced actions
+- [x] Predictions remain inspectable — confidence scores, source attribution
+- [x] Predictions remain optional — user chooses whether to act on them
+
+#### Backend Integration
 - [x] New Rust module: `predictive.rs`
 - [x] 4 new Tauri commands: `predictive_suggestions`, `predictive_smart_context`, `predictive_recommendations`, `predictive_analysis`
-- [x] Frontend types: `PredictiveSuggestion`, `SmartContext`, `WorkflowRecommendation`, `PredictiveAnalysis`
-- [x] PredictivePanel component with input fields and 3 tabs: Suggestions, Context, Workflows
+- [x] Full predictive analysis (`get_predictive_analysis`) combining all three systems
+
+#### Frontend Integration
+- [x] Types: `PredictiveSuggestion`, `SmartContext`, `WorkflowRecommendation`, `PredictiveAnalysis`
+- [x] PredictivePanel component with prompt/file inputs and 3 tabs: Suggestions, Context, Workflows
+
+#### Success Criteria
+- [x] Users receive proactive suggestions based on current context
+- [x] Context assembly reduces manual information gathering
+- [x] Workflow recommendations guide engineering best practices
+
+---
+
+### Optional Future Systems (Low Priority — Not Yet Implemented)
+
+#### Local Embeddings
+- [ ] Switch from TF-IDF to local embedding models (e.g., all-MiniLM-L6-v2) for higher-quality semantic retrieval
+- [ ] Low-cost indexing with on-device inference
+
+#### Git Intelligence (Advanced)
+- [x] Basic git info: branch, remote, ahead/behind, staged/modified/untracked, recent commits, contributors (`git_intelligence.rs`)
+- [ ] Commit relationship analysis
+- [ ] Branch intelligence
+- [ ] Historical debugging graphs
+
+#### MCP Integrations
+- [ ] External tool support via Model Context Protocol
+- [ ] IDE system integrations
+- [ ] Automation system integrations
+
+#### Plugin Ecosystem
+- [ ] Custom visualization plugins
+- [ ] Workflow plugins
+- [ ] Retrieval plugins
+
+---
+
+### What Was Avoided (By Design)
+
+- [x] NOT a distributed agent infrastructure
+- [x] NOT an autonomous swarm platform
+- [x] NOT an infrastructure-heavy AI platform
+- [x] NOT an overabstracted orchestration engine
+- [x] Routing is deterministic, not opaque
+- [x] Agents are scoped assistants, not autonomous workers
+- [x] Predictions are assistive, not autonomous
+- [x] Visual systems use lazy loading, not giant live graphs
 
 ---
 
@@ -982,10 +1257,31 @@ npx vite build    -> 91 modules transformed, clean build in ~1.5s
 
 | Phase | Backend Changes | New Commands | Frontend Types | Components |
 |-------|----------------|--------------|----------------|------------|
-| A — Second-Brain Evolution | `second_brain.rs` extended | 6 | 4 | — |
-| B — Visual Intelligence | `visual_memory.rs` extended | 3 | 1 | — |
-| C — Intelligent Orchestration | `provider_router.rs` extended | 6 | 5 | — |
-| D — Multi-Agent Systems | `multi_agent.rs` extended | 11 | 6 | — |
-| E — Workspace Intelligence | `repo_intelligence.rs` extended | 5 | 9 | WorkspacePanel |
-| F — Predictive Workflows | New `predictive.rs` module | 4 | 4 | PredictivePanel |
-| **Total** | **6 modules modified/created** | **35 new commands** | **29 new types** | **2 new panels** |
+| A — Second-Brain Evolution | `second_brain.rs` extended | 6 | 4 | BrainPanel, BrainSearchModal |
+| B — Visual Intelligence | `visual_memory.rs` extended | 3 | 1 | GraphPanel (5 views) |
+| C — Intelligent Orchestration | `provider_router.rs` extended | 6 | 5 | Router tab in AgentPanel |
+| D — Multi-Agent Systems | `multi_agent.rs` extended | 11 | 6 | AgentPanel (5 tabs) |
+| E — Workspace Intelligence | `repo_intelligence.rs` extended | 5 | 9 | WorkspacePanel (5 tabs) |
+| F — Predictive Workflows | New `predictive.rs` module | 4 | 4 | PredictivePanel (3 tabs) |
+| **Total** | **6 modules modified/created** | **35 new commands** | **29 new types** | **5 panels / 23+ tabs** |
+
+---
+
+### Long-Term Product Vision
+
+The workspace should eventually feel like:
+
+> An intelligent engineering operating system that remembers, visualizes, assists, organizes, explains, and contextualizes — rather than just answering prompts.
+
+### Final Engineering Principle
+
+Every feature must answer:
+
+> Does this improve engineering cognition, clarity, memory, or workflow intelligence?
+
+The most valuable long-term investments are:
+- [x] Visual intelligence
+- [x] Persistent memory
+- [x] Workflow clarity
+- [x] Architectural understanding
+- [x] Token-efficient orchestration
