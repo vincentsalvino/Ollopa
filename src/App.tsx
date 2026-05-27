@@ -17,6 +17,8 @@ import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
 import BrainSearchModal from "./components/memory/BrainSearchModal";
+import WorkspacePanel from "./components/workspace/WorkspacePanel";
+import PredictivePanel from "./components/predictive/PredictivePanel";
 import type { AppEvent, CostData, ToastMessage, Theme, ToolUseData, PersistedEvent, ConversationSearchResult, TransformSettings, TransformResult, WebSearchSettings, WebSearchResponse, ApiKeyInfo, PromptTemplate, ProviderDef } from "./types";
 import { SLASH_COMMANDS, EMPTY_COST } from "./types";
 
@@ -69,6 +71,12 @@ function App() {
 
   // Brain search (Ctrl+K)
   const [showBrainSearch, setShowBrainSearch] = useState(false);
+
+  // Workspace Intelligence panel (Phase E)
+  const [showWorkspacePanel, setShowWorkspacePanel] = useState(false);
+
+  // Predictive Workflows panel (Phase F)
+  const [showPredictivePanel, setShowPredictivePanel] = useState(false);
 
   // Settings popover
   const [showSettingsPopover, setShowSettingsPopover] = useState(false);
@@ -997,6 +1005,12 @@ function App() {
                 <button className="popover-item" onClick={() => { setShowAgentPanel(true); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-robot" /><span>Agents</span>
                 </button>
+                <button className="popover-item" onClick={() => { setShowWorkspacePanel(true); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-building" /><span>Workspace</span>
+                </button>
+                <button className="popover-item" onClick={() => { setShowPredictivePanel(true); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-wand-magic-sparkles" /><span>Predictive</span>
+                </button>
                 <button className="popover-item" onClick={() => { handleOpenSystemPrompt(); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-terminal" /><span>Prompt</span>
                 </button>
@@ -1267,6 +1281,8 @@ function App() {
       <TokenPanel visible={showTokenPanel} onClose={() => setShowTokenPanel(false)} onToast={addToast} projectPath={projectPath} />
       <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} />
       <BrainSearchModal visible={showBrainSearch} onClose={() => setShowBrainSearch(false)} projectPath={projectPath} />
+      <WorkspacePanel visible={showWorkspacePanel} onClose={() => setShowWorkspacePanel(false)} onToast={addToast} projectPath={projectPath} />
+      <PredictivePanel visible={showPredictivePanel} onClose={() => setShowPredictivePanel(false)} onToast={addToast} projectPath={projectPath} />
       <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

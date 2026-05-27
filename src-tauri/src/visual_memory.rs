@@ -702,3 +702,270 @@ fn split_action(action: &str) -> (String, String) {
         (action.to_string(), String::new())
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADE PHASE B — Visual Intelligence Systems
+// Memory graphs, enhanced architecture, lazy expansion
+// ═══════════════════════════════════════════════════════════════
+
+/// Build a memory graph showing linked concepts, recurring patterns, and clusters
+pub fn build_memory_graph(project_path: Option<&str>) -> Graph {
+    let summaries = crate::second_brain::list_summaries(project_path);
+    let decisions = crate::second_brain::list_decisions(project_path);
+
+    let mut nodes: Vec<GraphNode> = Vec::new();
+    let mut edges: Vec<GraphEdge> = Vec::new();
+    let mut concept_map: HashMap<String, String> = HashMap::new();
+
+    // Extract concepts from tags across all summaries and decisions
+    let mut tag_freq: HashMap<String, usize> = HashMap::new();
+    for s in &summaries {
+        for t in &s.tags {
+            *tag_freq.entry(t.clone()).or_insert(0) += 1;
+        }
+    }
+    for d in &decisions {
+        for t in &d.tags {
+            *tag_freq.entry(t.clone()).or_insert(0) += 1;
+        }
+    }
+
+    // Create concept nodes for recurring tags (>= 2 occurrences)
+    for (tag, freq) in &tag_freq {
+        if *freq >= 2 {
+            let node_id = format!("concept-{}", concept_map.len());
+            concept_map.insert(tag.clone(), node_id.clone());
+            nodes.push(GraphNode {
+                id: node_id,
+                label: tag.clone(),
+                node_type: "concept".to_string(),
+                metadata: {
+                    let mut m = HashMap::new();
+                    m.insert("frequency".to_string(), freq.to_string());
+                    m.insert("type".to_string(), "recurring_pattern".to_string());
+                    m
+                },
+            });
+        }
+    }
+
+    // Build co-occurrence edges between concepts
+    let all_tag_sets: Vec<Vec<String>> = summaries
+        .iter()
+        .map(|s| s.tags.clone())
+        .chain(decisions.iter().map(|d| d.tags.clone()))
+        .collect();
+
+    let mut cooccur: HashMap<(String, String), usize> = HashMap::new();
+    for tags in &all_tag_sets {
+        for (i, t1) in tags.iter().enumerate() {
+            for t2 in tags.iter().skip(i + 1) {
+                if concept_map.contains_key(t1) && concept_map.contains_key(t2) {
+                    let key = if t1 < t2 {
+                        (t1.clone(), t2.clone())
+                    } else {
+                        (t2.clone(), t1.clone())
+                    };
+                    *cooccur.entry(key).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    for ((t1, t2), weight) in &cooccur {
+        if let (Some(id1), Some(id2)) = (concept_map.get(t1), concept_map.get(t2)) {
+            edges.push(GraphEdge {
+                source: id1.clone(),
+                target: id2.clone(),
+                label: format!("co-occurs ({}x)", weight),
+                edge_type: "co_occurrence".to_string(),
+                weight: *weight as f64,
+            });
+        }
+    }
+
+    // Add debugging cluster nodes
+    let debug_tags: Vec<&String> = tag_freq
+        .keys()
+        .filter(|t| {
+            let tl = t.to_lowercase();
+            tl.contains("debug") || tl.contains("fix") || tl.contains("error") || tl.contains("bug")
+        })
+        .collect();
+
+    if !debug_tags.is_empty() {
+        let cluster_id = "cluster-debugging".to_string();
+        nodes.push(GraphNode {
+            id: cluster_id.clone(),
+            label: "Debugging Cluster".to_string(),
+            node_type: "cluster".to_string(),
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("count".to_string(), debug_tags.len().to_string());
+                m
+            },
+        });
+        for tag in &debug_tags {
+            if let Some(cid) = concept_map.get(*tag) {
+                edges.push(GraphEdge {
+                    source: cluster_id.clone(),
+                    target: cid.clone(),
+                    label: "contains".to_string(),
+                    edge_type: "cluster_member".to_string(),
+                    weight: 1.0,
+                });
+            }
+        }
+    }
+
+    // Add architecture cluster
+    let arch_tags: Vec<&String> = tag_freq
+        .keys()
+        .filter(|t| {
+            let tl = t.to_lowercase();
+            tl.contains("arch") || tl.contains("design") || tl.contains("refactor")
+                || tl.contains("migration") || tl.contains("struct")
+        })
+        .collect();
+
+    if !arch_tags.is_empty() {
+        let cluster_id = "cluster-architecture".to_string();
+        nodes.push(GraphNode {
+            id: cluster_id.clone(),
+            label: "Architecture Cluster".to_string(),
+            node_type: "cluster".to_string(),
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("count".to_string(), arch_tags.len().to_string());
+                m
+            },
+        });
+        for tag in &arch_tags {
+            if let Some(cid) = concept_map.get(*tag) {
+                edges.push(GraphEdge {
+                    source: cluster_id.clone(),
+                    target: cid.clone(),
+                    label: "contains".to_string(),
+                    edge_type: "cluster_member".to_string(),
+                    weight: 1.0,
+                });
+            }
+        }
+    }
+
+    Graph {
+        id: format!("mem-{}", current_timestamp_ms()),
+        title: "Memory Graph".to_string(),
+        graph_type: "memory".to_string(),
+        nodes,
+        edges,
+        created_at: current_timestamp_ms(),
+        project_path: project_path.map(|s| s.to_string()),
+    }
+}
+
+/// Build a paginated/lazy graph — returns only the requested depth from a root node
+pub fn build_lazy_graph(
+    graph_type: &str,
+    project_path: Option<&str>,
+    root_node: Option<&str>,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Graph {
+    let full_graph = match graph_type {
+        "relationship" => build_relationship_graph(project_path),
+        "architecture" => build_architecture_graph(project_path),
+        "memory" => build_memory_graph(project_path),
+        _ => build_relationship_graph(project_path),
+    };
+
+    if root_node.is_none() || full_graph.nodes.len() <= max_nodes {
+        // If no root or graph is small enough, return as-is (capped)
+        let mut graph = full_graph;
+        graph.nodes.truncate(max_nodes);
+        let node_ids: Vec<String> = graph.nodes.iter().map(|n| n.id.clone()).collect();
+        graph.edges.retain(|e| node_ids.contains(&e.source) && node_ids.contains(&e.target));
+        return graph;
+    }
+
+    let root = root_node.unwrap();
+
+    // BFS from root up to max_depth
+    let mut visited: Vec<String> = vec![root.to_string()];
+    let mut frontier: Vec<String> = vec![root.to_string()];
+
+    for _ in 0..max_depth {
+        let mut next_frontier: Vec<String> = Vec::new();
+        for node_id in &frontier {
+            for edge in &full_graph.edges {
+                let neighbor = if edge.source == *node_id {
+                    &edge.target
+                } else if edge.target == *node_id {
+                    &edge.source
+                } else {
+                    continue;
+                };
+                if !visited.contains(neighbor) {
+                    visited.push(neighbor.clone());
+                    next_frontier.push(neighbor.clone());
+                    if visited.len() >= max_nodes {
+                        break;
+                    }
+                }
+            }
+            if visited.len() >= max_nodes {
+                break;
+            }
+        }
+        frontier = next_frontier;
+        if frontier.is_empty() || visited.len() >= max_nodes {
+            break;
+        }
+    }
+
+    let nodes: Vec<GraphNode> = full_graph
+        .nodes
+        .into_iter()
+        .filter(|n| visited.contains(&n.id))
+        .collect();
+    let edges: Vec<GraphEdge> = full_graph
+        .edges
+        .into_iter()
+        .filter(|e| visited.contains(&e.source) && visited.contains(&e.target))
+        .collect();
+
+    Graph {
+        id: format!("lazy-{}", current_timestamp_ms()),
+        title: format!("Lazy {} (from {})", graph_type, root),
+        graph_type: format!("{}_lazy", graph_type),
+        nodes,
+        edges,
+        created_at: current_timestamp_ms(),
+        project_path: project_path.map(|s| s.to_string()),
+    }
+}
+
+/// Enhanced visual stats with memory graph info
+#[derive(Debug, Clone, Serialize)]
+pub struct EnhancedVisualStats {
+    pub base: VisualStats,
+    pub memory_graph_nodes: usize,
+    pub memory_graph_edges: usize,
+    pub concept_count: usize,
+    pub cluster_count: usize,
+}
+
+pub fn get_enhanced_visual_stats(project_path: Option<&str>) -> EnhancedVisualStats {
+    let base = get_visual_stats();
+    let mem_graph = build_memory_graph(project_path);
+    let concept_count = mem_graph.nodes.iter().filter(|n| n.node_type == "concept").count();
+    let cluster_count = mem_graph.nodes.iter().filter(|n| n.node_type == "cluster").count();
+
+    EnhancedVisualStats {
+        base,
+        memory_graph_nodes: mem_graph.nodes.len(),
+        memory_graph_edges: mem_graph.edges.len(),
+        concept_count,
+        cluster_count,
+    }
+}

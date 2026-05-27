@@ -669,3 +669,270 @@ export interface ConversationSearchResult {
   snippet: string;
   score: number;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADE PHASES A-F — Advanced System Types
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════ Phase A — Second-Brain Evolution ═══════
+
+export interface SimilarityResult {
+  source_id: string;
+  source_type: string;
+  similarity: number;
+  snippet: string;
+}
+
+export interface KnowledgeSnapshot {
+  id: string;
+  created_at: number;
+  project_path: string | null;
+  layer: string;
+  content: string;
+  token_count: number;
+  source_count: number;
+  key_themes: string[];
+}
+
+export interface DecisionQueryResult {
+  decision: DecisionData;
+  relevance: number;
+  related_decisions: string[];
+}
+
+export interface EnhancedBrainStats {
+  base: BrainStats;
+  total_embeddings: number;
+  total_snapshots: number;
+  semantic_coverage: number;
+  oldest_memory_days: number;
+  knowledge_layers: string[];
+}
+
+// ═══════ Phase B — Visual Intelligence ═══════
+
+export interface EnhancedVisualStats {
+  base: VisualStats;
+  memory_graph_nodes: number;
+  memory_graph_edges: number;
+  concept_count: number;
+  cluster_count: number;
+}
+
+// ═══════ Phase C — Intelligent Orchestration ═══════
+
+export type TaskTypeLabel =
+  | "debugging"
+  | "code_generation"
+  | "analysis"
+  | "search"
+  | "refactoring"
+  | "documentation"
+  | "architecture"
+  | "testing"
+  | "quick_question"
+  | "general";
+
+export interface TaskRouteRecommendation {
+  task_type: string;
+  task_label: TaskTypeLabel;
+  recommended_provider: string;
+  recommended_model: string;
+  reason: string;
+  estimated_cost: number;
+  use_reasoning: boolean;
+  budget_ok: boolean;
+}
+
+export interface BudgetCheck {
+  within_budget: boolean;
+  budget_remaining_usd: number;
+  estimated_cost_usd: number;
+  suggestion: string;
+}
+
+export interface WorkflowRoute {
+  step_action: string;
+  recommended_task_type: string;
+  recommended_model_tier: string;
+  max_tokens: number;
+}
+
+export interface EnhancedRouterStats {
+  base: RouterStats;
+  task_type_distribution: Record<string, number>;
+  avg_routing_cost: number;
+  budget_status: BudgetCheck;
+  workflow_routes_count: number;
+}
+
+// ═══════ Phase D — Multi-Agent Systems ═══════
+
+export interface Delegation {
+  id: string;
+  parent_task_id: string | null;
+  agent_id: string;
+  scope: string;
+  context: string;
+  max_tokens: number;
+  max_retries: number;
+  timeout_ms: number;
+  status: string;
+  result_summary: string | null;
+  created_at: number;
+  completed_at: number | null;
+  depth: number;
+}
+
+export interface AgentMemory {
+  agent_id: string;
+  context_entries: string[];
+  total_tokens: number;
+  max_tokens: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AgentSummary {
+  agent_id: string;
+  agent_name: string;
+  task_description: string;
+  findings: string[];
+  recommendations: string[];
+  files_affected: string[];
+  token_usage: number;
+  duration_ms: number;
+  success: boolean;
+}
+
+export interface SafetyConfig {
+  max_recursion_depth: number;
+  max_retries_per_step: number;
+  max_budget_usd: number;
+  inactivity_timeout_ms: number;
+  max_concurrent_agents: number;
+  max_delegations_per_task: number;
+}
+
+export interface SafetyCheckResult {
+  safe: boolean;
+  violations: string[];
+  warnings: string[];
+}
+
+export interface EnhancedAgentStats {
+  base: AgentStats;
+  total_delegations: number;
+  active_delegations: number;
+  agents_with_memory: number;
+  total_memory_tokens: number;
+  safety_config: SafetyConfig;
+}
+
+// ═══════ Phase E — Workspace Intelligence ═══════
+
+export interface ModuleInfo {
+  name: string;
+  path: string;
+  file_count: number;
+  line_count: number;
+  language: string;
+  dependencies: string[];
+}
+
+export interface ArchBoundary {
+  name: string;
+  boundary_type: string;
+  modules: string[];
+}
+
+export interface HotFile {
+  path: string;
+  modification_count: number;
+  last_modified: number;
+}
+
+export interface RepoMap {
+  project_path: string;
+  modules: ModuleInfo[];
+  boundaries: ArchBoundary[];
+  hot_files: HotFile[];
+  created_at: number;
+}
+
+export interface ChangeImpact {
+  target_file: string;
+  affected_files: string[];
+  affected_modules: string[];
+  risk_level: string;
+  dependency_depth: number;
+  regression_risk: string[];
+}
+
+export interface DriftViolation {
+  violation_type: string;
+  description: string;
+  severity: string;
+  affected_files: string[];
+}
+
+export interface DriftReport {
+  project_path: string;
+  violations: DriftViolation[];
+  coupling_score: number;
+  health_score: number;
+  created_at: number;
+}
+
+export interface WorkflowPatternInfo {
+  pattern_type: string;
+  description: string;
+  frequency: number;
+  example_sessions: string[];
+  files_involved: string[];
+}
+
+export interface WorkspaceIntelligence {
+  repo_map: RepoMap;
+  drift_report: DriftReport;
+  workflow_patterns: WorkflowPatternInfo[];
+  hot_files_count: number;
+  total_modules: number;
+  health_score: number;
+}
+
+// ═══════ Phase F — Predictive Workflows ═══════
+
+export interface PredictiveSuggestion {
+  suggestion_type: string;
+  title: string;
+  description: string;
+  confidence: number;
+  related_files: string[];
+  related_decisions: string[];
+  action: string;
+}
+
+export interface SmartContext {
+  relevant_files: string[];
+  prior_decisions: string[];
+  related_summaries: string[];
+  architectural_context: string;
+  workflow_hints: string[];
+  total_tokens: number;
+}
+
+export interface WorkflowRecommendation {
+  recommendation_type: string;
+  title: string;
+  description: string;
+  confidence: number;
+  steps: string[];
+  estimated_tokens: number;
+}
+
+export interface PredictiveAnalysis {
+  suggestions: PredictiveSuggestion[];
+  smart_context: SmartContext;
+  recommendations: WorkflowRecommendation[];
+}

@@ -850,3 +850,142 @@ npx vite build    -> 91 modules transformed, clean build in ~1.5s
 | Performance | useMemo for derived computations | Avoids unnecessary work |
 | Token efficiency | Context deduplication | Prevents redundant context injection |
 | Visual polish | Rounded corners, shadows, transitions | Premium feel |
+
+---
+
+## Post-Stabilization Upgrade — Advanced Systems Expansion
+
+### Upgrade Phase A — Second-Brain Evolution
+
+**Status: COMPLETE**
+
+#### What Was Built
+- [x] TF-IDF based embedding vectors (`EmbeddingVector` struct) for semantic similarity
+- [x] Cosine similarity search engine (`semantic_search`) with recency boost
+- [x] Vocabulary builder from indexed content (`build_vocabulary`)
+- [x] TF-IDF vector computation per document (`compute_tfidf`)
+- [x] Decision query engine with relevance ranking (`query_decisions`)
+- [x] Related decision detection via tag overlap
+- [x] Knowledge snapshot system (`KnowledgeSnapshot`) with layered compression
+- [x] Three knowledge layers: decisions, summaries, architecture
+- [x] Full-layer snapshots combining all three
+- [x] Hot file detection from session history
+- [x] Architecture pattern extraction from decisions and file frequency
+- [x] Enhanced brain stats (`EnhancedBrainStats`) with embedding/snapshot counts
+- [x] Semantic coverage tracking across index entries
+- [x] Persistent snapshot storage in `~/.ollopa/workspace-brain/snapshots/`
+- [x] Persistent embedding storage in `~/.ollopa/workspace-brain/embeddings/`
+- [x] 6 new Tauri commands: `brain_build_embeddings`, `brain_semantic_search`, `brain_query_decisions`, `brain_build_snapshot`, `brain_list_snapshots`, `brain_enhanced_stats`
+- [x] Frontend types: `SimilarityResult`, `KnowledgeSnapshot`, `DecisionQueryResult`, `EnhancedBrainStats`
+
+---
+
+### Upgrade Phase B — Visual Intelligence Systems
+
+**Status: COMPLETE**
+
+#### What Was Built
+- [x] Memory graph builder (`build_memory_graph`) — concept nodes, co-occurrence edges, cluster detection
+- [x] Concept extraction from recurring tags across summaries and decisions
+- [x] Co-occurrence edge detection between concepts
+- [x] Debugging cluster detection (tags containing debug/fix/error/bug)
+- [x] Architecture cluster detection (tags containing arch/design/refactor/migration)
+- [x] Lazy/progressive graph loading (`build_lazy_graph`) — BFS from root with depth/node limits
+- [x] Supports relationship, architecture, and memory graph types
+- [x] Enhanced visual stats (`EnhancedVisualStats`) with memory graph metrics
+- [x] 3 new Tauri commands: `visual_build_memory_graph`, `visual_build_lazy_graph`, `visual_enhanced_stats`
+- [x] Frontend types: `EnhancedVisualStats`
+
+---
+
+### Upgrade Phase C — Intelligent Orchestration
+
+**Status: COMPLETE**
+
+#### What Was Built
+- [x] Task type detection from prompt text (`detect_task_type`) — 10 task types
+- [x] Keyword pattern matching for: debugging, code generation, analysis, search, refactoring, documentation, architecture, testing, quick questions
+- [x] Smart routing (`smart_route`) — task-aware provider/model selection
+- [x] Quality tier mapping: high (debugging/architecture), medium (refactoring/testing), low (search/docs)
+- [x] Budget-aware execution check (`check_budget`) with cost estimation
+- [x] Latency-aware routing (`route_by_latency`) — picks fastest healthy provider
+- [x] Workflow routing templates (`get_workflow_routes`) — 7 predefined step-action routes
+- [x] Enhanced router stats (`EnhancedRouterStats`) with task distribution and budget status
+- [x] Health-aware filtering (excludes down providers)
+- [x] 6 new Tauri commands: `router_smart_route`, `router_detect_task_type`, `router_check_budget`, `router_route_by_latency`, `router_workflow_routes`, `router_enhanced_stats`
+- [x] Frontend types: `TaskTypeLabel`, `TaskRouteRecommendation`, `BudgetCheck`, `WorkflowRoute`, `EnhancedRouterStats`
+
+---
+
+### Upgrade Phase D — Lightweight Multi-Agent Systems
+
+**Status: COMPLETE**
+
+#### What Was Built
+- [x] Scoped delegation system (`Delegation` struct) — bounded subtasks with depth tracking
+- [x] Delegation limits enforcement (max per task, max recursion depth)
+- [x] Delegation completion with summary results
+- [x] Agent memory isolation (`AgentMemory`) — per-agent context with token budgets
+- [x] FIFO eviction when agent memory exceeds token limit
+- [x] Agent memory clear operation
+- [x] Agent execution summarization (`AgentSummary`) — findings, recommendations, metrics
+- [x] Safety configuration (`SafetyConfig`) — recursion limits, retry ceilings, budget ceilings, inactivity timeout, concurrent agent limits
+- [x] Workflow safety check (`check_workflow_safety`) — circular dependency detection, concurrent agent limits, delegation depth validation
+- [x] Enhanced agent stats (`EnhancedAgentStats`) — delegation counts, memory usage, safety config
+- [x] Persistent storage: `~/.ollopa/workspace-brain/agents/delegations/`, `memory/`, `safety.json`
+- [x] 11 new Tauri commands: `agent_create_delegation`, `agent_complete_delegation`, `agent_list_delegations`, `agent_get_memory`, `agent_add_context`, `agent_clear_memory`, `agent_summarize`, `agent_safety_config`, `agent_save_safety_config`, `agent_check_safety`, `agent_enhanced_stats`
+- [x] Frontend types: `Delegation`, `AgentMemory`, `AgentSummary`, `SafetyConfig`, `SafetyCheckResult`, `EnhancedAgentStats`
+
+---
+
+### Upgrade Phase E — Workspace Intelligence
+
+**Status: COMPLETE**
+
+#### What Was Built
+- [x] Comprehensive repo mapping (`build_repo_map`) — module scanning, dependency detection, boundary identification
+- [x] Module info extraction: file counts, line counts, primary language, inter-module dependencies
+- [x] Import analysis for TypeScript/JavaScript (from statements) and Rust (use/mod)
+- [x] Architectural boundary detection: Frontend, Backend, Configuration layers
+- [x] Hot file detection from session modification history
+- [x] Change impact analysis (`predict_change_impact`) — co-modification tracking, module mapping, risk classification
+- [x] Regression risk detection (test files, config files)
+- [x] Architectural drift detection (`detect_drift`) — coupling analysis, boundary violations, oversized modules
+- [x] Health score computation with weighted violation scoring
+- [x] Workflow pattern recognition (`detect_workflow_patterns`) — debugging flows, repeated edits, common tools
+- [x] Full workspace intelligence report (`get_workspace_intelligence`) combining all analyses
+- [x] Persistent repo map storage in `~/.ollopa/workspace-brain/intelligence/`
+- [x] 5 new Tauri commands: `workspace_build_map`, `workspace_predict_impact`, `workspace_detect_drift`, `workspace_detect_patterns`, `workspace_intelligence`
+- [x] Frontend types: `ModuleInfo`, `ArchBoundary`, `HotFile`, `RepoMap`, `ChangeImpact`, `DriftViolation`, `DriftReport`, `WorkflowPatternInfo`, `WorkspaceIntelligence`
+- [x] WorkspacePanel component with 5 tabs: Overview, Modules, Drift, Patterns, Impact
+
+---
+
+### Upgrade Phase F — Predictive Workflows
+
+**Status: COMPLETE**
+
+#### What Was Built
+- [x] Predictive suggestion engine (`generate_suggestions`) — related files, relevant decisions, regression risks, workflow patterns
+- [x] Smart context assembly (`assemble_smart_context`) — combines brain search, decisions, semantic search, drift analysis, workflow hints
+- [x] Workflow recommendation engine (`recommend_workflows`) — testing, debugging, architecture review, implementation strategies
+- [x] Confidence scoring for suggestions and recommendations
+- [x] Full predictive analysis (`get_predictive_analysis`) combining all three systems
+- [x] New Rust module: `predictive.rs`
+- [x] 4 new Tauri commands: `predictive_suggestions`, `predictive_smart_context`, `predictive_recommendations`, `predictive_analysis`
+- [x] Frontend types: `PredictiveSuggestion`, `SmartContext`, `WorkflowRecommendation`, `PredictiveAnalysis`
+- [x] PredictivePanel component with input fields and 3 tabs: Suggestions, Context, Workflows
+
+---
+
+### Integration Summary
+
+| Phase | Backend Changes | New Commands | Frontend Types | Components |
+|-------|----------------|--------------|----------------|------------|
+| A — Second-Brain Evolution | `second_brain.rs` extended | 6 | 4 | — |
+| B — Visual Intelligence | `visual_memory.rs` extended | 3 | 1 | — |
+| C — Intelligent Orchestration | `provider_router.rs` extended | 6 | 5 | — |
+| D — Multi-Agent Systems | `multi_agent.rs` extended | 11 | 6 | — |
+| E — Workspace Intelligence | `repo_intelligence.rs` extended | 5 | 9 | WorkspacePanel |
+| F — Predictive Workflows | New `predictive.rs` module | 4 | 4 | PredictivePanel |
+| **Total** | **6 modules modified/created** | **35 new commands** | **29 new types** | **2 new panels** |

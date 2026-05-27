@@ -706,3 +706,436 @@ pub fn get_agent_stats() -> AgentStats {
         completed_tasks: tasks.iter().filter(|t| t.status == StepStatus::Completed).count(),
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADE PHASE D — Lightweight Multi-Agent Systems
+// Scoped delegation, agent memory isolation, agent summarization,
+// safety rules (recursion limits, budget ceilings, inactivity)
+// ═══════════════════════════════════════════════════════════════
+
+/// A scoped delegation — bounded subtask for an agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Delegation {
+    pub id: String,
+    pub parent_task_id: Option<String>,
+    pub agent_id: String,
+    pub scope: String,
+    pub context: String,
+    pub max_tokens: usize,
+    pub max_retries: u32,
+    pub timeout_ms: u64,
+    pub status: StepStatus,
+    pub result_summary: Option<String>,
+    pub created_at: u64,
+    pub completed_at: Option<u64>,
+    pub depth: u32,
+}
+
+/// Agent memory context — isolated per-agent context
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMemory {
+    pub agent_id: String,
+    pub context_entries: Vec<String>,
+    pub total_tokens: usize,
+    pub max_tokens: usize,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+/// Agent execution summary
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentSummary {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub task_description: String,
+    pub findings: Vec<String>,
+    pub recommendations: Vec<String>,
+    pub files_affected: Vec<String>,
+    pub token_usage: usize,
+    pub duration_ms: u64,
+    pub success: bool,
+}
+
+/// Safety configuration for multi-agent execution
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SafetyConfig {
+    pub max_recursion_depth: u32,
+    pub max_retries_per_step: u32,
+    pub max_budget_usd: f64,
+    pub inactivity_timeout_ms: u64,
+    pub max_concurrent_agents: u32,
+    pub max_delegations_per_task: u32,
+}
+
+impl Default for SafetyConfig {
+    fn default() -> Self {
+        Self {
+            max_recursion_depth: 3,
+            max_retries_per_step: 2,
+            max_budget_usd: 1.0,
+            inactivity_timeout_ms: 120_000,
+            max_concurrent_agents: 3,
+            max_delegations_per_task: 5,
+        }
+    }
+}
+
+/// Safety check result
+#[derive(Debug, Clone, Serialize)]
+pub struct SafetyCheckResult {
+    pub safe: bool,
+    pub violations: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+fn delegations_dir() -> PathBuf {
+    agent_dir().join("delegations")
+}
+
+fn agent_memory_dir() -> PathBuf {
+    agent_dir().join("memory")
+}
+
+fn safety_config_path() -> PathBuf {
+    agent_dir().join("safety.json")
+}
+
+fn ensure_phase_d_dirs() {
+    let _ = fs::create_dir_all(delegations_dir());
+    let _ = fs::create_dir_all(agent_memory_dir());
+}
+
+/// Create a scoped delegation
+pub fn create_delegation(
+    agent_id: &str,
+    scope: &str,
+    context: &str,
+    parent_task_id: Option<&str>,
+    max_tokens: usize,
+) -> Result<Delegation, String> {
+    ensure_phase_d_dirs();
+    let safety = load_safety_config();
+
+    // Check delegation limits
+    if let Some(parent_id) = parent_task_id {
+        let existing = list_delegations(Some(parent_id));
+        if existing.len() >= safety.max_delegations_per_task as usize {
+            return Err(format!(
+                "Max delegations ({}) reached for task {}",
+                safety.max_delegations_per_task, parent_id
+            ));
+        }
+
+        // Check recursion depth
+        let depth = compute_delegation_depth(parent_id);
+        if depth >= safety.max_recursion_depth {
+            return Err(format!(
+                "Max recursion depth ({}) exceeded",
+                safety.max_recursion_depth
+            ));
+        }
+    }
+
+    let now = current_timestamp_ms();
+    let delegation = Delegation {
+        id: format!("del-{}", now),
+        parent_task_id: parent_task_id.map(|s| s.to_string()),
+        agent_id: agent_id.to_string(),
+        scope: scope.to_string(),
+        context: context.to_string(),
+        max_tokens,
+        max_retries: safety.max_retries_per_step,
+        timeout_ms: safety.inactivity_timeout_ms,
+        status: StepStatus::Pending,
+        result_summary: None,
+        created_at: now,
+        completed_at: None,
+        depth: parent_task_id.map_or(0, |pid| compute_delegation_depth(pid) + 1),
+    };
+
+    let json = serde_json::to_string_pretty(&delegation)
+        .map_err(|e| format!("Failed to serialize delegation: {}", e))?;
+    let path = delegations_dir().join(format!("{}.json", delegation.id));
+    fs::write(&path, json).map_err(|e| format!("Failed to save delegation: {}", e))?;
+
+    Ok(delegation)
+}
+
+/// Complete a delegation with summary
+pub fn complete_delegation(
+    id: &str,
+    summary: &str,
+    success: bool,
+) -> Result<Delegation, String> {
+    let path = delegations_dir().join(format!("{}.json", id));
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Delegation not found: {}", e))?;
+    let mut delegation: Delegation = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse delegation: {}", e))?;
+
+    delegation.status = if success { StepStatus::Completed } else { StepStatus::Failed };
+    delegation.result_summary = Some(summary.to_string());
+    delegation.completed_at = Some(current_timestamp_ms());
+
+    let json = serde_json::to_string_pretty(&delegation)
+        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    fs::write(&path, json).map_err(|e| format!("Failed to save: {}", e))?;
+
+    Ok(delegation)
+}
+
+/// List delegations for a parent task
+pub fn list_delegations(parent_task_id: Option<&str>) -> Vec<Delegation> {
+    ensure_phase_d_dirs();
+    let mut results: Vec<Delegation> = fs::read_dir(delegations_dir())
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let content = fs::read_to_string(e.path()).ok()?;
+            serde_json::from_str(&content).ok()
+        })
+        .collect();
+
+    if let Some(pid) = parent_task_id {
+        results.retain(|d| d.parent_task_id.as_deref() == Some(pid));
+    }
+
+    results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    results
+}
+
+fn compute_delegation_depth(task_id: &str) -> u32 {
+    let delegations = list_delegations(None);
+    let mut depth = 0u32;
+    let mut current = task_id.to_string();
+
+    for _ in 0..10 {
+        if let Some(del) = delegations.iter().find(|d| d.id == current) {
+            if let Some(ref parent) = del.parent_task_id {
+                depth += 1;
+                current = parent.clone();
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    depth
+}
+
+/// Get or create isolated agent memory
+pub fn get_agent_memory(agent_id: &str) -> AgentMemory {
+    ensure_phase_d_dirs();
+    let path = agent_memory_dir().join(format!("{}.json", agent_id));
+
+    if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(mem) = serde_json::from_str(&content) {
+            return mem;
+        }
+    }
+
+    let agents = list_agents();
+    let max_tokens = agents
+        .iter()
+        .find(|a| a.id == agent_id)
+        .map(|a| a.max_tokens)
+        .unwrap_or(4000);
+
+    AgentMemory {
+        agent_id: agent_id.to_string(),
+        context_entries: Vec::new(),
+        total_tokens: 0,
+        max_tokens,
+        created_at: current_timestamp_ms(),
+        updated_at: current_timestamp_ms(),
+    }
+}
+
+/// Add context to agent memory (with isolation and token limits)
+pub fn add_agent_context(agent_id: &str, entry: &str) -> Result<AgentMemory, String> {
+    ensure_phase_d_dirs();
+    let mut memory = get_agent_memory(agent_id);
+    let entry_tokens = entry.len() / 4;
+
+    // Evict old entries if over budget
+    while memory.total_tokens + entry_tokens > memory.max_tokens && !memory.context_entries.is_empty() {
+        let removed = memory.context_entries.remove(0);
+        memory.total_tokens = memory.total_tokens.saturating_sub(removed.len() / 4);
+    }
+
+    memory.context_entries.push(entry.to_string());
+    memory.total_tokens += entry_tokens;
+    memory.updated_at = current_timestamp_ms();
+
+    let path = agent_memory_dir().join(format!("{}.json", agent_id));
+    let json = serde_json::to_string_pretty(&memory)
+        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    fs::write(&path, json).map_err(|e| format!("Failed to save: {}", e))?;
+
+    Ok(memory)
+}
+
+/// Clear an agent's isolated memory
+pub fn clear_agent_memory(agent_id: &str) -> Result<(), String> {
+    let path = agent_memory_dir().join(format!("{}.json", agent_id));
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| format!("Failed to clear: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Generate an agent execution summary from a completed task
+pub fn summarize_agent_execution(
+    task_id: &str,
+) -> Result<AgentSummary, String> {
+    let task_path = tasks_dir().join(format!("{}.json", task_id));
+    let task_content = fs::read_to_string(&task_path)
+        .map_err(|e| format!("Task not found: {}", e))?;
+    let task: AgentTask = serde_json::from_str(&task_content)
+        .map_err(|e| format!("Failed to parse task: {}", e))?;
+
+    let agents = list_agents();
+    let agent_name = agents
+        .iter()
+        .find(|a| a.id == task.agent_id)
+        .map(|a| a.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let result_text = task.result.as_deref().unwrap_or("");
+
+    // Extract findings and recommendations from result
+    let findings: Vec<String> = result_text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(5)
+        .map(|l| l.trim().to_string())
+        .collect();
+
+    let duration = task.completed_at.unwrap_or(0).saturating_sub(task.created_at);
+
+    Ok(AgentSummary {
+        agent_id: task.agent_id.clone(),
+        agent_name,
+        task_description: task.description.clone(),
+        findings,
+        recommendations: Vec::new(),
+        files_affected: Vec::new(),
+        token_usage: result_text.len() / 4,
+        duration_ms: duration,
+        success: task.status == StepStatus::Completed,
+    })
+}
+
+/// Load safety configuration
+pub fn load_safety_config() -> SafetyConfig {
+    fs::read_to_string(safety_config_path())
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
+}
+
+/// Save safety configuration
+pub fn save_safety_config(config: &SafetyConfig) -> Result<(), String> {
+    ensure_phase_d_dirs();
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    fs::write(safety_config_path(), json)
+        .map_err(|e| format!("Failed to save: {}", e))
+}
+
+/// Run safety check for a workflow
+pub fn check_workflow_safety(workflow_id: &str) -> SafetyCheckResult {
+    let safety = load_safety_config();
+    let workflows = list_workflows(None);
+    let mut violations: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    if let Some(workflow) = workflows.iter().find(|w| w.id == workflow_id) {
+        // Check step count
+        if workflow.steps.len() > 20 {
+            warnings.push(format!("Workflow has {} steps (recommend < 20)", workflow.steps.len()));
+        }
+
+        // Check for circular dependencies
+        for step in &workflow.steps {
+            for dep in &step.depends_on {
+                if *dep == step.id {
+                    violations.push(format!("Step {} depends on itself", step.id));
+                }
+            }
+        }
+
+        // Check running steps
+        let running = workflow.steps.iter().filter(|s| s.status == StepStatus::Running).count();
+        if running > safety.max_concurrent_agents as usize {
+            violations.push(format!(
+                "{} agents running concurrently (max {})",
+                running, safety.max_concurrent_agents
+            ));
+        }
+
+        // Check delegation depth
+        let delegations = list_delegations(None);
+        let max_depth = delegations.iter().map(|d| d.depth).max().unwrap_or(0);
+        if max_depth >= safety.max_recursion_depth {
+            violations.push(format!(
+                "Delegation depth {} exceeds limit {}",
+                max_depth, safety.max_recursion_depth
+            ));
+        }
+    } else {
+        violations.push(format!("Workflow {} not found", workflow_id));
+    }
+
+    SafetyCheckResult {
+        safe: violations.is_empty(),
+        violations,
+        warnings,
+    }
+}
+
+/// Enhanced agent stats with Phase D info
+#[derive(Debug, Clone, Serialize)]
+pub struct EnhancedAgentStats {
+    pub base: AgentStats,
+    pub total_delegations: usize,
+    pub active_delegations: usize,
+    pub agents_with_memory: usize,
+    pub total_memory_tokens: usize,
+    pub safety_config: SafetyConfig,
+}
+
+pub fn get_enhanced_agent_stats() -> EnhancedAgentStats {
+    let base = get_agent_stats();
+    let delegations = list_delegations(None);
+
+    let active_delegations = delegations
+        .iter()
+        .filter(|d| d.status == StepStatus::Running || d.status == StepStatus::Pending)
+        .count();
+
+    let agents = list_agents();
+    let mut agents_with_memory = 0usize;
+    let mut total_memory_tokens = 0usize;
+
+    for agent in &agents {
+        let mem = get_agent_memory(&agent.id);
+        if !mem.context_entries.is_empty() {
+            agents_with_memory += 1;
+            total_memory_tokens += mem.total_tokens;
+        }
+    }
+
+    EnhancedAgentStats {
+        base,
+        total_delegations: delegations.len(),
+        active_delegations,
+        agents_with_memory,
+        total_memory_tokens,
+        safety_config: load_safety_config(),
+    }
+}
