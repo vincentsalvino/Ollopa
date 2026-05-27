@@ -20,6 +20,7 @@ interface AgentPanelProps {
   onClose: () => void;
   onToast: (text: string, type: ToastMessage["type"]) => void;
   projectPath: string | null;
+  currentModel?: string;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -46,6 +47,7 @@ export default function AgentPanel({
   onClose,
   onToast,
   projectPath,
+  currentModel,
 }: AgentPanelProps) {
   const [tab, setTab] = useState<AgentTab>("agents");
   const [agents, setAgents] = useState<AgentDef[]>([]);
@@ -438,13 +440,16 @@ export default function AgentPanel({
           {tab === "providers" && (
             <div className="agent-providers-view">
               <div className="agent-provider-list">
-                {providers.map((p) => (
+                {providers.map((p) => {
+                  const isActiveProvider = currentModel && p.models.some((m) => m.name === currentModel);
+                  return (
                   <div
                     key={p.id}
-                    className={`agent-provider-card ${!p.enabled ? "disabled" : ""}`}
+                    className={`agent-provider-card ${!p.enabled ? "disabled" : ""}${isActiveProvider ? " agent-provider-card--active" : ""}`}
                   >
                     <div className="agent-provider-header">
                       <span className="agent-provider-name">{p.name}</span>
+                      {isActiveProvider && <span className="agent-provider-in-use">In Use</span>}
                       <span className="agent-provider-type">
                         {p.provider_type}
                       </span>
@@ -457,8 +462,9 @@ export default function AgentPanel({
                     </div>
                     <div className="agent-provider-models">
                       {p.models.map((m) => (
-                        <div key={m.id} className="agent-model-row">
+                        <div key={m.id} className={`agent-model-row${m.name === currentModel ? " agent-model-row--active" : ""}`}>
                           <span className="agent-model-name">{m.name}</span>
+                          {m.name === currentModel && <span className="agent-model-active-badge">Active</span>}
                           <span className="agent-model-price">
                             ${m.input_price_per_m.toFixed(2)}/{m.output_price_per_m.toFixed(2)} per M
                           </span>
@@ -478,7 +484,8 @@ export default function AgentPanel({
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
