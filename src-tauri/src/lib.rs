@@ -16,6 +16,7 @@ mod session_manager;
 mod token_optimizer;
 mod visual_memory;
 mod web_search;
+mod predictive;
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager, State};
@@ -933,6 +934,296 @@ fn classify_tool_risk(
     (format!("{:?}", risk), label)
 }
 
+// ═══════ Phase A — Second-Brain Evolution Commands ═══════
+
+#[tauri::command]
+fn brain_build_embeddings(project_path: Option<String>) -> usize {
+    second_brain::build_embeddings(project_path.as_deref())
+}
+
+#[tauri::command]
+fn brain_semantic_search(
+    query: String,
+    project_path: Option<String>,
+    limit: Option<usize>,
+) -> Vec<second_brain::SimilarityResult> {
+    second_brain::semantic_search(&query, project_path.as_deref(), limit.unwrap_or(10))
+}
+
+#[tauri::command]
+fn brain_query_decisions(
+    query: String,
+    project_path: Option<String>,
+    limit: Option<usize>,
+) -> Vec<second_brain::DecisionQueryResult> {
+    second_brain::query_decisions(&query, project_path.as_deref(), limit.unwrap_or(5))
+}
+
+#[tauri::command]
+fn brain_build_snapshot(
+    project_path: Option<String>,
+    layer: Option<String>,
+    max_tokens: Option<usize>,
+) -> second_brain::KnowledgeSnapshot {
+    second_brain::build_knowledge_snapshot(
+        project_path.as_deref(),
+        layer.as_deref().unwrap_or("full"),
+        max_tokens.unwrap_or(2000),
+    )
+}
+
+#[tauri::command]
+fn brain_list_snapshots(
+    project_path: Option<String>,
+) -> Vec<second_brain::KnowledgeSnapshot> {
+    second_brain::list_snapshots(project_path.as_deref())
+}
+
+#[tauri::command]
+fn brain_enhanced_stats() -> second_brain::EnhancedBrainStats {
+    second_brain::get_enhanced_stats()
+}
+
+// ═══════ Phase B — Visual Intelligence Commands ═══════
+
+#[tauri::command]
+fn visual_build_memory_graph(
+    project_path: Option<String>,
+) -> visual_memory::Graph {
+    visual_memory::build_memory_graph(project_path.as_deref())
+}
+
+#[tauri::command]
+fn visual_build_lazy_graph(
+    graph_type: String,
+    project_path: Option<String>,
+    root_node: Option<String>,
+    max_depth: Option<usize>,
+    max_nodes: Option<usize>,
+) -> visual_memory::Graph {
+    visual_memory::build_lazy_graph(
+        &graph_type,
+        project_path.as_deref(),
+        root_node.as_deref(),
+        max_depth.unwrap_or(3),
+        max_nodes.unwrap_or(50),
+    )
+}
+
+#[tauri::command]
+fn visual_enhanced_stats(
+    project_path: Option<String>,
+) -> visual_memory::EnhancedVisualStats {
+    visual_memory::get_enhanced_visual_stats(project_path.as_deref())
+}
+
+// ═══════ Phase C — Intelligent Orchestration Commands ═══════
+
+#[tauri::command]
+fn router_smart_route(
+    prompt: String,
+    needs_tools: Option<bool>,
+    budget_remaining: Option<f64>,
+) -> provider_router::TaskRouteRecommendation {
+    provider_router::smart_route(&prompt, needs_tools.unwrap_or(false), budget_remaining)
+}
+
+#[tauri::command]
+fn router_detect_task_type(prompt: String) -> String {
+    provider_router::detect_task_type(&prompt).label().to_string()
+}
+
+#[tauri::command]
+fn router_check_budget(
+    estimated_tokens: usize,
+    model_id: String,
+) -> provider_router::BudgetCheck {
+    provider_router::check_budget(estimated_tokens, &model_id)
+}
+
+#[tauri::command]
+fn router_route_by_latency(
+    needs_tools: Option<bool>,
+    max_budget: Option<f64>,
+) -> provider_router::RoutingDecision {
+    provider_router::route_by_latency(needs_tools.unwrap_or(false), max_budget)
+}
+
+#[tauri::command]
+fn router_workflow_routes() -> Vec<provider_router::WorkflowRoute> {
+    provider_router::get_workflow_routes()
+}
+
+#[tauri::command]
+fn router_enhanced_stats() -> provider_router::EnhancedRouterStats {
+    provider_router::get_enhanced_router_stats()
+}
+
+// ═══════ Phase D — Multi-Agent Commands ═══════
+
+#[tauri::command]
+fn agent_create_delegation(
+    agent_id: String,
+    scope: String,
+    context: String,
+    parent_task_id: Option<String>,
+    max_tokens: Option<usize>,
+) -> Result<multi_agent::Delegation, String> {
+    multi_agent::create_delegation(
+        &agent_id,
+        &scope,
+        &context,
+        parent_task_id.as_deref(),
+        max_tokens.unwrap_or(2000),
+    )
+}
+
+#[tauri::command]
+fn agent_complete_delegation(
+    id: String,
+    summary: String,
+    success: bool,
+) -> Result<multi_agent::Delegation, String> {
+    multi_agent::complete_delegation(&id, &summary, success)
+}
+
+#[tauri::command]
+fn agent_list_delegations(
+    parent_task_id: Option<String>,
+) -> Vec<multi_agent::Delegation> {
+    multi_agent::list_delegations(parent_task_id.as_deref())
+}
+
+#[tauri::command]
+fn agent_get_memory(agent_id: String) -> multi_agent::AgentMemory {
+    multi_agent::get_agent_memory(&agent_id)
+}
+
+#[tauri::command]
+fn agent_add_context(
+    agent_id: String,
+    entry: String,
+) -> Result<multi_agent::AgentMemory, String> {
+    multi_agent::add_agent_context(&agent_id, &entry)
+}
+
+#[tauri::command]
+fn agent_clear_memory(agent_id: String) -> Result<(), String> {
+    multi_agent::clear_agent_memory(&agent_id)
+}
+
+#[tauri::command]
+fn agent_summarize(task_id: String) -> Result<multi_agent::AgentSummary, String> {
+    multi_agent::summarize_agent_execution(&task_id)
+}
+
+#[tauri::command]
+fn agent_safety_config() -> multi_agent::SafetyConfig {
+    multi_agent::load_safety_config()
+}
+
+#[tauri::command]
+fn agent_save_safety_config(
+    config: multi_agent::SafetyConfig,
+) -> Result<(), String> {
+    multi_agent::save_safety_config(&config)
+}
+
+#[tauri::command]
+fn agent_check_safety(workflow_id: String) -> multi_agent::SafetyCheckResult {
+    multi_agent::check_workflow_safety(&workflow_id)
+}
+
+#[tauri::command]
+fn agent_enhanced_stats() -> multi_agent::EnhancedAgentStats {
+    multi_agent::get_enhanced_agent_stats()
+}
+
+// ═══════ Phase E — Workspace Intelligence Commands ═══════
+
+#[tauri::command]
+fn workspace_build_map(project_path: String) -> repo_intelligence::RepoMap {
+    repo_intelligence::build_repo_map(&project_path)
+}
+
+#[tauri::command]
+fn workspace_predict_impact(
+    project_path: String,
+    target_file: String,
+) -> repo_intelligence::ChangeImpact {
+    repo_intelligence::predict_change_impact(&project_path, &target_file)
+}
+
+#[tauri::command]
+fn workspace_detect_drift(project_path: String) -> repo_intelligence::DriftReport {
+    repo_intelligence::detect_drift(&project_path)
+}
+
+#[tauri::command]
+fn workspace_detect_patterns(
+    project_path: String,
+) -> Vec<repo_intelligence::WorkflowPattern> {
+    repo_intelligence::detect_workflow_patterns(&project_path)
+}
+
+#[tauri::command]
+fn workspace_intelligence(
+    project_path: String,
+) -> repo_intelligence::WorkspaceIntelligence {
+    repo_intelligence::get_workspace_intelligence(&project_path)
+}
+
+// ═══════ Phase F — Predictive Workflows Commands ═══════
+
+#[tauri::command]
+fn predictive_suggestions(
+    current_file: Option<String>,
+    recent_prompt: Option<String>,
+    project_path: Option<String>,
+) -> Vec<predictive::PredictiveSuggestion> {
+    predictive::generate_suggestions(
+        current_file.as_deref(),
+        recent_prompt.as_deref(),
+        project_path.as_deref(),
+    )
+}
+
+#[tauri::command]
+fn predictive_smart_context(
+    prompt: String,
+    project_path: Option<String>,
+    max_tokens: Option<usize>,
+) -> predictive::SmartContext {
+    predictive::assemble_smart_context(
+        &prompt,
+        project_path.as_deref(),
+        max_tokens.unwrap_or(2000),
+    )
+}
+
+#[tauri::command]
+fn predictive_recommendations(
+    prompt: String,
+    project_path: Option<String>,
+) -> Vec<predictive::WorkflowRecommendation> {
+    predictive::recommend_workflows(&prompt, project_path.as_deref())
+}
+
+#[tauri::command]
+fn predictive_analysis(
+    prompt: String,
+    current_file: Option<String>,
+    project_path: Option<String>,
+    max_context_tokens: Option<usize>,
+) -> predictive::PredictiveAnalysis {
+    predictive::get_predictive_analysis(
+        &prompt,
+        current_file.as_deref(),
+        project_path.as_deref(),
+        max_context_tokens.unwrap_or(2000),
+    )
+}
+
 // ═══════ App Entry ═══════
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1051,6 +1342,47 @@ pub fn run() {
             list_api_keys,
             save_api_key,
             delete_api_key,
+            // Phase A — Second-Brain Evolution
+            brain_build_embeddings,
+            brain_semantic_search,
+            brain_query_decisions,
+            brain_build_snapshot,
+            brain_list_snapshots,
+            brain_enhanced_stats,
+            // Phase B — Visual Intelligence
+            visual_build_memory_graph,
+            visual_build_lazy_graph,
+            visual_enhanced_stats,
+            // Phase C — Intelligent Orchestration
+            router_smart_route,
+            router_detect_task_type,
+            router_check_budget,
+            router_route_by_latency,
+            router_workflow_routes,
+            router_enhanced_stats,
+            // Phase D — Multi-Agent Systems
+            agent_create_delegation,
+            agent_complete_delegation,
+            agent_list_delegations,
+            agent_get_memory,
+            agent_add_context,
+            agent_clear_memory,
+            agent_summarize,
+            agent_safety_config,
+            agent_save_safety_config,
+            agent_check_safety,
+            agent_enhanced_stats,
+            // Phase E — Workspace Intelligence
+            workspace_build_map,
+            workspace_predict_impact,
+            workspace_detect_drift,
+            workspace_detect_patterns,
+            workspace_intelligence,
+            // Phase F — Predictive Workflows
+            predictive_suggestions,
+            predictive_smart_context,
+            predictive_recommendations,
+            predictive_analysis,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

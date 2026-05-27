@@ -659,3 +659,485 @@ fn compact_json_input(input: &serde_json::Value) -> String {
     }
     String::new()
 }
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADE PHASE A — Second-Brain Evolution
+// Semantic embeddings (TF-IDF vectors), similarity search,
+// memory ranking, knowledge compression, decision querying
+// ═══════════════════════════════════════════════════════════════
+
+/// TF-IDF based embedding vector for semantic similarity
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingVector {
+    pub id: String,
+    pub source_id: String,
+    pub source_type: String,
+    pub terms: Vec<String>,
+    pub weights: Vec<f64>,
+    pub created_at: u64,
+    pub project_path: Option<String>,
+}
+
+/// Semantic similarity result
+#[derive(Debug, Clone, Serialize)]
+pub struct SimilarityResult {
+    pub source_id: String,
+    pub source_type: String,
+    pub similarity: f64,
+    pub snippet: String,
+}
+
+/// Knowledge snapshot — compressed memory at a point in time
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeSnapshot {
+    pub id: String,
+    pub created_at: u64,
+    pub project_path: Option<String>,
+    pub layer: String,
+    pub content: String,
+    pub token_count: u32,
+    pub source_count: u32,
+    pub key_themes: Vec<String>,
+}
+
+/// Decision query result
+#[derive(Debug, Clone, Serialize)]
+pub struct DecisionQueryResult {
+    pub decision: Decision,
+    pub relevance: f64,
+    pub related_decisions: Vec<String>,
+}
+
+/// Enhanced brain stats
+#[derive(Debug, Clone, Serialize)]
+pub struct EnhancedBrainStats {
+    pub base: BrainStats,
+    pub total_embeddings: usize,
+    pub total_snapshots: usize,
+    pub semantic_coverage: f64,
+    pub oldest_memory_days: f64,
+    pub knowledge_layers: Vec<String>,
+}
+
+fn embeddings_dir() -> PathBuf {
+    brain_dir().join("embeddings")
+}
+
+fn snapshots_dir() -> PathBuf {
+    brain_dir().join("snapshots")
+}
+
+fn ensure_evolution_dirs() {
+    let _ = fs::create_dir_all(embeddings_dir());
+    let _ = fs::create_dir_all(snapshots_dir());
+}
+
+/// Build TF-IDF vocabulary from all index entries
+fn build_vocabulary() -> (Vec<String>, HashMap<String, f64>) {
+    let index = load_index();
+    let total_docs = index.len().max(1) as f64;
+    let mut doc_freq: HashMap<String, usize> = HashMap::new();
+    let mut all_terms: Vec<String> = Vec::new();
+
+    for entry in &index {
+        let terms = extract_keywords(&entry.content);
+        let mut seen: Vec<String> = Vec::new();
+        for t in &terms {
+            if !seen.contains(t) {
+                *doc_freq.entry(t.clone()).or_insert(0) += 1;
+                seen.push(t.clone());
+            }
+        }
+        for t in terms {
+            if !all_terms.contains(&t) {
+                all_terms.push(t);
+            }
+        }
+    }
+
+    let mut idf_map: HashMap<String, f64> = HashMap::new();
+    for (term, df) in &doc_freq {
+        let idf = ((total_docs + 1.0) / (*df as f64 + 1.0)).ln() + 1.0;
+        idf_map.insert(term.clone(), idf);
+    }
+
+    all_terms.sort();
+    (all_terms, idf_map)
+}
+
+/// Compute TF-IDF vector for a piece of text
+fn compute_tfidf(text: &str, vocabulary: &[String], idf_map: &HashMap<String, f64>) -> Vec<f64> {
+    let terms = extract_keywords(text);
+    let total = terms.len().max(1) as f64;
+    let mut tf: HashMap<String, f64> = HashMap::new();
+    for t in &terms {
+        *tf.entry(t.clone()).or_insert(0.0) += 1.0;
+    }
+
+    vocabulary
+        .iter()
+        .map(|term| {
+            let term_freq = tf.get(term).copied().unwrap_or(0.0) / total;
+            let idf = idf_map.get(term).copied().unwrap_or(1.0);
+            term_freq * idf
+        })
+        .collect()
+}
+
+/// Cosine similarity between two vectors
+fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f64 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let mag_a: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let mag_b: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+    if mag_a == 0.0 || mag_b == 0.0 {
+        return 0.0;
+    }
+    dot / (mag_a * mag_b)
+}
+
+/// Build embeddings for all indexed content
+pub fn build_embeddings(project_path: Option<&str>) -> usize {
+    ensure_evolution_dirs();
+    let (vocabulary, idf_map) = build_vocabulary();
+    if vocabulary.is_empty() {
+        return 0;
+    }
+
+    let index = load_index();
+    let mut count = 0usize;
+
+    for entry in &index {
+        if let Some(pp) = project_path {
+            if entry.project_path.as_deref() != Some(pp) {
+                continue;
+            }
+        }
+
+        let weights = compute_tfidf(&entry.content, &vocabulary, &idf_map);
+        let non_zero_terms: Vec<String> = vocabulary
+            .iter()
+            .zip(weights.iter())
+            .filter(|(_, w)| **w > 0.0)
+            .map(|(t, _)| t.clone())
+            .collect();
+        let non_zero_weights: Vec<f64> = weights.into_iter().filter(|w| *w > 0.0).collect();
+
+        let embedding = EmbeddingVector {
+            id: format!("emb-{}", entry.id),
+            source_id: entry.source_id.clone(),
+            source_type: entry.source_type.clone(),
+            terms: non_zero_terms,
+            weights: non_zero_weights,
+            created_at: entry.created_at,
+            project_path: entry.project_path.clone(),
+        };
+
+        let path = embeddings_dir().join(format!("{}.json", embedding.id));
+        if let Ok(json) = serde_json::to_string(&embedding) {
+            let _ = fs::write(path, json);
+            count += 1;
+        }
+    }
+
+    count
+}
+
+/// Semantic similarity search using TF-IDF cosine similarity
+pub fn semantic_search(
+    query: &str,
+    project_path: Option<&str>,
+    limit: usize,
+) -> Vec<SimilarityResult> {
+    let (vocabulary, idf_map) = build_vocabulary();
+    if vocabulary.is_empty() {
+        return Vec::new();
+    }
+
+    let query_vector = compute_tfidf(query, &vocabulary, &idf_map);
+    let index = load_index();
+
+    let mut results: Vec<SimilarityResult> = index
+        .iter()
+        .filter(|e| {
+            if let Some(pp) = project_path {
+                e.project_path.as_deref() == Some(pp)
+            } else {
+                true
+            }
+        })
+        .map(|entry| {
+            let entry_vector = compute_tfidf(&entry.content, &vocabulary, &idf_map);
+            let sim = cosine_similarity(&query_vector, &entry_vector);
+
+            // Recency boost
+            let age_days =
+                (current_timestamp_ms().saturating_sub(entry.created_at)) as f64 / 86_400_000.0;
+            let recency = 1.0 / (1.0 + age_days / 60.0);
+            let boosted = sim * (1.0 + 0.2 * recency);
+
+            let snippet = extract_snippet(
+                &entry.content,
+                &extract_keywords(query),
+                150,
+            );
+
+            SimilarityResult {
+                source_id: entry.source_id.clone(),
+                source_type: entry.source_type.clone(),
+                similarity: boosted,
+                snippet,
+            }
+        })
+        .filter(|r| r.similarity > 0.01)
+        .collect();
+
+    results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(limit);
+    results
+}
+
+/// Query decisions with semantic relevance ranking
+pub fn query_decisions(
+    query: &str,
+    project_path: Option<&str>,
+    limit: usize,
+) -> Vec<DecisionQueryResult> {
+    let decisions = list_decisions(project_path);
+    let query_kw = extract_keywords(query);
+
+    let mut results: Vec<DecisionQueryResult> = decisions
+        .iter()
+        .map(|d| {
+            let text = format!("{} {} {} {}", d.title, d.context, d.decision, d.rationale);
+            let d_kw = extract_keywords(&text);
+            let overlap = query_kw.iter().filter(|k| d_kw.contains(k)).count() as f64;
+            let relevance = if query_kw.is_empty() {
+                0.0
+            } else {
+                overlap / query_kw.len() as f64
+            };
+
+            // Find related decisions by tag overlap
+            let related: Vec<String> = decisions
+                .iter()
+                .filter(|other| other.id != d.id)
+                .filter(|other| {
+                    other.tags.iter().any(|t| d.tags.contains(t))
+                })
+                .map(|other| other.id.clone())
+                .take(3)
+                .collect();
+
+            DecisionQueryResult {
+                decision: d.clone(),
+                relevance,
+                related_decisions: related,
+            }
+        })
+        .filter(|r| r.relevance > 0.0 || query.is_empty())
+        .collect();
+
+    results.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(limit);
+    results
+}
+
+/// Build a compressed knowledge snapshot
+pub fn build_knowledge_snapshot(
+    project_path: Option<&str>,
+    layer: &str,
+    max_tokens: usize,
+) -> KnowledgeSnapshot {
+    ensure_evolution_dirs();
+    let mut content_parts: Vec<String> = Vec::new();
+    let mut token_budget = max_tokens;
+    let mut source_count = 0u32;
+    let mut themes: Vec<String> = Vec::new();
+
+    match layer {
+        "decisions" => {
+            let decisions = list_decisions(project_path);
+            for d in decisions.iter().take(20) {
+                let entry = format!("[{}] {} → {} ({})", d.status_label(), d.title, d.decision, d.rationale);
+                let tokens = entry.len() / 4;
+                if tokens <= token_budget {
+                    content_parts.push(entry);
+                    token_budget -= tokens;
+                    source_count += 1;
+                    themes.extend(d.tags.clone());
+                }
+            }
+        }
+        "summaries" => {
+            let summaries = list_summaries(project_path);
+            for s in summaries.iter().take(30) {
+                let entry = format!(
+                    "{}: {} [{}]",
+                    s.title,
+                    truncate_str(&s.summary, 200),
+                    s.tags.join(", ")
+                );
+                let tokens = entry.len() / 4;
+                if tokens <= token_budget {
+                    content_parts.push(entry);
+                    token_budget -= tokens;
+                    source_count += 1;
+                    themes.extend(s.tags.clone());
+                }
+            }
+        }
+        "architecture" => {
+            let decisions = list_decisions(project_path);
+            let summaries = list_summaries(project_path);
+
+            // Extract architectural patterns
+            let arch_decisions: Vec<&Decision> = decisions
+                .iter()
+                .filter(|d| {
+                    d.tags.iter().any(|t| {
+                        t.contains("arch") || t.contains("design") || t.contains("refactor")
+                            || t.contains("migration") || t.contains("infrastructure")
+                    })
+                })
+                .collect();
+
+            for d in arch_decisions.iter().take(10) {
+                let entry = format!("ARCH: {} → {}", d.title, d.decision);
+                let tokens = entry.len() / 4;
+                if tokens <= token_budget {
+                    content_parts.push(entry);
+                    token_budget -= tokens;
+                    source_count += 1;
+                }
+            }
+
+            // Add file relationship patterns
+            let mut file_freq: HashMap<String, usize> = HashMap::new();
+            for s in &summaries {
+                for f in &s.files_touched {
+                    *file_freq.entry(f.clone()).or_insert(0) += 1;
+                }
+            }
+            let mut top_files: Vec<(&String, &usize)> = file_freq.iter().collect();
+            top_files.sort_by(|a, b| b.1.cmp(a.1));
+            for (file, count) in top_files.iter().take(15) {
+                let entry = format!("HOT FILE: {} (modified {} times)", file, count);
+                let tokens = entry.len() / 4;
+                if tokens <= token_budget {
+                    content_parts.push(entry);
+                    token_budget -= tokens;
+                    source_count += 1;
+                }
+            }
+        }
+        _ => {
+            // "full" layer — combine everything
+            let snapshot_d = build_knowledge_snapshot(project_path, "decisions", token_budget / 3);
+            let snapshot_s = build_knowledge_snapshot(project_path, "summaries", token_budget / 3);
+            let snapshot_a = build_knowledge_snapshot(project_path, "architecture", token_budget / 3);
+
+            content_parts.push(snapshot_d.content);
+            content_parts.push(snapshot_s.content);
+            content_parts.push(snapshot_a.content);
+            source_count = snapshot_d.source_count + snapshot_s.source_count + snapshot_a.source_count;
+            themes.extend(snapshot_d.key_themes);
+            themes.extend(snapshot_s.key_themes);
+            themes.extend(snapshot_a.key_themes);
+        }
+    }
+
+    themes.sort();
+    themes.dedup();
+
+    let content = content_parts.join("\n");
+    let token_count = (content.len() / 4) as u32;
+
+    let snapshot = KnowledgeSnapshot {
+        id: format!("snap-{}", current_timestamp_ms()),
+        created_at: current_timestamp_ms(),
+        project_path: project_path.map(|s| s.to_string()),
+        layer: layer.to_string(),
+        content,
+        token_count,
+        source_count,
+        key_themes: themes.into_iter().take(20).collect(),
+    };
+
+    // Persist
+    let path = snapshots_dir().join(format!("{}.json", snapshot.id));
+    if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+        let _ = fs::write(path, json);
+    }
+
+    snapshot
+}
+
+/// List knowledge snapshots
+pub fn list_snapshots(project_path: Option<&str>) -> Vec<KnowledgeSnapshot> {
+    ensure_evolution_dirs();
+    let mut snapshots: Vec<KnowledgeSnapshot> = fs::read_dir(snapshots_dir())
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let content = fs::read_to_string(e.path()).ok()?;
+            serde_json::from_str(&content).ok()
+        })
+        .collect();
+
+    if let Some(pp) = project_path {
+        snapshots.retain(|s| s.project_path.as_deref() == Some(pp));
+    }
+
+    snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    snapshots
+}
+
+/// Get enhanced brain stats
+pub fn get_enhanced_stats() -> EnhancedBrainStats {
+    ensure_evolution_dirs();
+    let base = get_brain_stats();
+
+    let embedding_count = fs::read_dir(embeddings_dir())
+        .ok()
+        .map(|d| d.count())
+        .unwrap_or(0);
+    let snapshot_count = fs::read_dir(snapshots_dir())
+        .ok()
+        .map(|d| d.count())
+        .unwrap_or(0);
+
+    let index = load_index();
+    let total = index.len().max(1) as f64;
+    let with_keywords = index.iter().filter(|e| !e.keywords.is_empty()).count() as f64;
+    let coverage = with_keywords / total;
+
+    let oldest = index.iter().map(|e| e.created_at).min().unwrap_or(current_timestamp_ms());
+    let oldest_days = (current_timestamp_ms().saturating_sub(oldest)) as f64 / 86_400_000.0;
+
+    let mut layers = vec!["decisions".to_string(), "summaries".to_string(), "architecture".to_string(), "full".to_string()];
+    layers.sort();
+
+    EnhancedBrainStats {
+        base,
+        total_embeddings: embedding_count,
+        total_snapshots: snapshot_count,
+        semantic_coverage: coverage,
+        oldest_memory_days: oldest_days,
+        knowledge_layers: layers,
+    }
+}
+
+impl Decision {
+    fn status_label(&self) -> &str {
+        match self.status {
+            DecisionStatus::Active => "ACTIVE",
+            DecisionStatus::Superseded => "SUPERSEDED",
+            DecisionStatus::Deprecated => "DEPRECATED",
+        }
+    }
+}

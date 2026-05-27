@@ -752,3 +752,374 @@ pub fn get_router_stats() -> RouterStats {
         provider_health: health,
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// UPGRADE PHASE C — Intelligent Orchestration
+// Task-aware routing, budget-aware execution, latency-aware
+// routing, workflow routing templates
+// ═══════════════════════════════════════════════════════════════
+
+/// Detected task type for intelligent routing
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum TaskType {
+    Debugging,
+    CodeGeneration,
+    Analysis,
+    Search,
+    Refactoring,
+    Documentation,
+    Architecture,
+    Testing,
+    QuickQuestion,
+    General,
+}
+
+impl TaskType {
+    pub fn label(&self) -> &str {
+        match self {
+            TaskType::Debugging => "debugging",
+            TaskType::CodeGeneration => "code_generation",
+            TaskType::Analysis => "analysis",
+            TaskType::Search => "search",
+            TaskType::Refactoring => "refactoring",
+            TaskType::Documentation => "documentation",
+            TaskType::Architecture => "architecture",
+            TaskType::Testing => "testing",
+            TaskType::QuickQuestion => "quick_question",
+            TaskType::General => "general",
+        }
+    }
+}
+
+/// Detect task type from prompt text
+pub fn detect_task_type(prompt: &str) -> TaskType {
+    let lower = prompt.to_lowercase();
+
+    let patterns: &[(&[&str], TaskType)] = &[
+        (&["debug", "fix", "bug", "error", "crash", "broken", "failing", "trace", "stacktrace"], TaskType::Debugging),
+        (&["write", "create", "implement", "build", "generate", "add function", "new feature", "scaffold"], TaskType::CodeGeneration),
+        (&["analyze", "explain", "review", "understand", "what does", "how does", "describe"], TaskType::Analysis),
+        (&["search", "find", "look up", "grep", "where is", "locate"], TaskType::Search),
+        (&["refactor", "rename", "restructure", "reorganize", "clean up", "simplify"], TaskType::Refactoring),
+        (&["document", "readme", "jsdoc", "comment", "docstring", "changelog"], TaskType::Documentation),
+        (&["architect", "design", "system design", "schema", "migration", "infrastructure"], TaskType::Architecture),
+        (&["test", "spec", "unit test", "integration test", "e2e", "coverage"], TaskType::Testing),
+        (&["what is", "how to", "quick", "short", "brief", "one liner"], TaskType::QuickQuestion),
+    ];
+
+    for (keywords, task_type) in patterns {
+        if keywords.iter().any(|kw| lower.contains(kw)) {
+            return task_type.clone();
+        }
+    }
+
+    TaskType::General
+}
+
+/// Routing recommendation based on task type
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskRouteRecommendation {
+    pub task_type: TaskType,
+    pub task_label: String,
+    pub recommended_provider: String,
+    pub recommended_model: String,
+    pub reason: String,
+    pub estimated_cost: f64,
+    pub use_reasoning: bool,
+    pub budget_ok: bool,
+}
+
+/// Intelligent task-aware routing
+pub fn smart_route(
+    prompt: &str,
+    needs_tools: bool,
+    budget_remaining: Option<f64>,
+) -> TaskRouteRecommendation {
+    let task_type = detect_task_type(prompt);
+    let providers = list_providers();
+    let enabled: Vec<&Provider> = providers.iter().filter(|p| p.enabled).collect();
+    let health = load_health();
+
+    // Task-type to model preference mapping
+    let (preferred_quality, use_reasoning) = match &task_type {
+        TaskType::Debugging => ("high", true),
+        TaskType::CodeGeneration => ("high", false),
+        TaskType::Analysis => ("high", true),
+        TaskType::Architecture => ("high", true),
+        TaskType::Refactoring => ("medium", false),
+        TaskType::Testing => ("medium", false),
+        TaskType::Documentation => ("low", false),
+        TaskType::Search => ("low", false),
+        TaskType::QuickQuestion => ("low", false),
+        TaskType::General => ("medium", false),
+    };
+
+    // Filter by health
+    let healthy: Vec<&&Provider> = enabled
+        .iter()
+        .filter(|p| {
+            health
+                .iter()
+                .find(|h| h.provider_id == p.id)
+                .map_or(true, |h| h.status != HealthStatus::Down)
+        })
+        .collect();
+    let candidates: Vec<&&Provider> = if healthy.is_empty() { enabled.iter().collect() } else { healthy };
+
+    // Select best model based on task quality needs
+    let mut best: Option<(String, String, f64, String)> = None;
+
+    for provider in &candidates {
+        for model in &provider.models {
+            if needs_tools && !model.supports_tools {
+                continue;
+            }
+
+            let cost = (model.input_price_per_m + model.output_price_per_m) / 2000.0;
+            let score = match preferred_quality {
+                "high" => model.context_window as f64 * 0.001 + model.output_price_per_m * 10.0,
+                "low" => 1.0 / (cost + 0.0001),
+                _ => model.context_window as f64 * 0.0005 + 1.0 / (cost + 0.0001),
+            };
+
+            if best.is_none() || score > best.as_ref().unwrap().2 {
+                best = Some((
+                    provider.id.clone(),
+                    model.id.clone(),
+                    score,
+                    format!("{} ({})", model.name, provider.name),
+                ));
+            }
+        }
+    }
+
+    let (provider_id, model_id, _, reason_detail) = best.unwrap_or_else(|| {
+        ("deepseek".to_string(), "deepseek-chat".to_string(), 0.0, "fallback".to_string())
+    });
+
+    // Estimate cost
+    let estimated = providers
+        .iter()
+        .find(|p| p.id == provider_id)
+        .and_then(|p| p.models.iter().find(|m| m.id == model_id))
+        .map(|m| (m.input_price_per_m + m.output_price_per_m) / 2000.0)
+        .unwrap_or(0.0);
+
+    let budget_ok = budget_remaining.map_or(true, |b| estimated <= b);
+
+    TaskRouteRecommendation {
+        task_label: task_type.label().to_string(),
+        task_type,
+        recommended_provider: provider_id,
+        recommended_model: model_id,
+        reason: format!("{} routing: {} [{}]", preferred_quality, reason_detail, if use_reasoning { "reasoning" } else { "standard" }),
+        estimated_cost: estimated,
+        use_reasoning,
+        budget_ok,
+    }
+}
+
+/// Budget-aware execution check
+#[derive(Debug, Clone, Serialize)]
+pub struct BudgetCheck {
+    pub within_budget: bool,
+    pub budget_remaining_usd: f64,
+    pub estimated_cost_usd: f64,
+    pub suggestion: String,
+}
+
+pub fn check_budget(estimated_tokens: usize, model_id: &str) -> BudgetCheck {
+    let budget = crate::token_optimizer::load_budget();
+    let stats = crate::token_optimizer::get_optimization_stats();
+    let remaining = stats.budget_remaining_usd;
+
+    let providers = list_providers();
+    let model_cost = providers
+        .iter()
+        .flat_map(|p| &p.models)
+        .find(|m| m.id == model_id)
+        .map(|m| {
+            (estimated_tokens as f64 / 1_000_000.0)
+                * (m.input_price_per_m + m.output_price_per_m) / 2.0
+        })
+        .unwrap_or(0.0);
+
+    let within = model_cost <= remaining;
+    let suggestion = if within {
+        "Within budget".to_string()
+    } else if remaining > 0.0 {
+        format!(
+            "Over budget by ${:.4}. Consider using a cheaper model.",
+            model_cost - remaining
+        )
+    } else {
+        format!(
+            "Monthly budget of ${:.2} exhausted. Budget resets next month.",
+            budget.monthly_budget_usd
+        )
+    };
+
+    BudgetCheck {
+        within_budget: within,
+        budget_remaining_usd: remaining,
+        estimated_cost_usd: model_cost,
+        suggestion,
+    }
+}
+
+/// Latency-aware routing — picks the fastest healthy provider
+pub fn route_by_latency(
+    needs_tools: bool,
+    max_budget: Option<f64>,
+) -> RoutingDecision {
+    let providers = list_providers();
+    let enabled: Vec<&Provider> = providers.iter().filter(|p| p.enabled).collect();
+    let health = load_health();
+    let now = current_timestamp_ms();
+
+    let mut best: Option<(&Provider, &ModelConfig, u64)> = None;
+
+    for provider in &enabled {
+        let latency = health
+            .iter()
+            .find(|h| h.provider_id == provider.id)
+            .map(|h| h.avg_latency_ms)
+            .unwrap_or(5000); // Default high latency for unknown
+
+        for model in &provider.models {
+            if needs_tools && !model.supports_tools {
+                continue;
+            }
+            let cost = (model.input_price_per_m + model.output_price_per_m) / 2000.0;
+            if let Some(budget) = max_budget {
+                if cost > budget {
+                    continue;
+                }
+            }
+            if best.is_none() || latency < best.as_ref().unwrap().2 {
+                best = Some((provider, model, latency));
+            }
+        }
+    }
+
+    match best {
+        Some((provider, model, latency)) => RoutingDecision {
+            id: format!("rd-{}", now),
+            timestamp: now,
+            task_type: "latency_optimized".to_string(),
+            selected_provider: provider.id.clone(),
+            selected_model: model.id.clone(),
+            reason: format!("Latency first: {} ({}ms avg)", provider.name, latency),
+            estimated_cost: (model.input_price_per_m + model.output_price_per_m) / 2000.0,
+            fallback_used: false,
+        },
+        None => RoutingDecision {
+            id: format!("rd-{}", now),
+            timestamp: now,
+            task_type: "latency_optimized".to_string(),
+            selected_provider: "deepseek".to_string(),
+            selected_model: "deepseek-chat".to_string(),
+            reason: "No providers available for latency routing".to_string(),
+            estimated_cost: 0.0,
+            fallback_used: true,
+        },
+    }
+}
+
+/// Workflow routing template — predefined routing for workflow steps
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRoute {
+    pub step_action: String,
+    pub recommended_task_type: String,
+    pub recommended_model_tier: String,
+    pub max_tokens: usize,
+}
+
+pub fn get_workflow_routes() -> Vec<WorkflowRoute> {
+    vec![
+        WorkflowRoute {
+            step_action: "analyze".to_string(),
+            recommended_task_type: "analysis".to_string(),
+            recommended_model_tier: "high".to_string(),
+            max_tokens: 4000,
+        },
+        WorkflowRoute {
+            step_action: "code".to_string(),
+            recommended_task_type: "code_generation".to_string(),
+            recommended_model_tier: "high".to_string(),
+            max_tokens: 8000,
+        },
+        WorkflowRoute {
+            step_action: "review".to_string(),
+            recommended_task_type: "analysis".to_string(),
+            recommended_model_tier: "medium".to_string(),
+            max_tokens: 3000,
+        },
+        WorkflowRoute {
+            step_action: "test".to_string(),
+            recommended_task_type: "testing".to_string(),
+            recommended_model_tier: "medium".to_string(),
+            max_tokens: 4000,
+        },
+        WorkflowRoute {
+            step_action: "document".to_string(),
+            recommended_task_type: "documentation".to_string(),
+            recommended_model_tier: "low".to_string(),
+            max_tokens: 2000,
+        },
+        WorkflowRoute {
+            step_action: "debug".to_string(),
+            recommended_task_type: "debugging".to_string(),
+            recommended_model_tier: "high".to_string(),
+            max_tokens: 6000,
+        },
+        WorkflowRoute {
+            step_action: "search".to_string(),
+            recommended_task_type: "search".to_string(),
+            recommended_model_tier: "low".to_string(),
+            max_tokens: 1000,
+        },
+    ]
+}
+
+/// Enhanced router stats including intelligent orchestration
+#[derive(Debug, Clone, Serialize)]
+pub struct EnhancedRouterStats {
+    pub base: RouterStats,
+    pub task_type_distribution: std::collections::HashMap<String, usize>,
+    pub avg_routing_cost: f64,
+    pub budget_status: BudgetCheck,
+    pub workflow_routes_count: usize,
+}
+
+pub fn get_enhanced_router_stats() -> EnhancedRouterStats {
+    let base = get_router_stats();
+    let budget = check_budget(1000, &base.config.default_model);
+
+    // Analyze task type distribution from routing decisions
+    let mut distribution: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut total_cost = 0.0;
+    let mut count = 0usize;
+
+    if let Ok(entries) = fs::read_dir(decisions_dir()) {
+        for entry in entries.flatten() {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                if let Ok(d) = serde_json::from_str::<RoutingDecision>(&content) {
+                    *distribution.entry(d.task_type).or_insert(0) += 1;
+                    total_cost += d.estimated_cost;
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    let avg_cost = if count > 0 { total_cost / count as f64 } else { 0.0 };
+
+    EnhancedRouterStats {
+        base,
+        task_type_distribution: distribution,
+        avg_routing_cost: avg_cost,
+        budget_status: budget,
+        workflow_routes_count: get_workflow_routes().len(),
+    }
+}
