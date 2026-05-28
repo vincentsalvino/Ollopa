@@ -186,11 +186,18 @@ function App() {
     });
   }, []);
 
+  // Design agent state
+  const [designAgentActive, setDesignAgentActive] = useState(false);
+  const [activeProviderRole, setActiveProviderRole] = useState<string>("Primary");
+  const [lastFallbackReason, setLastFallbackReason] = useState<string | null>(null);
+  const [routingStrategy, setRoutingStrategy] = useState<string>("CostOptimized");
+
   // Available models (grouped by provider)
   const AVAILABLE_MODELS = [
     { group: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] },
     { group: "Anthropic (via DeepSeek)", models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"] },
     { group: "OpenAI", models: ["gpt-4o", "gpt-4o-mini"] },
+    { group: "MiMo (Xiaomi)", models: ["mimo-7b", "mimo-7b-rl"] },
   ];
   const ALL_MODELS = AVAILABLE_MODELS.flatMap((g) => g.models);
 
@@ -913,8 +920,56 @@ function App() {
           </div>
         </div>
 
-        {/* CENTER: token/cost bar */}
+        {/* CENTER: provider badges + token/cost bar */}
         <div className="toolbar-center">
+          {/* Provider role badge */}
+          <div className="provider-badges" style={{ display: "flex", gap: "6px", alignItems: "center", marginRight: "8px" }}>
+            <span
+              className="provider-badge"
+              style={{
+                fontSize: "10px",
+                padding: "2px 6px",
+                borderRadius: "4px",
+                background: activeProviderRole === "Fallback" ? "rgba(245,166,35,0.15)" : activeProviderRole === "Background" ? "rgba(100,100,255,0.15)" : activeProviderRole === "Design" ? "rgba(200,100,255,0.15)" : "rgba(80,200,120,0.15)",
+                color: activeProviderRole === "Fallback" ? "var(--warning, #f5a623)" : activeProviderRole === "Background" ? "#6464ff" : activeProviderRole === "Design" ? "#c864ff" : "var(--success, #50c878)",
+                fontWeight: 600,
+              }}
+              title={`Provider role: ${activeProviderRole}${lastFallbackReason ? ` (${lastFallbackReason})` : ""}`}
+            >
+              <i className={`fa-solid ${activeProviderRole === "Fallback" ? "fa-arrow-right-arrow-left" : activeProviderRole === "Background" ? "fa-gears" : activeProviderRole === "Design" ? "fa-palette" : "fa-circle-check"}`} style={{ marginRight: "4px" }} />
+              {activeProviderRole}
+            </span>
+            {designAgentActive && (
+              <span
+                className="design-agent-badge"
+                style={{
+                  fontSize: "10px",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                  background: "rgba(200,100,255,0.15)",
+                  color: "#c864ff",
+                  fontWeight: 600,
+                }}
+                title="Design Agent active — generating premium UI"
+              >
+                <i className="fa-solid fa-palette" style={{ marginRight: "4px" }} />
+                Design
+              </span>
+            )}
+            <span
+              className="strategy-badge"
+              style={{
+                fontSize: "9px",
+                padding: "1px 5px",
+                borderRadius: "3px",
+                background: "rgba(128,128,128,0.1)",
+                color: "var(--text-dim, #888)",
+              }}
+              title={`Routing: ${routingStrategy}`}
+            >
+              {routingStrategy}
+            </span>
+          </div>
           <div className="token-bar">
             <div className="token-track">
               <div className="token-fill" style={{ width: `${Math.min((state.sessionCost.cost_usd / 1) * 100, 100)}%` }} />

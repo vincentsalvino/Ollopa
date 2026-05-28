@@ -212,6 +212,45 @@ pub enum AppEvent {
         partial_text: String,
         model: String,
     },
+
+    // ═══════ MiMo + Design Agent Events ═══════
+
+    #[serde(rename = "provider_fallback")]
+    ProviderFallback {
+        original_provider: String,
+        fallback_provider: String,
+        reason: String,
+        transparent: bool,
+    },
+
+    #[serde(rename = "background_task")]
+    BackgroundTask {
+        task_id: String,
+        task_type: String,
+        status: String,
+        provider: String,
+    },
+
+    #[serde(rename = "design_agent_activated")]
+    DesignAgentActivated {
+        trigger_keywords: Vec<String>,
+        has_memory: bool,
+    },
+
+    #[serde(rename = "design_event")]
+    DesignEvent {
+        event_type: String,
+        detail: String,
+    },
+
+    #[serde(rename = "routing_telemetry")]
+    RoutingTelemetry {
+        provider: String,
+        model: String,
+        role: String,
+        strategy: String,
+        cost: f64,
+    },
 }
 
 // ═══════ Parsing ═══════

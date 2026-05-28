@@ -26,8 +26,19 @@ pub enum ProviderType {
     OpenAI,
     OpenRouter,
     NousResearch,
+    MiMo,
     Local,
     Custom,
+}
+
+/// Role a provider plays in the routing topology
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ProviderRole {
+    Primary,
+    Fallback,
+    Background,
+    Compression,
+    Design,
 }
 
 /// A model available from a provider
@@ -52,6 +63,10 @@ pub enum RoutingStrategy {
     RoundRobin,
     Failover,
     Manual,
+    PrimaryOnly,
+    InlineFallback,
+    BackgroundIntelligence,
+    DesignFocused,
 }
 
 /// Router configuration
@@ -69,10 +84,10 @@ pub struct RouterConfig {
 impl Default for RouterConfig {
     fn default() -> Self {
         Self {
-            strategy: RoutingStrategy::CostOptimized,
+            strategy: RoutingStrategy::InlineFallback,
             default_provider: "deepseek".to_string(),
             default_model: "deepseek-chat".to_string(),
-            fallback_provider: Some("claude".to_string()),
+            fallback_provider: Some("mimo".to_string()),
             max_retries: 2,
             timeout_ms: 30000,
             cost_threshold_usd: 0.01,
@@ -91,6 +106,12 @@ pub struct RoutingDecision {
     pub reason: String,
     pub estimated_cost: f64,
     pub fallback_used: bool,
+    #[serde(default)]
+    pub provider_role: Option<String>,
+    #[serde(default)]
+    pub fallback_reason: Option<String>,
+    #[serde(default)]
+    pub routing_strategy: Option<String>,
 }
 
 /// Provider health status
@@ -350,6 +371,40 @@ fn builtin_providers() -> Vec<Provider> {
             created_at: 0,
             is_builtin: true,
         },
+        // ═══════ MiMo Provider (Xiaomi) ═══════
+        Provider {
+            id: "mimo".to_string(),
+            name: "Xiaomi MiMo".to_string(),
+            provider_type: ProviderType::MiMo,
+            base_url: Some("https://api.mimo.xiaomi.com/v1".to_string()),
+            models: vec![
+                ModelConfig {
+                    id: "mimo-7b".to_string(),
+                    name: "MiMo 7B".to_string(),
+                    max_tokens: 8192,
+                    input_price_per_m: 0.05,
+                    output_price_per_m: 0.10,
+                    supports_streaming: true,
+                    supports_tools: false,
+                    context_window: 32000,
+                },
+                ModelConfig {
+                    id: "mimo-7b-rl".to_string(),
+                    name: "MiMo 7B RL".to_string(),
+                    max_tokens: 8192,
+                    input_price_per_m: 0.06,
+                    output_price_per_m: 0.12,
+                    supports_streaming: true,
+                    supports_tools: true,
+                    context_window: 32000,
+                },
+            ],
+            enabled: true,
+            priority: 6,
+            api_key_env: Some("MIMO_API_KEY".to_string()),
+            created_at: 0,
+            is_builtin: true,
+        },
     ]
 }
 
@@ -458,6 +513,9 @@ pub fn route(
             reason: "No enabled providers, using default".to_string(),
             estimated_cost: 0.0,
             fallback_used: false,
+            provider_role: None,
+            fallback_reason: None,
+            routing_strategy: None,
         };
     }
 
@@ -482,6 +540,9 @@ pub fn route(
                 reason: format!("Using {:?} strategy default", config.strategy),
                 estimated_cost: 0.0,
                 fallback_used: false,
+                provider_role: None,
+                fallback_reason: None,
+                routing_strategy: None,
             }
         }
     }
@@ -526,6 +587,9 @@ fn route_by_cost(
             ),
             estimated_cost: cost,
             fallback_used: false,
+            provider_role: None,
+            fallback_reason: None,
+            routing_strategy: Some("CostOptimized".to_string()),
         },
         None => RoutingDecision {
             id: format!("rd-{}", now),
@@ -536,6 +600,9 @@ fn route_by_cost(
             reason: "No model matched criteria, using first available".to_string(),
             estimated_cost: 0.0,
             fallback_used: true,
+            provider_role: None,
+            fallback_reason: None,
+            routing_strategy: Some("CostOptimized".to_string()),
         },
     }
 }
@@ -574,6 +641,9 @@ fn route_by_quality(
             ),
             estimated_cost: (model.input_price_per_m + model.output_price_per_m) / 1000.0,
             fallback_used: false,
+            provider_role: None,
+            fallback_reason: None,
+            routing_strategy: Some("QualityFirst".to_string()),
         },
         None => RoutingDecision {
             id: format!("rd-{}", now),
@@ -584,6 +654,9 @@ fn route_by_quality(
             reason: "No model matched, using first available".to_string(),
             estimated_cost: 0.0,
             fallback_used: true,
+            provider_role: None,
+            fallback_reason: None,
+            routing_strategy: Some("QualityFirst".to_string()),
         },
     }
 }
@@ -616,6 +689,9 @@ fn route_failover(
                 reason: format!("Failover: primary {} is healthy", provider.name),
                 estimated_cost: 0.0,
                 fallback_used: false,
+                provider_role: Some("Primary".to_string()),
+                fallback_reason: None,
+                routing_strategy: Some("Failover".to_string()),
             };
         }
     }
@@ -630,6 +706,9 @@ fn route_failover(
             reason: format!("Failover: primary down, using fallback {}", fb.name),
             estimated_cost: 0.0,
             fallback_used: true,
+            provider_role: Some("Fallback".to_string()),
+            fallback_reason: Some("primary_down".to_string()),
+            routing_strategy: Some("Failover".to_string()),
         };
     }
 
@@ -642,6 +721,9 @@ fn route_failover(
         reason: "Failover: no fallback configured, using first available".to_string(),
         estimated_cost: 0.0,
         fallback_used: true,
+        provider_role: None,
+        fallback_reason: None,
+        routing_strategy: Some("Failover".to_string()),
     }
 }
 
@@ -1012,6 +1094,9 @@ pub fn route_by_latency(
             reason: format!("Latency first: {} ({}ms avg)", provider.name, latency),
             estimated_cost: (model.input_price_per_m + model.output_price_per_m) / 2000.0,
             fallback_used: false,
+            provider_role: None,
+            fallback_reason: None,
+            routing_strategy: Some("LatencyFirst".to_string()),
         },
         None => RoutingDecision {
             id: format!("rd-{}", now),
@@ -1022,6 +1107,9 @@ pub fn route_by_latency(
             reason: "No providers available for latency routing".to_string(),
             estimated_cost: 0.0,
             fallback_used: true,
+            provider_role: None,
+            fallback_reason: None,
+            routing_strategy: Some("LatencyFirst".to_string()),
         },
     }
 }
@@ -1122,4 +1210,325 @@ pub fn get_enhanced_router_stats() -> EnhancedRouterStats {
         budget_status: budget,
         workflow_routes_count: get_workflow_routes().len(),
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MiMo Integration — Inline Fallback + Background Intelligence
+// ═══════════════════════════════════════════════════════════════
+
+/// Failure type that triggers inline fallback
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum FallbackTrigger {
+    RateLimit,
+    Timeout,
+    TransientError,
+    QuotaExhausted,
+    DegradedLatency,
+    PartialGenerationFailure,
+}
+
+impl FallbackTrigger {
+    pub fn label(&self) -> &str {
+        match self {
+            FallbackTrigger::RateLimit => "rate_limit",
+            FallbackTrigger::Timeout => "timeout",
+            FallbackTrigger::TransientError => "transient_error",
+            FallbackTrigger::QuotaExhausted => "quota_exhausted",
+            FallbackTrigger::DegradedLatency => "degraded_latency",
+            FallbackTrigger::PartialGenerationFailure => "partial_generation_failure",
+        }
+    }
+}
+
+/// Result of an inline fallback routing decision
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InlineFallbackDecision {
+    pub original_provider: String,
+    pub original_model: String,
+    pub fallback_provider: String,
+    pub fallback_model: String,
+    pub trigger: String,
+    pub timestamp: u64,
+    pub transparent: bool,
+    pub estimated_cost_savings: f64,
+}
+
+/// Route with inline fallback: try primary, return fallback if primary unhealthy
+pub fn route_inline_fallback(
+    task_type: &str,
+    needs_tools: bool,
+    trigger: Option<FallbackTrigger>,
+) -> RoutingDecision {
+    let config = load_config();
+    let providers = list_providers();
+    let health = load_health();
+    let now = current_timestamp_ms();
+
+    let primary = providers.iter().find(|p| p.id == config.default_provider && p.enabled);
+    let mimo = providers.iter().find(|p| p.id == "mimo" && p.enabled);
+
+    let primary_healthy = primary.map_or(false, |p| {
+        health.iter().find(|h| h.provider_id == p.id)
+            .map_or(true, |h| h.status != HealthStatus::Down && h.error_rate < 0.5)
+    });
+
+    let should_fallback = trigger.is_some() || !primary_healthy;
+
+    if should_fallback {
+        if let Some(fb) = mimo {
+            let model = select_model_for_task(fb, task_type, needs_tools);
+            return RoutingDecision {
+                id: format!("rd-fb-{}", now),
+                timestamp: now,
+                task_type: task_type.to_string(),
+                selected_provider: fb.id.clone(),
+                selected_model: model.id.clone(),
+                reason: format!(
+                    "Inline fallback to MiMo: {}",
+                    trigger.as_ref().map_or("primary unhealthy", |t| t.label())
+                ),
+                estimated_cost: (model.input_price_per_m + model.output_price_per_m) / 2000.0,
+                fallback_used: true,
+                provider_role: Some("Fallback".to_string()),
+                fallback_reason: trigger.map(|t| t.label().to_string()),
+                routing_strategy: Some("InlineFallback".to_string()),
+            };
+        }
+    }
+
+    // Primary is healthy — use it
+    if let Some(p) = primary {
+        let model = select_model_for_task(p, task_type, needs_tools);
+        return RoutingDecision {
+            id: format!("rd-{}", now),
+            timestamp: now,
+            task_type: task_type.to_string(),
+            selected_provider: p.id.clone(),
+            selected_model: model.id.clone(),
+            reason: format!("Primary provider {} healthy", p.name),
+            estimated_cost: (model.input_price_per_m + model.output_price_per_m) / 2000.0,
+            fallback_used: false,
+            provider_role: Some("Primary".to_string()),
+            fallback_reason: None,
+            routing_strategy: Some("InlineFallback".to_string()),
+        };
+    }
+
+    // Absolute fallback
+    RoutingDecision {
+        id: format!("rd-{}", now),
+        timestamp: now,
+        task_type: task_type.to_string(),
+        selected_provider: config.default_provider,
+        selected_model: config.default_model,
+        reason: "No providers available for inline fallback".to_string(),
+        estimated_cost: 0.0,
+        fallback_used: true,
+        provider_role: None,
+        fallback_reason: None,
+        routing_strategy: Some("InlineFallback".to_string()),
+    }
+}
+
+/// Route for background intelligence tasks (summaries, indexing, compression)
+pub fn route_background_intelligence(task_type: &str) -> RoutingDecision {
+    let providers = list_providers();
+    let now = current_timestamp_ms();
+
+    // Prefer MiMo for background tasks (cheapest)
+    let mimo = providers.iter().find(|p| p.id == "mimo" && p.enabled);
+
+    if let Some(provider) = mimo {
+        let model = provider.models.first().cloned().unwrap_or(ModelConfig {
+            id: "mimo-7b".to_string(),
+            name: "MiMo 7B".to_string(),
+            max_tokens: 8192,
+            input_price_per_m: 0.05,
+            output_price_per_m: 0.10,
+            supports_streaming: true,
+            supports_tools: false,
+            context_window: 32000,
+        });
+
+        return RoutingDecision {
+            id: format!("rd-bg-{}", now),
+            timestamp: now,
+            task_type: task_type.to_string(),
+            selected_provider: provider.id.clone(),
+            selected_model: model.id.clone(),
+            reason: format!("Background intelligence: {} via MiMo (cost-optimized)", task_type),
+            estimated_cost: (model.input_price_per_m + model.output_price_per_m) / 2000.0,
+            fallback_used: false,
+            provider_role: Some("Background".to_string()),
+            fallback_reason: None,
+            routing_strategy: Some("BackgroundIntelligence".to_string()),
+        };
+    }
+
+    // Fall back to cheapest enabled provider
+    let cheapest = providers.iter()
+        .filter(|p| p.enabled)
+        .flat_map(|p| p.models.iter().map(move |m| (p, m)))
+        .min_by(|a, b| {
+            let cost_a = a.1.input_price_per_m + a.1.output_price_per_m;
+            let cost_b = b.1.input_price_per_m + b.1.output_price_per_m;
+            cost_a.partial_cmp(&cost_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+    match cheapest {
+        Some((provider, model)) => RoutingDecision {
+            id: format!("rd-bg-{}", now),
+            timestamp: now,
+            task_type: task_type.to_string(),
+            selected_provider: provider.id.clone(),
+            selected_model: model.id.clone(),
+            reason: format!("Background intelligence via {} (MiMo unavailable)", provider.name),
+            estimated_cost: (model.input_price_per_m + model.output_price_per_m) / 2000.0,
+            fallback_used: true,
+            provider_role: Some("Background".to_string()),
+            fallback_reason: Some("mimo_unavailable".to_string()),
+            routing_strategy: Some("BackgroundIntelligence".to_string()),
+        },
+        None => RoutingDecision {
+            id: format!("rd-bg-{}", now),
+            timestamp: now,
+            task_type: task_type.to_string(),
+            selected_provider: "deepseek".to_string(),
+            selected_model: "deepseek-chat".to_string(),
+            reason: "No providers available for background intelligence".to_string(),
+            estimated_cost: 0.0,
+            fallback_used: true,
+            provider_role: Some("Background".to_string()),
+            fallback_reason: None,
+            routing_strategy: Some("BackgroundIntelligence".to_string()),
+        },
+    }
+}
+
+/// Route for design-focused tasks
+pub fn route_design_focused(task_type: &str, needs_tools: bool) -> RoutingDecision {
+    let providers = list_providers();
+    let health = load_health();
+    let now = current_timestamp_ms();
+
+    // Design tasks need high-quality providers
+    let enabled: Vec<&Provider> = providers.iter()
+        .filter(|p| p.enabled)
+        .filter(|p| {
+            health.iter().find(|h| h.provider_id == p.id)
+                .map_or(true, |h| h.status != HealthStatus::Down)
+        })
+        .collect();
+
+    // Prefer high context + quality for design tasks
+    let mut best: Option<(&Provider, &ModelConfig, f64)> = None;
+    for provider in &enabled {
+        for model in &provider.models {
+            if needs_tools && !model.supports_tools {
+                continue;
+            }
+            let score = model.context_window as f64 * 0.001
+                + model.output_price_per_m * 5.0
+                + model.max_tokens as f64 * 0.01;
+            if best.is_none() || score > best.as_ref().unwrap().2 {
+                best = Some((provider, model, score));
+            }
+        }
+    }
+
+    match best {
+        Some((provider, model, _)) => RoutingDecision {
+            id: format!("rd-design-{}", now),
+            timestamp: now,
+            task_type: task_type.to_string(),
+            selected_provider: provider.id.clone(),
+            selected_model: model.id.clone(),
+            reason: format!("Design-focused routing: {} ({}) — quality-first for UI/UX tasks", model.name, provider.name),
+            estimated_cost: (model.input_price_per_m + model.output_price_per_m) / 2000.0,
+            fallback_used: false,
+            provider_role: Some("Design".to_string()),
+            fallback_reason: None,
+            routing_strategy: Some("DesignFocused".to_string()),
+        },
+        None => RoutingDecision {
+            id: format!("rd-design-{}", now),
+            timestamp: now,
+            task_type: task_type.to_string(),
+            selected_provider: "deepseek".to_string(),
+            selected_model: "deepseek-chat".to_string(),
+            reason: "No providers available for design-focused routing".to_string(),
+            estimated_cost: 0.0,
+            fallback_used: true,
+            provider_role: Some("Design".to_string()),
+            fallback_reason: None,
+            routing_strategy: Some("DesignFocused".to_string()),
+        },
+    }
+}
+
+fn select_model_for_task<'a>(provider: &'a Provider, task_type: &str, needs_tools: bool) -> &'a ModelConfig {
+    let candidates: Vec<&ModelConfig> = provider.models.iter()
+        .filter(|m| !needs_tools || m.supports_tools)
+        .collect();
+
+    if candidates.is_empty() {
+        return provider.models.first().unwrap_or_else(|| {
+            // This should never happen but provides a safe fallback
+            &provider.models[0]
+        });
+    }
+
+    match task_type {
+        "summary" | "compression" | "indexing" | "labeling" | "tagging" => {
+            // Cheapest model for background tasks
+            candidates.iter()
+                .min_by(|a, b| {
+                    let cost_a = a.input_price_per_m + a.output_price_per_m;
+                    let cost_b = b.input_price_per_m + b.output_price_per_m;
+                    cost_a.partial_cmp(&cost_b).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(&candidates[0])
+        }
+        _ => {
+            // Best model for other tasks
+            candidates.iter()
+                .max_by(|a, b| {
+                    let q_a = a.context_window as f64 + a.output_price_per_m * 1000.0;
+                    let q_b = b.context_window as f64 + b.output_price_per_m * 1000.0;
+                    q_a.partial_cmp(&q_b).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(&candidates[0])
+        }
+    }
+}
+
+/// Get provider role mapping
+pub fn get_provider_roles() -> Vec<(String, ProviderRole)> {
+    vec![
+        ("deepseek".to_string(), ProviderRole::Primary),
+        ("claude".to_string(), ProviderRole::Primary),
+        ("mimo".to_string(), ProviderRole::Fallback),
+        ("openai".to_string(), ProviderRole::Primary),
+        ("openrouter".to_string(), ProviderRole::Primary),
+        ("nous".to_string(), ProviderRole::Primary),
+    ]
+}
+
+/// MiMo-specific task suitability check
+pub fn is_mimo_suitable(task_type: &str) -> bool {
+    matches!(task_type,
+        "summary" | "compression" | "indexing" | "labeling"
+        | "tagging" | "retrieval_metadata" | "memory_compression"
+        | "duplicate_detection" | "session_compression"
+        | "graph_labeling" | "visual_memory_tagging"
+        | "background" | "lightweight_reasoning"
+    )
+}
+
+/// Check if task should NOT use MiMo (critical tasks)
+pub fn is_mimo_excluded(task_type: &str) -> bool {
+    matches!(task_type,
+        "architecture" | "debugging" | "security"
+        | "critical_refactor" | "complex_orchestration"
+    )
 }

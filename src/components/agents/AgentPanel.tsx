@@ -40,6 +40,10 @@ const STRATEGY_LABELS: Record<RoutingStrategy, string> = {
   RoundRobin: "Round Robin",
   Failover: "Failover",
   Manual: "Manual",
+  PrimaryOnly: "Primary Only",
+  InlineFallback: "Inline Fallback",
+  BackgroundIntelligence: "Background Intelligence",
+  DesignFocused: "Design Focused",
 };
 
 export default function AgentPanel({

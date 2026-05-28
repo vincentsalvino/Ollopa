@@ -349,6 +349,37 @@ function processAppEvent(state: EventStoreState, event: AppEvent): EventStoreSta
         }),
       };
 
+    // ═══════ MiMo + Design Agent Events ═══════
+
+    case "provider_fallback":
+      return {
+        ...state,
+        timeline: addEntry(state.timeline, "status", {
+          kind: "status" as const,
+          status: "provider_fallback",
+          detail: `Fallback: ${event.original_provider} → ${event.fallback_provider} (${event.reason})`,
+        }),
+      };
+
+    case "background_task":
+      return state;
+
+    case "design_agent_activated":
+      return {
+        ...state,
+        timeline: addEntry(state.timeline, "status", {
+          kind: "status" as const,
+          status: "design_agent",
+          detail: `Design Agent activated (${event.trigger_keywords.join(", ")})`,
+        }),
+      };
+
+    case "design_event":
+      return state;
+
+    case "routing_telemetry":
+      return state;
+
     default:
       return state;
   }
