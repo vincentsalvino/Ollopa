@@ -9,7 +9,7 @@ import type {
   WorkflowPatternInfo,
 } from "../../types";
 
-type WorkspaceTab = "overview" | "modules" | "drift" | "patterns" | "impact";
+type WorkspaceTab = "overview" | "modules" | "drift" | "patterns" | "impact" | "indexer";
 
 interface WorkspacePanelProps {
   visible: boolean;
@@ -29,6 +29,10 @@ export default function WorkspacePanel({
   const [impact, setImpact] = useState<ChangeImpact | null>(null);
   const [impactFile, setImpactFile] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Indexer state
+  const [indexData, setIndexData] = useState<{ files: { path: string; language: string }[]; symbols: { name: string; kind: string; file_path: string; line: number }[]; last_indexed: number } | null>(null);
+  const [indexing, setIndexing] = useState(false);
 
   const loadIntelligence = useCallback(async () => {
     if (!projectPath) return;
@@ -62,6 +66,20 @@ export default function WorkspacePanel({
     }
   }, [projectPath, impactFile, onToast]);
 
+  const handleReindex = useCallback(async () => {
+    if (!projectPath) return;
+    setIndexing(true);
+    try {
+      const data = await invoke<typeof indexData>("codebase_index", { projectPath });
+      setIndexData(data);
+      onToast("Indexing complete", "success");
+    } catch (e) {
+      onToast(`Indexing failed: ${e}`, "error");
+    } finally {
+      setIndexing(false);
+    }
+  }, [projectPath, onToast]);
+
   if (!visible) return null;
 
   const map: RepoMap | null = intel?.repo_map ?? null;
@@ -77,7 +95,7 @@ export default function WorkspacePanel({
         </div>
 
         <div className="panel-tabs">
-          {(["overview", "modules", "drift", "patterns", "impact"] as WorkspaceTab[]).map((t) => (
+          {(["overview", "modules", "drift", "patterns", "impact", "indexer"] as WorkspaceTab[]).map((t) => (
             <button key={t} className={`tab-btn ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -241,6 +259,59 @@ export default function WorkspacePanel({
                       <div key={i} style={{ fontSize: "0.85em", paddingLeft: 12, color: "var(--text-muted)" }}>{f}</div>
                     ))}
                   </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === "indexer" && (
+            <div className="data-list">
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <h4 style={{ margin: 0 }}>Codebase Indexer</h4>
+                <button
+                  className="tab-btn active"
+                  onClick={handleReindex}
+                  disabled={indexing || !projectPath}
+                  style={{ fontSize: 12, padding: "4px 10px" }}
+                >
+                  {indexing ? "Indexing..." : "Re-index"}
+                </button>
+              </div>
+              {indexData ? (
+                <>
+                  <div className="stat-grid" style={{ marginBottom: 12 }}>
+                    <div className="stat-card">
+                      <div className="stat-label">Files</div>
+                      <div className="stat-value">{indexData.files.length}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-label">Symbols</div>
+                      <div className="stat-value">{indexData.symbols.length}</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-label">Last Indexed</div>
+                      <div className="stat-value" style={{ fontSize: 12 }}>
+                        {new Date(indexData.last_indexed).toLocaleTimeString()}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ maxHeight: 300, overflow: "auto" }}>
+                    <strong>Languages:</strong>
+                    {Object.entries(
+                      indexData.files.reduce((acc: Record<string, number>, f) => {
+                        acc[f.language] = (acc[f.language] || 0) + 1;
+                        return acc;
+                      }, {})
+                    ).sort((a, b) => b[1] - a[1]).map(([lang, count]) => (
+                      <div key={lang} style={{ fontSize: "0.85em", paddingLeft: 12 }}>
+                        {lang}: {count} files
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div style={{ opacity: 0.5, textAlign: "center", padding: 20 }}>
+                  {projectPath ? "Click Re-index to scan the project" : "Select a project first"}
                 </div>
               )}
             </div>

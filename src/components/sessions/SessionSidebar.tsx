@@ -138,6 +138,17 @@ export default function SessionSidebar({
     }
   };
 
+  const handleImportClaudeSession = async (sessionId: string) => {
+    try {
+      const newId = await invoke<string>("import_claude_code_session", { uuid: sessionId });
+      onToast(`Imported as ${newId}`, "success");
+      refresh();
+      setTab("ollopa");
+    } catch (e) {
+      onToast(`Import failed: ${e}`, "error");
+    }
+  };
+
   const filtered = useMemo(() => {
     if (filter === "all") return sessions;
     return sessions.filter((s) => s.status === filter);
@@ -295,6 +306,16 @@ export default function SessionSidebar({
                       <span>{formatTokenCount(s.total_tokens)} tok</span>
                       <span className="ss-model-tag">{s.model || "unknown"}</span>
                     </div>
+                  </div>
+                  <div className="ss-item-actions">
+                    <button
+                      className="session-delete"
+                      onClick={(e) => { e.stopPropagation(); handleImportClaudeSession(s.session_id); }}
+                      title="Import to Ollopa"
+                      style={{ color: "var(--accent, #4fc3f7)" }}
+                    >
+                      <i className="fa-solid fa-download" />
+                    </button>
                   </div>
                 </div>
               ))}

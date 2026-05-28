@@ -316,6 +316,71 @@ fn chrono_today() -> String {
     format!("{:04}-{:02}-{:02}", 1970 + years, months + 1, day)
 }
 
+// ═══════ Auto-Compaction ═══════
+
+pub fn should_compact(messages: &[crate::api_client::ChatMessage]) -> Option<usize> {
+    let budget = load_budget();
+    let total: usize = messages.iter().map(|m| estimate_tokens(&m.content)).sum();
+    if total > budget.max_context_tokens {
+        // Find index such that removing messages before it brings us under budget
+        let mut running = 0;
+        for (i, msg) in messages.iter().enumerate() {
+            running += estimate_tokens(&msg.content);
+            if total - running <= budget.max_context_tokens {
+                return Some(i + 1);
+            }
+        }
+        Some(messages.len() / 2)
+    } else {
+        None
+    }
+}
+
+pub fn summarize_messages(messages: &[crate::api_client::ChatMessage]) -> String {
+    let mut summary = String::from("Summary of earlier conversation:\n");
+    for msg in messages {
+        let role = &msg.role;
+        let preview = if msg.content.len() > 150 {
+            format!("{}...", &msg.content[..147])
+        } else {
+            msg.content.clone()
+        };
+        summary.push_str(&format!("- [{}]: {}\n", role, preview));
+    }
+    summary
+}
+
+// ═══════ Budget Alerts ═══════
+
+#[derive(Debug, Clone, Serialize)]
+pub enum BudgetAlertLevel {
+    Ok,
+    Warning,
+    Critical,
+    Exceeded,
+}
+
+pub fn check_budget_alert() -> (BudgetAlertLevel, f64, f64) {
+    let budget = load_budget();
+    let usage = get_month_usage(budget.rolling_window_days);
+    let pct = if budget.monthly_budget_usd > 0.0 {
+        (usage.total_cost_usd / budget.monthly_budget_usd) * 100.0
+    } else {
+        0.0
+    };
+    let remaining = (budget.monthly_budget_usd - usage.total_cost_usd).max(0.0);
+    let level = if pct >= 95.0 {
+        BudgetAlertLevel::Exceeded
+    } else if pct >= 80.0 {
+        BudgetAlertLevel::Critical
+    } else if pct >= 50.0 {
+        BudgetAlertLevel::Warning
+    } else {
+        BudgetAlertLevel::Ok
+    };
+    (level, pct, remaining)
+}
+
 // ═══════ Rolling Summaries ═══════
 
 /// Generate rolling summaries from older session summaries

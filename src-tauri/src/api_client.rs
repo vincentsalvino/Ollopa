@@ -84,6 +84,8 @@ struct ChatRequest {
     messages: Vec<ChatMessage>,
     stream: bool,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<crate::api_tools::ToolDefinition>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,13 +96,27 @@ struct StreamChunk {
 #[derive(Debug, Deserialize)]
 struct StreamChoice {
     delta: Option<Delta>,
-    #[allow(dead_code)]
     finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Delta {
     content: Option<String>,
+    tool_calls: Option<Vec<DeltaToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeltaToolCall {
+    #[allow(dead_code)]
+    index: Option<u32>,
+    id: Option<String>,
+    function: Option<DeltaFunction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeltaFunction {
+    name: Option<String>,
+    arguments: Option<String>,
 }
 
 /// Direct API client that calls OpenAI-compatible endpoints (DeepSeek, etc.)
@@ -111,6 +127,8 @@ pub struct DirectApiClient {
     session_id: String,
     cancel_token: CancellationToken,
     system_prompt: String,
+    smart_context_enabled: bool,
+    tools_enabled: bool,
 }
 
 fn conversations_dir() -> std::path::PathBuf {
@@ -162,6 +180,8 @@ impl DirectApiClient {
             session_id,
             cancel_token: CancellationToken::new(),
             system_prompt: default_system_prompt,
+            smart_context_enabled: false,
+            tools_enabled: true,
         })
     }
 
@@ -261,6 +281,11 @@ impl DirectApiClient {
         &self.system_prompt
     }
 
+    /// Enable or disable smart context assembly.
+    pub fn set_smart_context(&mut self, enabled: bool) {
+        self.smart_context_enabled = enabled;
+    }
+
     /// Get the current model name.
     #[allow(dead_code)]
     pub fn current_model(&self) -> &str {
@@ -289,6 +314,30 @@ impl DirectApiClient {
         &self.messages
     }
 
+    /// Compact the conversation history by summarizing old messages.
+    pub fn compact(&mut self) -> Option<String> {
+        if let Some(idx) = crate::token_optimizer::should_compact(&self.messages) {
+            // Keep system prompt (index 0) and compact messages from 1..idx
+            let start = if !self.messages.is_empty() && self.messages[0].role == "system" { 1 } else { 0 };
+            if idx > start && idx < self.messages.len() {
+                let to_compact: Vec<_> = self.messages[start..idx].to_vec();
+                let summary = crate::token_optimizer::summarize_messages(&to_compact);
+                let mut new_messages = Vec::new();
+                if start > 0 {
+                    new_messages.push(self.messages[0].clone());
+                }
+                new_messages.push(ChatMessage {
+                    role: "system".to_string(),
+                    content: summary.clone(),
+                });
+                new_messages.extend_from_slice(&self.messages[idx..]);
+                self.messages = new_messages;
+                return Some(format!("Compacted {} messages", idx - start));
+            }
+        }
+        None
+    }
+
     /// Send a user message and stream the response back via events.
     pub async fn send_message(
         &mut self,
@@ -297,19 +346,52 @@ impl DirectApiClient {
     ) -> Result<(), String> {
         let start = std::time::Instant::now();
 
-        // Add user message to history
-        self.messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: user_message.to_string(),
-        });
+        // Auto-compact if context exceeds budget
+        if let Some(detail) = self.compact() {
+            let _ = app_handle.emit(
+                "app-event",
+                AppEvent::StatusUpdate {
+                    status: "compacted".to_string(),
+                    detail,
+                },
+            );
+        }
+
+        // Add user message to history (skip for tool follow-up calls)
+        if !user_message.is_empty() {
+            self.messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: user_message.to_string(),
+            });
+        }
+
+        // Smart context: inject optimized context as a system message after the primary system prompt
+        if self.smart_context_enabled && !user_message.is_empty() {
+            let context = crate::token_optimizer::build_optimized_context(None, Some(user_message));
+            if !context.is_empty() {
+                // Insert after system prompt (index 1) and before conversation history
+                let insert_pos = if !self.messages.is_empty() && self.messages[0].role == "system" { 1 } else { 0 };
+                self.messages.insert(insert_pos, ChatMessage {
+                    role: "system".to_string(),
+                    content: format!("[Context from memory & decisions]\n{}", context),
+                });
+            }
+        }
 
         let url = format!("{}/chat/completions", self.config.base_url);
+
+        let tools = if self.tools_enabled {
+            Some(crate::api_tools::builtin_tools())
+        } else {
+            None
+        };
 
         let request = ChatRequest {
             model: self.config.model.clone(),
             messages: self.messages.clone(),
             stream: true,
             max_tokens: 4096,
+            tools,
         };
 
         let mut req_builder = self
@@ -345,8 +427,11 @@ impl DirectApiClient {
                     recoverable: true,
                 },
             );
-            // Remove the user message since it failed
-            self.messages.pop();
+            // Keep user message in history, push error as assistant message for consistency
+            self.messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: format!("[Error: {}]", err),
+            });
             return Err(err);
         }
 
@@ -363,6 +448,13 @@ impl DirectApiClient {
         let mut buffer = String::new();
         let mut consecutive_errors: u32 = 0;
         const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+
+        // Tool call accumulation
+        let mut pending_tool_id = String::new();
+        let mut pending_tool_name = String::new();
+        let mut pending_tool_args = String::new();
+        let mut has_tool_call = false;
+        let mut _finish_reason_str = String::new();
 
         loop {
             tokio::select! {
@@ -403,19 +495,38 @@ impl DirectApiClient {
 
                                     if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
                                         if let Some(choices) = chunk.choices {
-                                            for choice in choices {
-                                                if let Some(delta) = choice.delta {
-                                                    if let Some(content) = delta.content {
+                                            for choice in &choices {
+                                                if let Some(ref fr) = choice.finish_reason {
+                                                    _finish_reason_str = fr.clone();
+                                                }
+                                                if let Some(ref delta) = choice.delta {
+                                                    if let Some(ref content) = delta.content {
                                                         if !content.is_empty() {
-                                                            full_response.push_str(&content);
-                                                            // Emit streaming chunk for real-time display
+                                                            full_response.push_str(content);
                                                             let _ = app_handle.emit(
                                                                 "app-event",
                                                                 AppEvent::StreamingChunk {
-                                                                    text: content,
+                                                                    text: content.clone(),
                                                                     model: self.config.model.clone(),
                                                                 },
                                                             );
+                                                        }
+                                                    }
+                                                    // Accumulate tool call deltas
+                                                    if let Some(ref tool_calls) = delta.tool_calls {
+                                                        for tc in tool_calls {
+                                                            if let Some(ref id) = tc.id {
+                                                                pending_tool_id = id.clone();
+                                                            }
+                                                            if let Some(ref func) = tc.function {
+                                                                if let Some(ref name) = func.name {
+                                                                    pending_tool_name = name.clone();
+                                                                }
+                                                                if let Some(ref args) = func.arguments {
+                                                                    pending_tool_args.push_str(args);
+                                                                }
+                                                            }
+                                                            has_tool_call = true;
                                                         }
                                                     }
                                                 }
@@ -457,6 +568,56 @@ impl DirectApiClient {
             );
         }
 
+        // Execute tool calls if the model requested them
+        if has_tool_call && !was_cancelled && !pending_tool_name.is_empty() {
+            let tool_id = if pending_tool_id.is_empty() {
+                format!("tool-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis())
+            } else {
+                pending_tool_id.clone()
+            };
+
+            let args: serde_json::Value = serde_json::from_str(&pending_tool_args).unwrap_or(serde_json::json!({}));
+
+            let _ = app_handle.emit(
+                "app-event",
+                AppEvent::ToolStarted {
+                    tool_use_id: tool_id.clone(),
+                    tool_name: pending_tool_name.clone(),
+                    input: args.clone(),
+                },
+            );
+
+            let tool_result = crate::api_tools::execute_tool(&pending_tool_name, &args);
+            let (output, is_error) = match tool_result {
+                Ok(result) => (result, false),
+                Err(e) => (e, true),
+            };
+
+            let _ = app_handle.emit(
+                "app-event",
+                AppEvent::ToolFinished {
+                    tool_use_id: tool_id.clone(),
+                    tool_name: pending_tool_name.clone(),
+                    output: output.clone(),
+                    is_error,
+                },
+            );
+
+            // Push tool result into messages and make a follow-up API call
+            self.messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: format!("[Tool call: {}({})]", pending_tool_name, pending_tool_args),
+            });
+            self.messages.push(ChatMessage {
+                role: "user".to_string(),
+                content: format!("[Tool result for {}]:\n{}", pending_tool_name, output),
+            });
+
+            // Recursive call for follow-up (max 3 rounds handled by the caller)
+            // We do one follow-up here
+            return Box::pin(self.send_message("", app_handle)).await;
+        }
+
         // Reset cancel token for next request
         self.cancel_token = CancellationToken::new();
 
@@ -488,6 +649,33 @@ impl DirectApiClient {
 
             // Persist conversation to disk
             self.save_messages();
+        }
+
+        // Remove injected smart context message to prevent accumulation
+        if self.smart_context_enabled {
+            self.messages.retain(|m| {
+                !(m.role == "system" && m.content.starts_with("[Context from memory & decisions]"))
+            });
+        }
+
+        // Record usage for historical cost tracking (budget alerts, dashboard)
+        let _ = crate::token_optimizer::record_usage(est_input_tokens, est_output_tokens);
+
+        // Check budget and emit alert if threshold crossed
+        let (alert_level, pct, remaining) = crate::token_optimizer::check_budget_alert();
+        match alert_level {
+            crate::token_optimizer::BudgetAlertLevel::Warning |
+            crate::token_optimizer::BudgetAlertLevel::Critical |
+            crate::token_optimizer::BudgetAlertLevel::Exceeded => {
+                let _ = app_handle.emit(
+                    "app-event",
+                    AppEvent::StatusUpdate {
+                        status: "budget_alert".to_string(),
+                        detail: format!("{:.0}% of budget used — ${:.4} remaining", pct, remaining),
+                    },
+                );
+            }
+            _ => {}
         }
 
         // Emit token usage

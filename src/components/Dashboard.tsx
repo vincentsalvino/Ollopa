@@ -52,6 +52,26 @@ export default function Dashboard({
   const [collapsedLocal, setCollapsedLocal] = useState(false);
   const collapsed = collapsedProp !== undefined ? collapsedProp : collapsedLocal;
 
+  // Budget alert
+  const [budgetAlert, setBudgetAlert] = useState<{ pct: number; remaining: number } | null>(null);
+
+  useEffect(() => {
+    const loadBudget = async () => {
+      try {
+        const stats = await invoke<{ budget_remaining_usd: number; current_month_usage: { total_cost_usd: number }; budget: { monthly_budget_usd: number } }>("optimizer_get_stats");
+        const pct = stats.budget.monthly_budget_usd > 0
+          ? (stats.current_month_usage.total_cost_usd / stats.budget.monthly_budget_usd) * 100
+          : 0;
+        if (pct >= 50) {
+          setBudgetAlert({ pct, remaining: stats.budget_remaining_usd });
+        }
+      } catch (_) {}
+    };
+    loadBudget();
+    const interval = setInterval(loadBudget, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Git Status
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
 
@@ -184,6 +204,40 @@ export default function Dashboard({
           )}
         </div>
 
+        {/* Budget Alert */}
+        {budgetAlert && (
+          <div className="card" style={{
+            borderColor: budgetAlert.pct >= 95 ? "var(--danger, #e74c3c)" : budgetAlert.pct >= 80 ? "var(--danger, #e74c3c)" : "var(--warning, #f5a623)",
+            borderWidth: 1,
+            borderStyle: "solid",
+          }}>
+            <h3 className="card-title" style={{
+              color: budgetAlert.pct >= 95 ? "var(--danger, #e74c3c)" : budgetAlert.pct >= 80 ? "var(--danger, #e74c3c)" : "var(--warning, #f5a623)",
+            }}>
+              <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }} />
+              Budget {budgetAlert.pct >= 95 ? "Exceeded" : budgetAlert.pct >= 80 ? "Critical" : "Warning"}
+            </h3>
+            <div className="cost-row">
+              <span>Used:</span>
+              <span>{budgetAlert.pct.toFixed(0)}%</span>
+            </div>
+            <div className="cost-row">
+              <span>Remaining:</span>
+              <span>${budgetAlert.remaining.toFixed(4)}</span>
+            </div>
+            <div style={{
+              height: 4, borderRadius: 2, marginTop: 6,
+              background: "var(--bg-2, #333)",
+            }}>
+              <div style={{
+                height: "100%", borderRadius: 2,
+                width: `${Math.min(budgetAlert.pct, 100)}%`,
+                background: budgetAlert.pct >= 95 ? "var(--danger, #e74c3c)" : budgetAlert.pct >= 80 ? "var(--danger, #e74c3c)" : "var(--warning, #f5a623)",
+              }} />
+            </div>
+          </div>
+        )}
+
         {/* Tool Analytics */}
         {topTools.length > 0 && (
           <div className="card">
@@ -299,20 +353,20 @@ export default function Dashboard({
           </div>
         </div>
 
-        {/* Total Cost */}
+        {/* Total Cost (fallback to sessionCost if historical data is empty) */}
         <div className="card">
           <h3 className="card-title">All-Time Cost</h3>
           <div className="cost-row">
             <span>Input:</span>
-            <span>{totalCost.input_tokens.toLocaleString()} tokens</span>
+            <span>{(totalCost.input_tokens || sessionCost.input_tokens).toLocaleString()} tokens</span>
           </div>
           <div className="cost-row">
             <span>Output:</span>
-            <span>{totalCost.output_tokens.toLocaleString()} tokens</span>
+            <span>{(totalCost.output_tokens || sessionCost.output_tokens).toLocaleString()} tokens</span>
           </div>
           <div className="cost-row cost-total">
             <span>Total:</span>
-            <span>${totalCost.cost_usd.toFixed(4)}</span>
+            <span>${(totalCost.cost_usd || sessionCost.cost_usd).toFixed(4)}</span>
           </div>
         </div>
 

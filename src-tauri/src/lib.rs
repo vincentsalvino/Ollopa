@@ -1,6 +1,8 @@
 mod api_client;
 mod api_keys;
+mod api_tools;
 mod approval_manager;
+mod codebase_indexer;
 mod claude_memory;
 mod ollopa_events;
 mod event_bus;
@@ -108,10 +110,21 @@ async fn send_input(
         *ct = CancellationToken::new();
     }
 
-    // Phase 4: Lock session briefly to finalize
+    // Phase 4: Lock session briefly to finalize (always, even on error)
     {
         let mut session = state.session.lock().await;
         session.finalize_send(client.model());
+    }
+
+    // On error, emit an error event to the timeline
+    if let Err(ref err) = result {
+        let _ = app_handle.emit(
+            "app-event",
+            ollopa_events::AppEvent::AssistantMessage {
+                text: format!("**Error:** {}", err),
+                model: client.model().to_string(),
+            },
+        );
     }
 
     // Put client back
@@ -375,6 +388,58 @@ async fn get_current_model(
 ) -> Result<String, String> {
     let session = state.session.lock().await;
     Ok(session.model_value().to_string())
+}
+
+// ═══════ Codebase Indexer ═══════
+
+#[tauri::command]
+fn codebase_index(project_path: String) -> Result<serde_json::Value, String> {
+    let index = codebase_indexer::index_project(&project_path)?;
+    serde_json::to_value(&index).map_err(|e| format!("Serialization error: {}", e))
+}
+
+// ═══════ Claude Code Session Import ═══════
+
+#[tauri::command]
+fn import_claude_code_session(uuid: String) -> Result<String, String> {
+    session_manager::import_claude_code_session(&uuid)
+}
+
+// ═══════ Manual Compaction ═══════
+
+#[tauri::command]
+async fn compact_now(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let mut guard = state.api.lock().await;
+    if let Some(ref mut client) = *guard {
+        if let Some(detail) = client.compact() {
+            let _ = app_handle.emit(
+                "app-event",
+                crate::ollopa_events::AppEvent::StatusUpdate {
+                    status: "compacted".to_string(),
+                    detail: detail.clone(),
+                },
+            );
+            return Ok(detail);
+        }
+    }
+    Ok("Nothing to compact".to_string())
+}
+
+// ═══════ Smart Context ═══════
+
+#[tauri::command]
+async fn set_smart_context(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut guard = state.api.lock().await;
+    if let Some(ref mut client) = *guard {
+        client.set_smart_context(enabled);
+    }
+    Ok(())
 }
 
 // ═══════ Message Editing ═══════
@@ -1308,6 +1373,7 @@ fn predictive_analysis(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // Load saved API keys into env vars before anything else
             api_keys::load_keys_into_env();
@@ -1321,6 +1387,117 @@ pub fn run() {
                 api: Arc::new(Mutex::new(None)),
                 cancel_token: Arc::new(Mutex::new(CancellationToken::new())),
             });
+
+            // Build system tray
+            use tauri::menu::{MenuBuilder, MenuItemBuilder};
+            use tauri::tray::TrayIconBuilder;
+
+            let show_item = MenuItemBuilder::with_id("show_hide", "Show/Hide").build(app)?;
+            let new_item = MenuItemBuilder::with_id("new_session", "New Session").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+
+            let tray_menu = MenuBuilder::new(app)
+                .item(&show_item)
+                .item(&new_item)
+                .separator()
+                .item(&quit_item)
+                .build()?;
+
+            let tray_handle = app.handle().clone();
+            TrayIconBuilder::new()
+                .menu(&tray_menu)
+                .tooltip("Ollopa")
+                .on_menu_event(move |_app, event| {
+                    match event.id().as_ref() {
+                        "show_hide" => {
+                            if let Some(window) = tray_handle.get_webview_window("main") {
+                                if window.is_visible().unwrap_or(false) {
+                                    let _ = window.hide();
+                                } else {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                        }
+                        "new_session" => {
+                            let _ = tray_handle.emit(
+                                "app-event",
+                                ollopa_events::AppEvent::StatusUpdate {
+                                    status: "new_session".to_string(),
+                                    detail: String::new(),
+                                },
+                            );
+                        }
+                        "quit" => {
+                            std::process::exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click { .. } = event {
+                        if let Some(window) = tray.app_handle().get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            // Handle close event: minimize to tray instead of quitting
+            let close_handle = app.handle().clone();
+            if let Some(window) = app.get_webview_window("main") {
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        if let Some(w) = close_handle.get_webview_window("main") {
+                            let _ = w.hide();
+                        }
+                    }
+                });
+            }
+
+            // Register global shortcuts
+            use tauri_plugin_global_shortcut::GlobalShortcutExt;
+            let app_handle = app.handle().clone();
+
+            // Ctrl+Shift+O: Toggle main window
+            let toggle_handle = app_handle.clone();
+            let _ = app.global_shortcut().on_shortcut("ctrl+shift+o", move |_app, _shortcut, _event| {
+                if let Some(window) = toggle_handle.get_webview_window("main") {
+                    if window.is_visible().unwrap_or(false) {
+                        let _ = window.hide();
+                    } else {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            });
+
+            // Ctrl+Shift+K: Emit global search event
+            let search_handle = app_handle.clone();
+            let _ = app.global_shortcut().on_shortcut("ctrl+shift+k", move |_app, _shortcut, _event| {
+                let _ = search_handle.emit(
+                    "app-event",
+                    ollopa_events::AppEvent::StatusUpdate {
+                        status: "global_search".to_string(),
+                        detail: String::new(),
+                    },
+                );
+            });
+
+            // Ctrl+Shift+N: Emit new session event
+            let new_handle = app_handle.clone();
+            let _ = app.global_shortcut().on_shortcut("ctrl+shift+n", move |_app, _shortcut, _event| {
+                let _ = new_handle.emit(
+                    "app-event",
+                    ollopa_events::AppEvent::StatusUpdate {
+                        status: "new_session".to_string(),
+                        detail: String::new(),
+                    },
+                );
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1353,6 +1530,10 @@ pub fn run() {
             get_system_prompt,
             set_model,
             get_current_model,
+            codebase_index,
+            import_claude_code_session,
+            compact_now,
+            set_smart_context,
             edit_message,
             export_conversation,
             search_conversations,

@@ -207,6 +207,7 @@ function processAppEvent(state: EventStoreState, event: AppEvent): EventStoreSta
         isTyping: false,
         isStreaming: true,
         streamingText: state.streamingText + event.text,
+        sessionModel: event.model && event.model !== "unknown" ? event.model : state.sessionModel,
       };
 
     case "generation_stopped":
