@@ -76,10 +76,14 @@ async fn send_input(
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     // Phase 1: Lock session briefly to record user message in snapshot
-    let (model, system_prompt) = {
+    let (model, system_prompt, working_dir) = {
         let mut session = state.session.lock().await;
         session.prepare_send(&message);
-        (session.model.clone(), session.system_prompt.clone())
+        (
+            session.model.clone(),
+            session.system_prompt.clone(),
+            session.working_dir.clone(),
+        )
     };
 
     // Phase 2: Get or create API client (separate lock, ~5ms)
@@ -91,7 +95,21 @@ async fn send_input(
         }
     };
     client.set_model(&model);
-    client.set_system_prompt(&system_prompt);
+
+    // Enhance system prompt with project context when a working directory is set
+    let effective_prompt = if let Some(ref wd) = working_dir {
+        format!(
+            "{}\n\n## Project Context\nYou are working on a project located at: {}\n\
+            When using tools like read_file, list_directory, or search_code, \
+            you can use relative paths (they will be resolved against the project directory). \
+            Use the available tools to explore and analyze the codebase.",
+            system_prompt, wd
+        )
+    } else {
+        system_prompt
+    };
+    client.set_system_prompt(&effective_prompt);
+    client.set_working_dir(working_dir);
 
     // Share cancel token for stop_generation
     let token = CancellationToken::new();

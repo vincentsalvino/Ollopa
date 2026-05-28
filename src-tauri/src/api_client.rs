@@ -17,6 +17,20 @@ pub struct ApiConfig {
 const INPUT_PRICE_PER_M: f64 = 0.27;
 const OUTPUT_PRICE_PER_M: f64 = 1.10;
 
+/// Maximum depth for recursive tool call follow-ups
+const MAX_TOOL_CALL_DEPTH: u32 = 5;
+
+/// DeepSeek special tokens that leak into text output during tool calling
+const DEEPSEEK_SPECIAL_TOKENS: &[&str] = &[
+    "</\u{ff5c}\u{ff5c}DSML\u{ff5c}\u{ff5c}invoke>",
+    "<\u{ff5c}tool\u{2581}call\u{2581}begin\u{ff5c}>",
+    "<\u{ff5c}tool\u{2581}call\u{2581}end\u{ff5c}>",
+    "<\u{ff5c}tool\u{2581}sep\u{ff5c}>",
+    "<\u{ff5c}tool\u{2581}output\u{2581}begin\u{ff5c}>",
+    "<\u{ff5c}tool\u{2581}output\u{2581}end\u{ff5c}>",
+    "<\u{ff5c}DSML\u{ff5c}>",
+];
+
 fn is_openrouter_url(url: &str) -> bool {
     url.contains("openrouter.ai")
 }
@@ -76,6 +90,38 @@ impl ApiConfig {
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tool_calls: Option<Vec<ToolCallMsg>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tool_call_id: Option<String>,
+}
+
+impl ChatMessage {
+    /// Create a simple text message (most common case).
+    pub fn text(role: &str, content: &str) -> Self {
+        Self {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+}
+
+/// Tool call entry in an assistant message (OpenAI-compatible format).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallMsg {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String,
+    pub function: ToolCallFn,
+}
+
+/// Function details within a tool call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFn {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,6 +175,8 @@ pub struct DirectApiClient {
     system_prompt: String,
     smart_context_enabled: bool,
     tools_enabled: bool,
+    working_dir: Option<String>,
+    tool_call_depth: u32,
 }
 
 fn conversations_dir() -> std::path::PathBuf {
@@ -173,15 +221,14 @@ impl DirectApiClient {
         Ok(Self {
             client: Client::new(),
             config,
-            messages: vec![ChatMessage {
-                role: "system".to_string(),
-                content: default_system_prompt.clone(),
-            }],
+            messages: vec![ChatMessage::text("system", &default_system_prompt)],
             session_id,
             cancel_token: CancellationToken::new(),
             system_prompt: default_system_prompt,
             smart_context_enabled: false,
             tools_enabled: true,
+            working_dir: None,
+            tool_call_depth: 0,
         })
     }
 
@@ -286,6 +333,11 @@ impl DirectApiClient {
         self.smart_context_enabled = enabled;
     }
 
+    /// Set the working directory (project path) for tool execution.
+    pub fn set_working_dir(&mut self, dir: Option<String>) {
+        self.working_dir = dir;
+    }
+
     /// Get the current model name.
     #[allow(dead_code)]
     pub fn current_model(&self) -> &str {
@@ -326,10 +378,7 @@ impl DirectApiClient {
                 if start > 0 {
                     new_messages.push(self.messages[0].clone());
                 }
-                new_messages.push(ChatMessage {
-                    role: "system".to_string(),
-                    content: summary.clone(),
-                });
+                new_messages.push(ChatMessage::text("system", &summary));
                 new_messages.extend_from_slice(&self.messages[idx..]);
                 self.messages = new_messages;
                 return Some(format!("Compacted {} messages", idx - start));
@@ -357,12 +406,14 @@ impl DirectApiClient {
             );
         }
 
+        // Reset tool call depth on new user message
+        if !user_message.is_empty() {
+            self.tool_call_depth = 0;
+        }
+
         // Add user message to history (skip for tool follow-up calls)
         if !user_message.is_empty() {
-            self.messages.push(ChatMessage {
-                role: "user".to_string(),
-                content: user_message.to_string(),
-            });
+            self.messages.push(ChatMessage::text("user", user_message));
         }
 
         // Smart context: inject optimized context as a system message after the primary system prompt
@@ -371,10 +422,10 @@ impl DirectApiClient {
             if !context.is_empty() {
                 // Insert after system prompt (index 1) and before conversation history
                 let insert_pos = if !self.messages.is_empty() && self.messages[0].role == "system" { 1 } else { 0 };
-                self.messages.insert(insert_pos, ChatMessage {
-                    role: "system".to_string(),
-                    content: format!("[Context from memory & decisions]\n{}", context),
-                });
+                self.messages.insert(
+                    insert_pos,
+                    ChatMessage::text("system", &format!("[Context from memory & decisions]\n{}", context)),
+                );
             }
         }
 
@@ -428,10 +479,7 @@ impl DirectApiClient {
                 },
             );
             // Keep user message in history, push error as assistant message for consistency
-            self.messages.push(ChatMessage {
-                role: "assistant".to_string(),
-                content: format!("[Error: {}]", err),
-            });
+            self.messages.push(ChatMessage::text("assistant", &format!("[Error: {}]", err)));
             return Err(err);
         }
 
@@ -503,13 +551,20 @@ impl DirectApiClient {
                                                     if let Some(ref content) = delta.content {
                                                         if !content.is_empty() {
                                                             full_response.push_str(content);
-                                                            let _ = app_handle.emit(
-                                                                "app-event",
-                                                                AppEvent::StreamingChunk {
-                                                                    text: content.clone(),
-                                                                    model: self.config.model.clone(),
-                                                                },
-                                                            );
+                                                            // Strip special tokens before emitting to frontend
+                                                            let mut emit_text = content.clone();
+                                                            for token in DEEPSEEK_SPECIAL_TOKENS {
+                                                                emit_text = emit_text.replace(token, "");
+                                                            }
+                                                            if !emit_text.is_empty() {
+                                                                let _ = app_handle.emit(
+                                                                    "app-event",
+                                                                    AppEvent::StreamingChunk {
+                                                                        text: emit_text,
+                                                                        model: self.config.model.clone(),
+                                                                    },
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                     // Accumulate tool call deltas
@@ -557,6 +612,9 @@ impl DirectApiClient {
             }
         }
 
+        // Clean special tokens from the full response
+        let full_response = strip_special_tokens(&full_response);
+
         // If cancelled, emit generation_stopped event
         if was_cancelled {
             let _ = app_handle.emit(
@@ -568,8 +626,19 @@ impl DirectApiClient {
             );
         }
 
-        // Execute tool calls if the model requested them
-        if has_tool_call && !was_cancelled && !pending_tool_name.is_empty() {
+        // Fallback: detect tool calls embedded as text (DeepSeek sometimes outputs these as text)
+        if !has_tool_call && !was_cancelled && !full_response.is_empty() {
+            if let Some((name, args_str)) = parse_text_tool_call(&full_response) {
+                pending_tool_name = name;
+                pending_tool_args = args_str;
+                has_tool_call = true;
+            }
+        }
+
+        // Execute tool calls if the model requested them (structured or text-based)
+        if has_tool_call && !was_cancelled && !pending_tool_name.is_empty()
+            && self.tool_call_depth < MAX_TOOL_CALL_DEPTH
+        {
             let tool_id = if pending_tool_id.is_empty() {
                 format!("tool-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis())
             } else {
@@ -577,6 +646,18 @@ impl DirectApiClient {
             };
 
             let args: serde_json::Value = serde_json::from_str(&pending_tool_args).unwrap_or(serde_json::json!({}));
+
+            // Emit any meaningful pre-tool-call text as an assistant message
+            let clean_pre_text = strip_tool_call_text(&full_response);
+            if !clean_pre_text.is_empty() {
+                let _ = app_handle.emit(
+                    "app-event",
+                    AppEvent::AssistantMessage {
+                        text: clean_pre_text.clone(),
+                        model: self.config.model.clone(),
+                    },
+                );
+            }
 
             let _ = app_handle.emit(
                 "app-event",
@@ -587,7 +668,11 @@ impl DirectApiClient {
                 },
             );
 
-            let tool_result = crate::api_tools::execute_tool(&pending_tool_name, &args);
+            let tool_result = crate::api_tools::execute_tool(
+                &pending_tool_name,
+                &args,
+                self.working_dir.as_deref(),
+            );
             let (output, is_error) = match tool_result {
                 Ok(result) => (result, false),
                 Err(e) => (e, true),
@@ -603,19 +688,41 @@ impl DirectApiClient {
                 },
             );
 
-            // Push tool result into messages and make a follow-up API call
+            // Push tool call + result into messages using proper OpenAI-compatible format
             self.messages.push(ChatMessage {
                 role: "assistant".to_string(),
-                content: format!("[Tool call: {}({})]", pending_tool_name, pending_tool_args),
+                content: clean_pre_text,
+                tool_calls: Some(vec![ToolCallMsg {
+                    id: tool_id.clone(),
+                    call_type: "function".to_string(),
+                    function: ToolCallFn {
+                        name: pending_tool_name.clone(),
+                        arguments: pending_tool_args.clone(),
+                    },
+                }]),
+                tool_call_id: None,
             });
             self.messages.push(ChatMessage {
-                role: "user".to_string(),
-                content: format!("[Tool result for {}]:\n{}", pending_tool_name, output),
+                role: "tool".to_string(),
+                content: output,
+                tool_calls: None,
+                tool_call_id: Some(tool_id),
             });
 
-            // Recursive call for follow-up (max 3 rounds handled by the caller)
-            // We do one follow-up here
+            // Recursive follow-up call with depth tracking
+            self.tool_call_depth += 1;
             return Box::pin(self.send_message("", app_handle)).await;
+        }
+
+        // If tool call depth exceeded, warn the user
+        if has_tool_call && self.tool_call_depth >= MAX_TOOL_CALL_DEPTH {
+            let _ = app_handle.emit(
+                "app-event",
+                AppEvent::StatusUpdate {
+                    status: "warning".to_string(),
+                    detail: format!("Tool call chain limit ({}) reached. Stopping.", MAX_TOOL_CALL_DEPTH),
+                },
+            );
         }
 
         // Reset cancel token for next request
@@ -632,17 +739,15 @@ impl DirectApiClient {
             / 1_000_000.0;
 
         // Store assistant response in history
-        if !full_response.is_empty() {
-            self.messages.push(ChatMessage {
-                role: "assistant".to_string(),
-                content: full_response.clone(),
-            });
+        let clean_response = strip_tool_call_text(&full_response);
+        if !clean_response.is_empty() {
+            self.messages.push(ChatMessage::text("assistant", &clean_response));
 
-            // Emit the assistant message
+            // Emit the assistant message (cleaned of any tool call markers)
             let _ = app_handle.emit(
                 "app-event",
                 AppEvent::AssistantMessage {
-                    text: full_response,
+                    text: clean_response,
                     model: self.config.model.clone(),
                 },
             );
@@ -708,5 +813,107 @@ impl DirectApiClient {
     pub fn clear_history(&mut self) {
         self.messages.clear();
     }
+}
+
+// ═══════ Text-Based Tool Call Detection ═══════
+
+/// Strip DeepSeek special tokens from text.
+fn strip_special_tokens(text: &str) -> String {
+    let mut cleaned = text.to_string();
+    for token in DEEPSEEK_SPECIAL_TOKENS {
+        cleaned = cleaned.replace(token, "");
+    }
+    cleaned
+}
+
+/// Parse tool calls embedded as plain text in the response.
+/// DeepSeek sometimes outputs tool calls as text instead of structured function calls.
+fn parse_text_tool_call(text: &str) -> Option<(String, String)> {
+    // Pattern 1: [Tool call: tool_name] {"arg": "value", ...}
+    let re1 = regex::Regex::new(r#"\[Tool\s*call:?\s*(\w+)\]\s*(\{[\s\S]*\})"#).ok()?;
+    if let Some(caps) = re1.captures(text) {
+        let name = caps.get(1)?.as_str().to_string();
+        let args_raw = caps.get(2)?.as_str();
+        // Try to parse as JSON — handle nested braces by finding valid JSON
+        if let Some(args) = extract_json_object(args_raw) {
+            return Some((name, args));
+        }
+    }
+
+    // Pattern 2: tool_name({"arg": "value"})
+    let re2 = regex::Regex::new(r#"(\w+)\((\{[\s\S]*?\})\)"#).ok()?;
+    if let Some(caps) = re2.captures(text) {
+        let name = caps.get(1)?.as_str().to_string();
+        let known_tools = ["read_file", "list_directory", "search_code", "read_memory", "get_git_status", "web_search"];
+        if known_tools.contains(&name.as_str()) {
+            let args_raw = caps.get(2)?.as_str();
+            if let Some(args) = extract_json_object(args_raw) {
+                return Some((name, args));
+            }
+        }
+    }
+
+    // Pattern 3: Function: tool_name\nArguments: {"arg": "value"}
+    let re3 = regex::Regex::new(r#"(?i)function:\s*(\w+)\s*\n\s*arguments:\s*(\{[\s\S]*\})"#).ok()?;
+    if let Some(caps) = re3.captures(text) {
+        let name = caps.get(1)?.as_str().to_string();
+        let args_raw = caps.get(2)?.as_str();
+        if let Some(args) = extract_json_object(args_raw) {
+            return Some((name, args));
+        }
+    }
+
+    None
+}
+
+/// Try to extract a valid JSON object from the beginning of a string.
+fn extract_json_object(s: &str) -> Option<String> {
+    let s = s.trim();
+    if !s.starts_with('{') {
+        return None;
+    }
+    // Try progressively longer substrings to find valid JSON
+    let mut depth = 0;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let candidate = &s[..=i];
+                    if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
+                        return Some(candidate.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Strip tool call text patterns from a response, leaving only meaningful content.
+fn strip_tool_call_text(text: &str) -> String {
+    let mut cleaned = text.to_string();
+
+    // Remove [Tool call: ...] {...} patterns
+    if let Ok(re) = regex::Regex::new(r#"\[Tool\s*call:?\s*\w+\]\s*\{[\s\S]*\}"#) {
+        cleaned = re.replace_all(&cleaned, "").to_string();
+    }
+
+    // Remove tool_name({...}) patterns for known tools
+    if let Ok(re) = regex::Regex::new(r#"(?:read_file|list_directory|search_code|read_memory|get_git_status|web_search)\(\{[\s\S]*?\}\)"#) {
+        cleaned = re.replace_all(&cleaned, "").to_string();
+    }
+
+    // Remove Function: .../Arguments: ... patterns
+    if let Ok(re) = regex::Regex::new(r#"(?i)function:\s*\w+\s*\n\s*arguments:\s*\{[\s\S]*\}"#) {
+        cleaned = re.replace_all(&cleaned, "").to_string();
+    }
+
+    // Remove DeepSeek special tokens
+    cleaned = strip_special_tokens(&cleaned);
+
+    cleaned.trim().to_string()
 }
 
