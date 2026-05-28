@@ -385,7 +385,7 @@ fn builtin_providers() -> Vec<Provider> {
                     input_price_per_m: 0.05,
                     output_price_per_m: 0.10,
                     supports_streaming: true,
-                    supports_tools: false,
+                    supports_tools: true,
                     context_window: 32000,
                 },
                 ModelConfig {
@@ -1346,7 +1346,7 @@ pub fn route_background_intelligence(task_type: &str) -> RoutingDecision {
             input_price_per_m: 0.05,
             output_price_per_m: 0.10,
             supports_streaming: true,
-            supports_tools: false,
+            supports_tools: true,
             context_window: 32000,
         });
 

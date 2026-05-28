@@ -22,6 +22,23 @@ fn is_openrouter_url(url: &str) -> bool {
     url.contains("openrouter.ai")
 }
 
+fn is_mimo_model(model: &str) -> bool {
+    model.starts_with("mimo-")
+}
+
+/// Get pricing constants for a given model
+fn pricing_for_model(model: &str) -> (f64, f64) {
+    if is_mimo_model(model) {
+        (0.05, 0.10) // MiMo pricing
+    } else if model.starts_with("gpt-4o") {
+        (2.50, 10.0)
+    } else if model.starts_with("claude-") {
+        (3.0, 15.0)
+    } else {
+        (INPUT_PRICE_PER_M, OUTPUT_PRICE_PER_M) // DeepSeek default
+    }
+}
+
 impl ApiConfig {
     /// Create config from a provider router decision.
     pub fn from_provider(
@@ -43,11 +60,35 @@ impl ApiConfig {
         })
     }
 
+    /// Create config for a MiMo model
+    pub fn for_mimo(model: &str) -> Result<Self, String> {
+        let api_key = std::env::var("MIMO_API_KEY").map_err(|_| {
+            "MIMO_API_KEY not set. Add it via Settings > API Keys.".to_string()
+        })?;
+        Ok(Self {
+            base_url: "https://api.mimo.xiaomi.com/v1".to_string(),
+            api_key,
+            model: model.to_string(),
+        })
+    }
+
+    /// Auto-detect provider config from model name
+    pub fn from_model(model: &str) -> Result<Self, String> {
+        if is_mimo_model(model) {
+            Self::for_mimo(model)
+        } else {
+            let mut config = Self::from_env()?;
+            config.model = model.to_string();
+            Ok(config)
+        }
+    }
+
     pub fn from_env() -> Result<Self, String> {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
+            .or_else(|_| std::env::var("DEEPSEEK_API_KEY"))
             .map_err(|_| {
-                "No API key found. Set ANTHROPIC_API_KEY environment variable.".to_string()
+                "No API key found. Set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY environment variable.".to_string()
             })?;
 
         let base_url = std::env::var("ANTHROPIC_BASE_URL")
@@ -262,8 +303,20 @@ impl DirectApiClient {
         &self.config.model
     }
 
-    /// Set the model.
+    /// Set the model, auto-switching provider endpoint if needed.
     pub fn set_model(&mut self, model: &str) {
+        if is_mimo_model(model) && !self.config.base_url.contains("mimo.xiaomi.com") {
+            if let Ok(mimo_config) = ApiConfig::for_mimo(model) {
+                self.config = mimo_config;
+                return;
+            }
+        } else if !is_mimo_model(model) && self.config.base_url.contains("mimo.xiaomi.com") {
+            if let Ok(mut env_config) = ApiConfig::from_env() {
+                env_config.model = model.to_string();
+                self.config = env_config;
+                return;
+            }
+        }
         self.config.model = model.to_string();
     }
 
@@ -511,8 +564,9 @@ impl DirectApiClient {
         let input_chars: usize = self.messages.iter().map(|m| m.content.len()).sum();
         let est_input_tokens = (input_chars / 4).max(1) as u64;
         let est_output_tokens = (full_response.len() / 4).max(1) as u64;
-        let cost = (est_input_tokens as f64 * INPUT_PRICE_PER_M
-            + est_output_tokens as f64 * OUTPUT_PRICE_PER_M)
+        let (inp_price, out_price) = pricing_for_model(&self.config.model);
+        let cost = (est_input_tokens as f64 * inp_price
+            + est_output_tokens as f64 * out_price)
             / 1_000_000.0;
 
         // Store assistant response in history
@@ -558,6 +612,52 @@ impl DirectApiClient {
         );
 
         Ok(())
+    }
+
+    /// Send a message with automatic fallback to MiMo on failure.
+    pub async fn send_message_with_fallback(
+        &mut self,
+        user_message: &str,
+        app_handle: &AppHandle,
+    ) -> Result<(), String> {
+        let result = self.send_message(user_message, app_handle).await;
+
+        if result.is_err() && !is_mimo_model(&self.config.model) {
+            // Try MiMo fallback
+            if let Ok(mimo_config) = ApiConfig::for_mimo("MiMo-7B-RL") {
+                let original_config = self.config.clone();
+                self.config = mimo_config;
+
+                let _ = app_handle.emit(
+                    "app-event",
+                    AppEvent::StatusUpdate {
+                        status: "fallback".to_string(),
+                        detail: format!(
+                            "Primary provider failed, falling back to MiMo: {}",
+                            result.as_ref().unwrap_err()
+                        ),
+                    },
+                );
+
+                // Remove the user message that was added then removed by the failed call
+                // (send_message pops it on failure, but we need to re-add it)
+                let fallback_result = self.send_message(user_message, app_handle).await;
+
+                if fallback_result.is_err() {
+                    // Fallback also failed, restore original config
+                    self.config = original_config;
+                    return fallback_result;
+                }
+                return fallback_result;
+            }
+        }
+
+        result
+    }
+
+    /// Get the base URL of the current provider
+    pub fn base_url(&self) -> &str {
+        &self.config.base_url
     }
 
     /// Clear conversation history.

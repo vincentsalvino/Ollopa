@@ -64,6 +64,28 @@ async fn send_input(
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    // Check if design agent should activate for this message
+    let design_active = design_agent::should_activate_for_message(&message);
+    if design_active {
+        let _ = app_handle.emit("app-event", ollopa_events::AppEvent::StatusUpdate {
+            status: "design_agent_active".to_string(),
+            detail: "Design Agent activated for frontend/UI task".to_string(),
+        });
+    }
+
+    // Emit provider telemetry
+    {
+        let session = state.session.lock().await;
+        let provider_info = if let Some(ref client) = session.api_client {
+            let url = client.base_url();
+            if url.contains("mimo.xiaomi.com") { "MiMo" } else if url.contains("deepseek.com") { "DeepSeek" } else { "Other" }
+        } else { "None" };
+        let _ = app_handle.emit("app-event", ollopa_events::AppEvent::StatusUpdate {
+            status: "provider_active".to_string(),
+            detail: format!("Provider: {} | Model: {}", provider_info, session.model),
+        });
+    }
+
     let mut session = state.session.lock().await;
     session.send_input(&message, app_handle).await
 }
@@ -810,6 +832,183 @@ fn repo_analyze(project_path: String) -> repo_intelligence::RepoAnalysis {
     repo_intelligence::analyze_repo(&project_path)
 }
 
+// ═══════ Codebase Reading ═══════
+
+#[tauri::command]
+fn read_file(file_path: String) -> Result<String, String> {
+    let path = std::path::Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File not found: {}", file_path));
+    }
+    if !path.is_file() {
+        return Err(format!("Not a file: {}", file_path));
+    }
+    let metadata = std::fs::metadata(path).map_err(|e| format!("Cannot read metadata: {}", e))?;
+    if metadata.len() > 2 * 1024 * 1024 {
+        return Err("File too large (>2MB). Use search or partial read instead.".to_string());
+    }
+    std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+#[derive(serde::Serialize)]
+struct DirEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size: u64,
+}
+
+#[tauri::command]
+fn list_directory(dir_path: String) -> Result<Vec<DirEntry>, String> {
+    let path = std::path::Path::new(&dir_path);
+    if !path.exists() {
+        return Err(format!("Directory not found: {}", dir_path));
+    }
+    if !path.is_dir() {
+        return Err(format!("Not a directory: {}", dir_path));
+    }
+    let mut entries = Vec::new();
+    let reader = std::fs::read_dir(path).map_err(|e| format!("Cannot read directory: {}", e))?;
+    for entry in reader.flatten() {
+        let meta = entry.metadata().unwrap_or_else(|_| std::fs::metadata(entry.path()).unwrap());
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "node_modules" || name == "target" || name == ".git" {
+            continue;
+        }
+        entries.push(DirEntry {
+            name,
+            path: entry.path().to_string_lossy().to_string(),
+            is_dir: meta.is_dir(),
+            size: meta.len(),
+        });
+    }
+    entries.sort_by(|a, b| {
+        b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name))
+    });
+    Ok(entries)
+}
+
+#[derive(serde::Serialize)]
+struct SearchMatch {
+    file: String,
+    line_number: usize,
+    line: String,
+}
+
+#[tauri::command]
+fn search_files(
+    project_path: String,
+    query: String,
+    file_extensions: Option<Vec<String>>,
+) -> Result<Vec<SearchMatch>, String> {
+    let root = std::path::Path::new(&project_path);
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Invalid project path: {}", project_path));
+    }
+    let query_lower = query.to_lowercase();
+    let mut matches = Vec::new();
+    let max_results = 200;
+
+    fn walk_dir(
+        dir: &std::path::Path,
+        query: &str,
+        exts: &Option<Vec<String>>,
+        matches: &mut Vec<SearchMatch>,
+        max: usize,
+        depth: usize,
+    ) {
+        if depth > 10 || matches.len() >= max {
+            return;
+        }
+        let Ok(reader) = std::fs::read_dir(dir) else { return };
+        for entry in reader.flatten() {
+            if matches.len() >= max { return; }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" || name == "build" {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                walk_dir(&path, query, exts, matches, max, depth + 1);
+            } else if path.is_file() {
+                if let Some(ref ext_list) = exts {
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if !ext_list.iter().any(|e| e == ext) {
+                        continue;
+                    }
+                }
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    if meta.len() > 1024 * 1024 { continue; }
+                }
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    for (i, line) in content.lines().enumerate() {
+                        if matches.len() >= max { return; }
+                        if line.to_lowercase().contains(query) {
+                            matches.push(SearchMatch {
+                                file: path.to_string_lossy().to_string(),
+                                line_number: i + 1,
+                                line: if line.len() > 300 { line[..300].to_string() } else { line.to_string() },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    walk_dir(root, &query_lower, &file_extensions, &mut matches, max_results, 0);
+    Ok(matches)
+}
+
+#[derive(serde::Serialize)]
+struct FileTreeNode {
+    name: String,
+    path: String,
+    is_dir: bool,
+    children: Vec<FileTreeNode>,
+}
+
+#[tauri::command]
+fn get_file_tree(project_path: String, max_depth: Option<usize>) -> Result<FileTreeNode, String> {
+    let root = std::path::Path::new(&project_path);
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("Invalid project path: {}", project_path));
+    }
+    let max_d = max_depth.unwrap_or(4);
+
+    fn build_tree(dir: &std::path::Path, depth: usize, max_depth: usize) -> Vec<FileTreeNode> {
+        if depth >= max_depth { return Vec::new(); }
+        let Ok(reader) = std::fs::read_dir(dir) else { return Vec::new() };
+        let mut nodes: Vec<FileTreeNode> = Vec::new();
+        for entry in reader.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" {
+                continue;
+            }
+            let path = entry.path();
+            let is_dir = path.is_dir();
+            let children = if is_dir { build_tree(&path, depth + 1, max_depth) } else { Vec::new() };
+            nodes.push(FileTreeNode {
+                name,
+                path: path.to_string_lossy().to_string(),
+                is_dir,
+                children,
+            });
+        }
+        nodes.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
+        nodes
+    }
+
+    let root_name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| project_path.clone());
+    let children = build_tree(root, 0, max_d);
+    Ok(FileTreeNode {
+        name: root_name,
+        path: project_path,
+        is_dir: true,
+        children,
+    })
+}
+
 // ═══════ Provider Switch (wires router to API client) ═══════
 
 #[tauri::command]
@@ -1545,6 +1744,11 @@ pub fn run() {
             get_model_context_window,
             git_info,
             repo_analyze,
+            // Codebase Reading
+            read_file,
+            list_directory,
+            search_files,
+            get_file_tree,
             switch_provider,
             transform_preview,
             transform_get_settings,

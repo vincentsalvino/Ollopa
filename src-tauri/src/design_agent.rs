@@ -518,6 +518,18 @@ pub fn save_spec(spec: &DesignAgentSpec) -> Result<(), String> {
 
 // ═══════ Design Activation Detection ═══════
 
+/// Quick check if a message should trigger design agent (no heavy context loading)
+pub fn should_activate_for_message(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    let triggers = [
+        "frontend", "ui", "react", "component", "dashboard", "layout",
+        "design", "css", "style", "visual", "interface", "page", "widget",
+        "button", "form", "modal", "sidebar", "navbar", "theme", "color",
+        "typography", "animation", "responsive", "tailwind",
+    ];
+    triggers.iter().any(|t| lower.contains(t))
+}
+
 pub fn should_activate(prompt: &str) -> DesignActivation {
     let spec = load_spec();
     let lower = prompt.to_lowercase();

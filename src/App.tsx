@@ -249,6 +249,29 @@ function App() {
 
     const unlistenAppEvent = listen<AppEvent>("app-event", (event) => {
       processEvent(event.payload);
+
+      // Wire provider telemetry + design agent into UI badges
+      const ev = event.payload;
+      if (ev.type === "status_update") {
+        const statusEvent = ev as { type: string; status: string; detail: string };
+        if (statusEvent.status === "design_agent_active") {
+          setDesignAgentActive(true);
+          setActiveProviderRole("Design");
+        } else if (statusEvent.status === "provider_active") {
+          const match = statusEvent.detail.match(/Provider: (\w+)/);
+          if (match) {
+            const prov = match[1];
+            if (prov === "MiMo") setActiveProviderRole("Fallback");
+            else setActiveProviderRole("Primary");
+          }
+        } else if (statusEvent.status === "fallback") {
+          setActiveProviderRole("Fallback");
+          setLastFallbackReason(statusEvent.detail);
+        }
+      }
+      if (ev.type === "assistant_message") {
+        setDesignAgentActive(false);
+      }
     });
 
     const costInterval = setInterval(loadCost, 10000);

@@ -153,10 +153,10 @@ impl SessionManager {
         }
 
         let result = match &mut self.api_client {
-            Some(client) => client.send_message(message, &app_handle).await,
+            Some(client) => client.send_message_with_fallback(message, &app_handle).await,
             None => {
                 let mut client = DirectApiClient::new(&app_handle)?;
-                let result = client.send_message(message, &app_handle).await;
+                let result = client.send_message_with_fallback(message, &app_handle).await;
                 self.api_client = Some(client);
                 result
             }

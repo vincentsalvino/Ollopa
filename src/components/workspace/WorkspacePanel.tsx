@@ -9,7 +9,27 @@ import type {
   WorkflowPatternInfo,
 } from "../../types";
 
-type WorkspaceTab = "overview" | "modules" | "drift" | "patterns" | "impact";
+type WorkspaceTab = "overview" | "modules" | "drift" | "patterns" | "impact" | "code";
+
+interface DirEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number;
+}
+
+interface SearchMatchItem {
+  file: string;
+  line_number: number;
+  line: string;
+}
+
+interface FileTreeNode {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  children: FileTreeNode[];
+}
 
 interface WorkspacePanelProps {
   visible: boolean;
@@ -30,6 +50,16 @@ export default function WorkspacePanel({
   const [impactFile, setImpactFile] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Code browsing state
+  const [currentDir, setCurrentDir] = useState<string | null>(null);
+  const [dirEntries, setDirEntries] = useState<DirEntry[]>([]);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [viewingFilePath, setViewingFilePath] = useState<string | null>(null);
+  const [codeSearchQuery, setCodeSearchQuery] = useState("");
+  const [codeSearchResults, setCodeSearchResults] = useState<SearchMatchItem[]>([]);
+  const [codeSearching, setCodeSearching] = useState(false);
+  const [fileTree, setFileTree] = useState<FileTreeNode | null>(null);
+
   const loadIntelligence = useCallback(async () => {
     if (!projectPath) return;
     setLoading(true);
@@ -46,8 +76,79 @@ export default function WorkspacePanel({
   }, [projectPath, onToast]);
 
   useEffect(() => {
-    if (visible && projectPath) loadIntelligence();
+    if (visible && projectPath) {
+      loadIntelligence();
+      setCurrentDir(projectPath);
+    }
   }, [visible, projectPath, loadIntelligence]);
+
+  useEffect(() => {
+    if (currentDir && tab === "code") {
+      loadDirectory(currentDir);
+    }
+  }, [currentDir, tab]);
+
+  const loadDirectory = useCallback(async (dir: string) => {
+    try {
+      const entries = await invoke<DirEntry[]>("list_directory", { dirPath: dir });
+      setDirEntries(entries);
+      setFileContent(null);
+      setViewingFilePath(null);
+    } catch (e) {
+      onToast(`Failed to list directory: ${e}`, "error");
+    }
+  }, [onToast]);
+
+  const handleOpenFile = useCallback(async (filePath: string) => {
+    try {
+      const content = await invoke<string>("read_file", { filePath });
+      setFileContent(content);
+      setViewingFilePath(filePath);
+    } catch (e) {
+      onToast(`Failed to read file: ${e}`, "error");
+    }
+  }, [onToast]);
+
+  const handleNavigateDir = useCallback((dirPath: string) => {
+    setCurrentDir(dirPath);
+    setFileContent(null);
+    setViewingFilePath(null);
+  }, []);
+
+  const handleGoUp = useCallback(() => {
+    if (!currentDir || !projectPath) return;
+    const parent = currentDir.replace(/[\\/][^\\/]+$/, "");
+    if (parent.length >= projectPath.length) {
+      setCurrentDir(parent);
+    }
+  }, [currentDir, projectPath]);
+
+  const handleCodeSearch = useCallback(async () => {
+    if (!projectPath || !codeSearchQuery.trim()) return;
+    setCodeSearching(true);
+    try {
+      const results = await invoke<SearchMatchItem[]>("search_files", {
+        projectPath,
+        query: codeSearchQuery,
+        fileExtensions: null,
+      });
+      setCodeSearchResults(results);
+    } catch (e) {
+      onToast(`Code search failed: ${e}`, "error");
+    } finally {
+      setCodeSearching(false);
+    }
+  }, [projectPath, codeSearchQuery, onToast]);
+
+  const handleLoadTree = useCallback(async () => {
+    if (!projectPath) return;
+    try {
+      const tree = await invoke<FileTreeNode>("get_file_tree", { projectPath, maxDepth: 3 });
+      setFileTree(tree);
+    } catch (e) {
+      onToast(`Failed to load file tree: ${e}`, "error");
+    }
+  }, [projectPath, onToast]);
 
   const handleCheckImpact = useCallback(async () => {
     if (!projectPath || !impactFile) return;
@@ -77,9 +178,9 @@ export default function WorkspacePanel({
         </div>
 
         <div className="panel-tabs">
-          {(["overview", "modules", "drift", "patterns", "impact"] as WorkspaceTab[]).map((t) => (
+          {(["overview", "modules", "drift", "patterns", "impact", "code"] as WorkspaceTab[]).map((t) => (
             <button key={t} className={`tab-btn ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === "code" ? "Code" : t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
         </div>
@@ -245,8 +346,151 @@ export default function WorkspacePanel({
               )}
             </div>
           )}
+          {tab === "code" && (
+            <div className="data-list">
+              {/* Search bar */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <input
+                  type="text"
+                  value={codeSearchQuery}
+                  onChange={(e) => setCodeSearchQuery(e.target.value)}
+                  placeholder="Search in codebase..."
+                  onKeyDown={(e) => e.key === "Enter" && handleCodeSearch()}
+                  style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-secondary)", color: "var(--text)" }}
+                />
+                <button className="tab-btn active" onClick={handleCodeSearch} disabled={codeSearching}>
+                  {codeSearching ? "Searching..." : "Search"}
+                </button>
+                <button className="tab-btn" onClick={handleLoadTree} title="Load file tree">
+                  <i className="fa-solid fa-sitemap" />
+                </button>
+              </div>
+
+              {/* Search results */}
+              {codeSearchResults.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <h4>Search Results ({codeSearchResults.length})</h4>
+                  <div style={{ maxHeight: 300, overflow: "auto" }}>
+                    {codeSearchResults.map((r, i) => (
+                      <div key={i}
+                        style={{ padding: "4px 8px", cursor: "pointer", borderBottom: "1px solid var(--border)", fontSize: "0.85em" }}
+                        onClick={() => handleOpenFile(r.file)}
+                      >
+                        <span style={{ color: "var(--accent)" }}>{r.file.split(/[\\/]/).pop()}</span>
+                        <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>:{r.line_number}</span>
+                        <div style={{ color: "var(--text-muted)", whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>{r.line}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <button className="tab-btn" onClick={() => setCodeSearchResults([])} style={{ marginTop: 8 }}>Clear Results</button>
+                </div>
+              )}
+
+              {/* File tree view */}
+              {fileTree && !viewingFilePath && (
+                <div style={{ marginBottom: 16 }}>
+                  <h4>File Tree</h4>
+                  <TreeView node={fileTree} onOpen={handleOpenFile} onNavigate={handleNavigateDir} depth={0} />
+                </div>
+              )}
+
+              {/* Directory browser */}
+              {!viewingFilePath && (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <button className="tab-btn" onClick={handleGoUp} disabled={!currentDir || currentDir === projectPath}>
+                      <i className="fa-solid fa-arrow-up" />
+                    </button>
+                    <span style={{ fontSize: "0.85em", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {currentDir || projectPath || "No project"}
+                    </span>
+                  </div>
+                  {dirEntries.map((entry) => (
+                    <div
+                      key={entry.path}
+                      style={{ padding: "4px 8px", cursor: "pointer", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}
+                      onClick={() => entry.is_dir ? handleNavigateDir(entry.path) : handleOpenFile(entry.path)}
+                    >
+                      <i className={`fa-solid ${entry.is_dir ? "fa-folder" : "fa-file-code"}`}
+                        style={{ color: entry.is_dir ? "var(--accent)" : "var(--text-muted)", width: 16 }} />
+                      <span>{entry.name}</span>
+                      {!entry.is_dir && <span style={{ marginLeft: "auto", fontSize: "0.8em", color: "var(--text-muted)" }}>{formatSize(entry.size)}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* File content viewer */}
+              {viewingFilePath && fileContent !== null && (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <button className="tab-btn" onClick={() => { setViewingFilePath(null); setFileContent(null); }}>
+                      <i className="fa-solid fa-arrow-left" /> Back
+                    </button>
+                    <span style={{ fontSize: "0.85em", fontWeight: 600 }}>{viewingFilePath.split(/[\\/]/).pop()}</span>
+                    <span style={{ fontSize: "0.8em", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" }}>{viewingFilePath}</span>
+                  </div>
+                  <pre style={{
+                    background: "var(--bg-secondary)",
+                    padding: 12,
+                    borderRadius: 8,
+                    overflow: "auto",
+                    maxHeight: 500,
+                    fontSize: "0.82em",
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    border: "1px solid var(--border)",
+                  }}>
+                    {fileContent}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function TreeView({ node, onOpen, onNavigate, depth }: {
+  node: FileTreeNode;
+  onOpen: (path: string) => void;
+  onNavigate: (path: string) => void;
+  depth: number;
+}) {
+  const [expanded, setExpanded] = useState(depth < 1);
+  if (!node.is_dir) {
+    return (
+      <div
+        style={{ paddingLeft: depth * 16, padding: "2px 4px", cursor: "pointer", fontSize: "0.85em" }}
+        onClick={() => onOpen(node.path)}
+      >
+        <i className="fa-solid fa-file-code" style={{ color: "var(--text-muted)", marginRight: 6, width: 12 }} />
+        {node.name}
+      </div>
+    );
+  }
+  return (
+    <div>
+      <div
+        style={{ paddingLeft: depth * 16, padding: "2px 4px", cursor: "pointer", fontSize: "0.85em", fontWeight: 500 }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <i className={`fa-solid ${expanded ? "fa-folder-open" : "fa-folder"}`} style={{ color: "var(--accent)", marginRight: 6, width: 12 }} />
+        {node.name}
+        <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: "0.8em" }}>({node.children.length})</span>
+      </div>
+      {expanded && node.children.map((child) => (
+        <TreeView key={child.path} node={child} onOpen={onOpen} onNavigate={onNavigate} depth={depth + 1} />
+      ))}
     </div>
   );
 }
