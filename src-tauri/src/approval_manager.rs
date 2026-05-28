@@ -70,6 +70,10 @@ const APPROVAL_REQUIRED_TOOLS: &[&str] = &[
     "str_replace_editor",
     "create_file",
     "delete_file",
+    "write_file",
+    "edit_file",
+    "shell_execute",
+    "git_command",
 ];
 
 /// Classify the risk of a tool invocation.

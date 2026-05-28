@@ -8,9 +8,9 @@ use std::path::PathBuf;
 /// Approximate tokens per character (conservative estimate for English text)
 const CHARS_PER_TOKEN: f64 = 3.5;
 
-/// DeepSeek pricing per million tokens
-const INPUT_PRICE_PER_M: f64 = 0.27;
-const OUTPUT_PRICE_PER_M: f64 = 1.10;
+/// DeepSeek v4-pro promo pricing per million tokens (valid until 2026/05/31)
+const INPUT_PRICE_PER_M: f64 = 0.435;
+const OUTPUT_PRICE_PER_M: f64 = 0.87;
 
 /// Default monthly budget in USD
 const DEFAULT_MONTHLY_BUDGET: f64 = 10.0;

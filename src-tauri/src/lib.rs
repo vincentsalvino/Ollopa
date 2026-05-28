@@ -1,15 +1,14 @@
+mod agent_loop;
 mod api_client;
 mod api_keys;
 mod api_tools;
 mod approval_manager;
 mod codebase_indexer;
-mod claude_memory;
 mod ollopa_events;
 mod event_bus;
 mod git_intelligence;
 mod memory;
-mod multi_agent;
-mod prompt_transformer;
+mod prompt_template;
 mod provider_router;
 mod repo_intelligence;
 mod second_brain;
@@ -261,17 +260,7 @@ fn get_session_snapshot(
     session_manager::get_session_snapshot(&session_id)
 }
 
-// ═══════ Claude Code Sessions ═══════
 
-#[tauri::command]
-fn list_claude_code_sessions() -> Vec<session_manager::ClaudeCodeSessionMeta> {
-    session_manager::list_claude_code_sessions()
-}
-
-#[tauri::command]
-fn get_claude_code_session(uuid: String) -> Result<Vec<session_manager::ClaudeCodeLogEntry>, String> {
-    session_manager::get_claude_code_session(&uuid)
-}
 
 // ═══════ Event History (for session recovery) ═══════
 
@@ -295,22 +284,14 @@ fn get_token_cost() -> memory::CostData {
 fn get_memory_data() -> memory::MemoryData {
     memory::MemoryData {
         ollopa_md: memory::read_ollopa_md(),
-        claude_md: claude_memory::read_claude_md(),
+        claude_md: String::new(),
         memory_lines: memory::read_memory_last_lines(),
     }
 }
 
 #[tauri::command]
-fn get_shared_memory_data() -> claude_memory::SharedMemoryData {
-    claude_memory::get_shared_memory_data()
-}
-
-#[tauri::command]
 fn save_memory(entry: String) -> Result<(), String> {
-    memory::append_memory(&entry)?;
-    // Also write to Claude Code's memory file for cross-sync
-    let _ = claude_memory::append_claude_memory(&entry);
-    Ok(())
+    memory::append_memory(&entry)
 }
 
 #[tauri::command]
@@ -320,10 +301,7 @@ fn get_full_memory() -> String {
 
 #[tauri::command]
 fn write_full_memory(content: String) -> Result<(), String> {
-    memory::write_memory_full(&content)?;
-    // Sync to Claude Code's memory file
-    let _ = claude_memory::write_claude_memory(&content);
-    Ok(())
+    memory::write_memory_full(&content)
 }
 
 #[tauri::command]
@@ -416,12 +394,7 @@ fn codebase_index(project_path: String) -> Result<serde_json::Value, String> {
     serde_json::to_value(&index).map_err(|e| format!("Serialization error: {}", e))
 }
 
-// ═══════ Claude Code Session Import ═══════
 
-#[tauri::command]
-fn import_claude_code_session(uuid: String) -> Result<String, String> {
-    session_manager::import_claude_code_session(&uuid)
-}
 
 // ═══════ Manual Compaction ═══════
 
@@ -456,6 +429,20 @@ async fn set_smart_context(
     let mut guard = state.api.lock().await;
     if let Some(ref mut client) = *guard {
         client.set_smart_context(enabled);
+    }
+    Ok(())
+}
+
+// ═══════ Thinking Mode ═══════
+
+#[tauri::command]
+async fn set_thinking_mode(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut guard = state.api.lock().await;
+    if let Some(ref mut client) = *guard {
+        client.set_thinking_mode(enabled);
     }
     Ok(())
 }
@@ -702,184 +689,54 @@ fn optimizer_estimate_tokens(text: String) -> usize {
     token_optimizer::estimate_tokens(&text)
 }
 
-// ═══════ Multi-Agent ═══════
+// ═══════ Agent Loop ═══════
 
 #[tauri::command]
-fn agent_list() -> Vec<multi_agent::AgentDef> {
-    multi_agent::list_agents()
-}
-
-#[tauri::command]
-fn agent_save(agent: multi_agent::AgentDef) -> Result<(), String> {
-    multi_agent::save_agent(&agent)
-}
-
-#[tauri::command]
-fn agent_delete(id: String) -> Result<(), String> {
-    multi_agent::delete_agent(&id)
-}
-
-#[tauri::command]
-fn agent_stats() -> multi_agent::AgentStats {
-    multi_agent::get_agent_stats()
-}
-
-#[tauri::command]
-fn agent_route_task(
-    description: String,
-    capabilities: Vec<String>,
-) -> Option<multi_agent::AgentDef> {
-    multi_agent::route_task(&description, &capabilities)
-}
-
-#[tauri::command]
-fn agent_create_task(
-    description: String,
-    context: String,
-    capabilities: Vec<String>,
-    priority: multi_agent::TaskPriority,
-) -> Result<multi_agent::AgentTask, String> {
-    multi_agent::create_task(&description, &context, &capabilities, priority)
-}
-
-#[tauri::command]
-fn agent_list_tasks(agent_id: Option<String>) -> Vec<multi_agent::AgentTask> {
-    multi_agent::list_tasks(agent_id.as_deref())
-}
-
-#[tauri::command]
-fn agent_complete_task(
-    id: String,
-    result: String,
-    success: bool,
-) -> Result<multi_agent::AgentTask, String> {
-    multi_agent::complete_task(&id, &result, success)
-}
-
-#[tauri::command]
-fn agent_create_workflow(
-    name: String,
-    description: String,
-    template: String,
-    project_path: Option<String>,
-) -> Result<multi_agent::Workflow, String> {
-    let steps = match template.as_str() {
-        "code_review" => multi_agent::template_code_review(&description),
-        "feature_dev" => multi_agent::template_feature_dev(&description),
-        _ => return Err(format!("Unknown template: {}", template)),
-    };
-    multi_agent::create_workflow(&name, &description, steps, project_path.as_deref())
-}
-
-#[tauri::command]
-fn agent_list_workflows(project_path: Option<String>) -> Vec<multi_agent::Workflow> {
-    multi_agent::list_workflows(project_path.as_deref())
-}
-
-#[tauri::command]
-fn agent_advance_workflow(
-    id: String,
-    step_id: String,
-    output: String,
-    success: bool,
-) -> Result<multi_agent::Workflow, String> {
-    multi_agent::advance_workflow(&id, &step_id, &output, success)
-}
-
-#[tauri::command]
-fn agent_delete_workflow(id: String) -> Result<(), String> {
-    multi_agent::delete_workflow(&id)
-}
-
-// ═══════ Autonomous Workflow Execution ═══════
-
-#[tauri::command]
-async fn agent_execute_workflow(
-    id: String,
+async fn agent_run_loop(
+    task: String,
+    max_iterations: Option<usize>,
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> Result<multi_agent::Workflow, String> {
-    let mut workflow = multi_agent::list_workflows(None)
-        .into_iter()
-        .find(|w| w.id == id)
-        .ok_or_else(|| format!("Workflow '{}' not found", id))?;
+) -> Result<String, String> {
+    let config = agent_loop::AgentLoopConfig {
+        max_iterations: max_iterations.unwrap_or(25),
+        ..Default::default()
+    };
 
-    for i in 0..workflow.steps.len() {
-        if workflow.steps[i].status != multi_agent::StepStatus::Pending {
-            continue;
-        }
+    let mut loop_instance = agent_loop::AgentLoop::new(&task, config);
 
-        // Check dependencies
-        let deps = workflow.steps[i].depends_on.clone();
-        let deps_met = deps.iter().all(|dep_id| {
-            workflow.steps.iter().any(|s| s.id == *dep_id && s.status == multi_agent::StepStatus::Completed)
-        });
-        if !deps_met {
-            continue;
-        }
+    // Get or create API client
+    let (model, system_prompt, working_dir) = {
+        let session = state.session.lock().await;
+        (session.model.clone(), session.system_prompt.clone(), session.working_dir.clone())
+    };
+    let mut client = {
+        let mut guard = state.api.lock().await;
+        guard.take().unwrap_or_else(|| {
+            api_client::DirectApiClient::new(&app_handle).unwrap()
+        })
+    };
+    client.set_model(&model);
+    client.set_system_prompt(&system_prompt);
+    client.set_working_dir(working_dir);
 
-        // Mark step as running
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        workflow.steps[i].status = multi_agent::StepStatus::Running;
-        workflow.steps[i].started_at = Some(now);
+    let result = loop_instance.run(&mut client, &app_handle).await;
 
-        // Build the prompt from agent + step
-        let prompt = format!(
-            "You are performing the '{}' action.\nTask: {}\nContext: Workflow '{}' - {}",
-            workflow.steps[i].action, workflow.steps[i].input, workflow.name, workflow.description
-        );
-
-        // Execute via API client
-        let (model, system_prompt) = {
-            let session = state.session.lock().await;
-            (session.model.clone(), session.system_prompt.clone())
-        };
-        let mut client = {
-            let mut guard = state.api.lock().await;
-            guard.take().unwrap_or_else(|| {
-                api_client::DirectApiClient::new(&app_handle).unwrap()
-            })
-        };
-        client.set_model(&model);
-        client.set_system_prompt(&system_prompt);
-        let result = client.send_message(&prompt, &app_handle).await;
-        {
-            let mut guard = state.api.lock().await;
-            *guard = Some(client);
-        }
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-
-        match result {
-            Ok(()) => {
-                workflow.steps[i].status = multi_agent::StepStatus::Completed;
-                workflow.steps[i].output = Some("Step executed successfully".to_string());
-            }
-            Err(e) => {
-                workflow.steps[i].status = multi_agent::StepStatus::Failed;
-                workflow.steps[i].output = Some(format!("Step failed: {}", e));
-                workflow.status = multi_agent::WorkflowStatus::Failed;
-                let _ = multi_agent::save_workflow(&workflow);
-                return Ok(workflow);
-            }
-        }
-        workflow.steps[i].completed_at = Some(now);
+    // Return client
+    {
+        let mut guard = state.api.lock().await;
+        *guard = Some(client);
     }
 
-    // Check if all steps completed
-    let all_done = workflow.steps.iter().all(|s| s.status == multi_agent::StepStatus::Completed);
-    if all_done {
-        workflow.status = multi_agent::WorkflowStatus::Completed;
-    }
+    result
+}
 
-    let _ = multi_agent::save_workflow(&workflow);
-    Ok(workflow)
+#[tauri::command]
+async fn agent_loop_status(
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // Return current agent loop state as JSON
+    Ok("Agent loop status check - no active loop".to_string())
 }
 
 // ═══════ Provider Router ═══════
@@ -1009,44 +866,44 @@ fn transform_preview(
     raw: String,
     model: Option<String>,
     project_path: Option<String>,
-) -> prompt_transformer::TransformResult {
-    let settings = prompt_transformer::load_settings();
-    let context = prompt_transformer::TransformContext {
+) -> prompt_template::TransformResult {
+    let settings = prompt_template::load_settings();
+    let context = prompt_template::TransformContext {
         model,
         project_path,
         recent_messages: vec![],
         detected_language: None,
     };
-    prompt_transformer::transform_prompt(&raw, &context, &settings)
+    prompt_template::transform_prompt(&raw, &context, &settings)
 }
 
 #[tauri::command]
-fn transform_get_settings() -> prompt_transformer::TransformSettings {
-    prompt_transformer::load_settings()
+fn transform_get_settings() -> prompt_template::TransformSettings {
+    prompt_template::load_settings()
 }
 
 #[tauri::command]
 fn transform_save_settings(
-    settings: prompt_transformer::TransformSettings,
+    settings: prompt_template::TransformSettings,
 ) -> Result<(), String> {
-    prompt_transformer::save_settings(&settings)
+    prompt_template::save_settings(&settings)
 }
 
 #[tauri::command]
-fn transform_list_templates() -> Vec<prompt_transformer::PromptTemplate> {
-    prompt_transformer::list_templates()
+fn transform_list_templates() -> Vec<prompt_template::PromptTemplate> {
+    prompt_template::list_templates()
 }
 
 #[tauri::command]
 fn transform_save_template(
-    template: prompt_transformer::PromptTemplate,
+    template: prompt_template::PromptTemplate,
 ) -> Result<(), String> {
-    prompt_transformer::save_template(&template)
+    prompt_template::save_template(&template)
 }
 
 #[tauri::command]
 fn transform_delete_template(id: String) -> Result<(), String> {
-    prompt_transformer::delete_template(&id)
+    prompt_template::delete_template(&id)
 }
 
 // ═══════ Web Search ═══════
@@ -1220,85 +1077,7 @@ fn router_enhanced_stats() -> provider_router::EnhancedRouterStats {
     provider_router::get_enhanced_router_stats()
 }
 
-// ═══════ Phase D — Multi-Agent Commands ═══════
-
-#[tauri::command]
-fn agent_create_delegation(
-    agent_id: String,
-    scope: String,
-    context: String,
-    parent_task_id: Option<String>,
-    max_tokens: Option<usize>,
-) -> Result<multi_agent::Delegation, String> {
-    multi_agent::create_delegation(
-        &agent_id,
-        &scope,
-        &context,
-        parent_task_id.as_deref(),
-        max_tokens.unwrap_or(2000),
-    )
-}
-
-#[tauri::command]
-fn agent_complete_delegation(
-    id: String,
-    summary: String,
-    success: bool,
-) -> Result<multi_agent::Delegation, String> {
-    multi_agent::complete_delegation(&id, &summary, success)
-}
-
-#[tauri::command]
-fn agent_list_delegations(
-    parent_task_id: Option<String>,
-) -> Vec<multi_agent::Delegation> {
-    multi_agent::list_delegations(parent_task_id.as_deref())
-}
-
-#[tauri::command]
-fn agent_get_memory(agent_id: String) -> multi_agent::AgentMemory {
-    multi_agent::get_agent_memory(&agent_id)
-}
-
-#[tauri::command]
-fn agent_add_context(
-    agent_id: String,
-    entry: String,
-) -> Result<multi_agent::AgentMemory, String> {
-    multi_agent::add_agent_context(&agent_id, &entry)
-}
-
-#[tauri::command]
-fn agent_clear_memory(agent_id: String) -> Result<(), String> {
-    multi_agent::clear_agent_memory(&agent_id)
-}
-
-#[tauri::command]
-fn agent_summarize(task_id: String) -> Result<multi_agent::AgentSummary, String> {
-    multi_agent::summarize_agent_execution(&task_id)
-}
-
-#[tauri::command]
-fn agent_safety_config() -> multi_agent::SafetyConfig {
-    multi_agent::load_safety_config()
-}
-
-#[tauri::command]
-fn agent_save_safety_config(
-    config: multi_agent::SafetyConfig,
-) -> Result<(), String> {
-    multi_agent::save_safety_config(&config)
-}
-
-#[tauri::command]
-fn agent_check_safety(workflow_id: String) -> multi_agent::SafetyCheckResult {
-    multi_agent::check_workflow_safety(&workflow_id)
-}
-
-#[tauri::command]
-fn agent_enhanced_stats() -> multi_agent::EnhancedAgentStats {
-    multi_agent::get_enhanced_agent_stats()
-}
+// Phase D removed — multi_agent replaced by agent_loop
 
 // ═══════ Phase E — Workspace Intelligence Commands ═══════
 
@@ -1530,13 +1309,10 @@ pub fn run() {
             list_sessions,
             delete_session_by_key,
             get_session_events,
-            list_claude_code_sessions,
-            get_claude_code_session,
             get_session_snapshot,
             get_recent_events,
             get_token_cost,
             get_memory_data,
-            get_shared_memory_data,
             save_memory,
             get_full_memory,
             write_full_memory,
@@ -1549,9 +1325,9 @@ pub fn run() {
             set_model,
             get_current_model,
             codebase_index,
-            import_claude_code_session,
             compact_now,
             set_smart_context,
+            set_thinking_mode,
             edit_message,
             export_conversation,
             search_conversations,
@@ -1584,19 +1360,8 @@ pub fn run() {
             optimizer_list_rolling,
             optimizer_clear_data,
             optimizer_estimate_tokens,
-            agent_list,
-            agent_save,
-            agent_delete,
-            agent_stats,
-            agent_route_task,
-            agent_create_task,
-            agent_list_tasks,
-            agent_complete_task,
-            agent_create_workflow,
-            agent_list_workflows,
-            agent_advance_workflow,
-            agent_delete_workflow,
-            agent_execute_workflow,
+            agent_run_loop,
+            agent_loop_status,
             router_list_providers,
             router_save_provider,
             router_delete_provider,
@@ -1642,18 +1407,7 @@ pub fn run() {
             router_route_by_latency,
             router_workflow_routes,
             router_enhanced_stats,
-            // Phase D — Multi-Agent Systems
-            agent_create_delegation,
-            agent_complete_delegation,
-            agent_list_delegations,
-            agent_get_memory,
-            agent_add_context,
-            agent_clear_memory,
-            agent_summarize,
-            agent_safety_config,
-            agent_save_safety_config,
-            agent_check_safety,
-            agent_enhanced_stats,
+
             // Phase E — Workspace Intelligence
             workspace_build_map,
             workspace_predict_impact,

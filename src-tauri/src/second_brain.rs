@@ -1141,3 +1141,22 @@ impl Decision {
         }
     }
 }
+
+/// Save a skill learned from an agent loop execution.
+pub fn save_skill(
+    task: &str,
+    steps: &[String],
+    files_involved: &[String],
+) -> Result<(), String> {
+    let content = format!(
+        "Skill: {}\nSteps:\n{}\nFiles: {}",
+        task,
+        steps.iter().enumerate()
+            .map(|(i, s)| format!("  {}. {}", i + 1, s))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        if files_involved.is_empty() { "none".to_string() } else { files_involved.join(", ") }
+    );
+    let tags = vec!["skill".to_string(), "agent-loop".to_string()];
+    index_note(&content, None, &tags)
+}

@@ -16,6 +16,7 @@ import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
+import AgentExecutionPanel from "./components/agents/AgentExecutionPanel";
 import BrainSearchModal from "./components/memory/BrainSearchModal";
 import WorkspacePanel from "./components/workspace/WorkspacePanel";
 import PredictivePanel from "./components/predictive/PredictivePanel";
@@ -68,6 +69,9 @@ function App() {
 
   // Agent panel
   const [showAgentPanel, setShowAgentPanel] = useState(false);
+
+  // Agent execution panel
+  const [showAgentExecPanel, setShowAgentExecPanel] = useState(false);
 
   // Brain search (Ctrl+K)
   const [showBrainSearch, setShowBrainSearch] = useState(false);
@@ -1115,6 +1119,9 @@ function App() {
                 <button className="popover-item" onClick={() => { setShowAgentPanel(true); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-robot" /><span>Agents</span>
                 </button>
+                <button className="popover-item" onClick={() => { setShowAgentExecPanel(true); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-play" /><span>Agent Loop</span>
+                </button>
                 <button className="popover-item" onClick={() => { setShowWorkspacePanel(true); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-building" /><span>Workspace</span>
                 </button>
@@ -1431,6 +1438,14 @@ function App() {
       <GraphPanel visible={showGraphPanel} onClose={() => setShowGraphPanel(false)} onToast={addToast} projectPath={projectPath} />
       <TokenPanel visible={showTokenPanel} onClose={() => setShowTokenPanel(false)} onToast={addToast} projectPath={projectPath} />
       <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} />
+      <AgentExecutionPanel
+        visible={showAgentExecPanel}
+        onClose={() => setShowAgentExecPanel(false)}
+        onToast={addToast}
+        agentPlan={state.agentPlan}
+        agentCurrentStep={state.agentCurrentStep}
+        isAgentRunning={state.isAgentRunning}
+      />
       <BrainSearchModal visible={showBrainSearch} onClose={() => setShowBrainSearch(false)} projectPath={projectPath} />
       <WorkspacePanel visible={showWorkspacePanel} onClose={() => setShowWorkspacePanel(false)} onToast={addToast} projectPath={projectPath} />
       <PredictivePanel visible={showPredictivePanel} onClose={() => setShowPredictivePanel(false)} onToast={addToast} projectPath={projectPath} />

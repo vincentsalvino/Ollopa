@@ -92,9 +92,63 @@ pub enum AppEvent {
         model: String,
     },
 
+    #[serde(rename = "reasoning_chunk")]
+    ReasoningChunk {
+        text: String,
+        model: String,
+    },
+
     #[serde(rename = "generation_stopped")]
     GenerationStopped {
         partial_text: String,
         model: String,
+    },
+
+    // ═══════ Agent Loop Events ═══════
+
+    #[serde(rename = "agent_plan_created")]
+    AgentPlanCreated {
+        steps: Vec<String>,
+    },
+
+    #[serde(rename = "agent_step_started")]
+    AgentStepStarted {
+        step_index: usize,
+        description: String,
+    },
+
+    #[serde(rename = "agent_reflection")]
+    AgentReflection {
+        step_index: usize,
+        result: String,
+        adjustment: Option<String>,
+    },
+
+    #[serde(rename = "shell_output")]
+    ShellOutput {
+        command: String,
+        stdout: String,
+        stderr: String,
+        exit_code: i32,
+    },
+
+    #[serde(rename = "file_edited")]
+    FileEdited {
+        path: String,
+        diff_summary: String,
+    },
+
+    #[serde(rename = "agent_loop_started")]
+    AgentLoopStarted {
+        task: String,
+        max_iterations: usize,
+    },
+
+    #[serde(rename = "agent_loop_finished")]
+    AgentLoopFinished {
+        task: String,
+        iterations: usize,
+        success: bool,
+        summary: String,
     },
 }
