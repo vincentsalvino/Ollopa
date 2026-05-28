@@ -131,6 +131,12 @@ function App() {
   // Provider state (for model dropdown filtering)
   const [providers, setProviders] = useState<ProviderDef[]>([]);
 
+  // Smart Context
+  const [smartContextEnabled, setSmartContextEnabled] = useState(() => {
+    const saved = localStorage.getItem("ollopa-smart-context");
+    return saved !== null ? saved === "true" : true;
+  });
+
   // Context window tracking
   const [contextWindow, setContextWindow] = useState(64000);
 
@@ -239,9 +245,26 @@ function App() {
     loadWebSearchSettings();
     loadProvidersList();
     loadApiKeys();
+    loadPromptTemplates();
+    invoke("set_smart_context", { enabled: smartContextEnabled }).catch(() => {});
 
     const unlistenAppEvent = listen<AppEvent>("app-event", (event) => {
-      processEvent(event.payload);
+      const ev = event.payload;
+      // Handle global shortcut events
+      if (ev.type === "status_update") {
+        if (ev.status === "global_search") {
+          setShowBrainSearch((s) => !s);
+          return;
+        }
+        if (ev.status === "new_session") {
+          handleRestart();
+          return;
+        }
+        if (ev.status === "budget_alert") {
+          addToast(ev.detail, "info");
+        }
+      }
+      processEvent(ev);
     });
 
     const costInterval = setInterval(loadCost, 10000);
@@ -504,10 +527,12 @@ function App() {
 
   const handleCompact = async () => {
     try {
-      await invoke("send_input", { message: "/compact" });
-      addToast("Compact requested", "info");
+      const result = await invoke<string>("compact_now");
+      addToast(result, "info");
       setCompactWarningDismissed(true);
-    } catch (_) {}
+    } catch (e) {
+      addToast(`Compact failed: ${e}`, "error");
+    }
   };
 
   // ═══════ Stop Generation ═══════
@@ -631,6 +656,50 @@ function App() {
     }
   };
 
+  const handleExportFrontmatter = async () => {
+    try {
+      const content = await invoke<string>("export_conversation", { format: "markdown-frontmatter" });
+      const blob = new Blob([content], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "conversation.md";
+      a.click();
+      URL.revokeObjectURL(url);
+      addToast("Exported as Markdown with frontmatter", "success");
+      setShowExportMenu(false);
+    } catch (e) {
+      addToast(`Export failed: ${e}`, "error");
+    }
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      const html = await invoke<string>("export_conversation", { format: "pdf-html" });
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const printWindow = window.open(url, "_blank");
+      if (printWindow) {
+        printWindow.onload = () => printWindow.print();
+      }
+      addToast("PDF export opened", "success");
+      setShowExportMenu(false);
+    } catch (e) {
+      addToast(`Export failed: ${e}`, "error");
+    }
+  };
+
+  const handleExportClipboard = async () => {
+    try {
+      const content = await invoke<string>("export_conversation", { format: "clipboard" });
+      await navigator.clipboard.writeText(content);
+      addToast("Copied to clipboard", "success");
+      setShowExportMenu(false);
+    } catch (e) {
+      addToast(`Export failed: ${e}`, "error");
+    }
+  };
+
   // ═══════ Prompt Transformer ═══════
 
   const loadTransformSettings = async () => {
@@ -707,6 +776,31 @@ function App() {
   };
 
   // ═══════ API Key Management ═══════
+
+  const loadPromptTemplates = async () => {
+    try {
+      const templates = await invoke<PromptTemplate[]>("transform_list_templates");
+      setPromptTemplates(templates);
+    } catch (_) {}
+  };
+
+  const handleSelectTemplate = (t: PromptTemplate) => {
+    // Detect {variables} in template and prompt for values
+    const varPattern = /\{(\w+)\}/g;
+    let filled = t.template;
+    let match;
+    const vars: string[] = [];
+    while ((match = varPattern.exec(t.template)) !== null) {
+      if (!vars.includes(match[1])) vars.push(match[1]);
+    }
+    for (const v of vars) {
+      const value = window.prompt(`Enter value for {${v}}:`, "");
+      if (value !== null) {
+        filled = filled.replace(new RegExp(`\\{${v}\\}`, "g"), value);
+      }
+    }
+    handleSend(filled);
+  };
 
   const loadApiKeys = async () => {
     try {
@@ -974,6 +1068,16 @@ function App() {
                 <button className="dropdown-item" onClick={() => handleExport("json")}>
                   <i className="fa-solid fa-code" /> Export as JSON
                 </button>
+                <div className="dropdown-divider" />
+                <button className="dropdown-item" onClick={() => handleExportFrontmatter()}>
+                  <i className="fa-solid fa-file-lines" /> Export MD (frontmatter)
+                </button>
+                <button className="dropdown-item" onClick={() => handleExportPdf()}>
+                  <i className="fa-solid fa-file-pdf" /> Export as PDF
+                </button>
+                <button className="dropdown-item" onClick={() => handleExportClipboard()}>
+                  <i className="fa-solid fa-clipboard" /> Copy to Clipboard
+                </button>
               </div>
             )}
           </div>
@@ -1021,6 +1125,18 @@ function App() {
                   <i className="fa-solid fa-terminal" /><span>Prompt</span>
                 </button>
                 <div className="popover-divider" />
+                <button
+                  className={`popover-item${smartContextEnabled ? " active" : ""}`}
+                  onClick={() => {
+                    const next = !smartContextEnabled;
+                    setSmartContextEnabled(next);
+                    localStorage.setItem("ollopa-smart-context", String(next));
+                    invoke("set_smart_context", { enabled: next }).catch(() => {});
+                    setShowSettingsPopover(false);
+                  }}
+                >
+                  <i className="fa-solid fa-brain" /><span>Smart Context {smartContextEnabled ? "ON" : "OFF"}</span>
+                </button>
                 <button className="popover-item" onClick={() => { setShowApiKeys(true); loadApiKeys(); loadProvidersList(); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-key" /><span>Manage API Keys</span>
                 </button>
@@ -1081,13 +1197,40 @@ function App() {
                 </div>
                 {searchResults.length > 0 && (
                   <div className="search-results">
-                    {searchResults.map((r, i) => (
-                      <div key={i} className="search-result-item">
-                        <span className="search-result-role">{r.role}</span>
-                        <span className="search-result-session">{r.session_id}</span>
-                        <p className="search-result-snippet">{r.snippet}</p>
-                      </div>
-                    ))}
+                    {searchResults.map((r, i) => {
+                      const highlighted = searchQuery
+                        ? r.snippet.replace(
+                            new RegExp(`(${searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"),
+                            "<mark>$1</mark>"
+                          )
+                        : r.snippet;
+                      return (
+                        <div
+                          key={i}
+                          className="search-result-item"
+                          style={{ cursor: "pointer" }}
+                          onClick={async () => {
+                            try {
+                              await invoke("resume_conversation", { sessionId: r.session_id });
+                              const events = await invoke<PersistedEvent[]>("get_session_events", { sessionId: r.session_id });
+                              replayEvents(events.map((e) => e.event));
+                              setShowSearch(false);
+                              addToast(`Jumped to session ${r.session_id.slice(0, 8)}...`, "info");
+                            } catch (e) {
+                              addToast(`Failed to jump: ${e}`, "error");
+                            }
+                          }}
+                          title="Click to restore this session"
+                        >
+                          <span className="search-result-role">{r.role}</span>
+                          <span className="search-result-session">{r.session_id.slice(0, 12)}...</span>
+                          <p
+                            className="search-result-snippet"
+                            dangerouslySetInnerHTML={{ __html: highlighted }}
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1258,6 +1401,8 @@ function App() {
           onPreviewTransform={handlePreviewTransform}
           onTogglePreview={() => setShowTransformPreview((s) => !s)}
           showTransformPreview={showTransformPreview}
+          promptTemplates={promptTemplates}
+          onSelectTemplate={handleSelectTemplate}
         />
       </footer>
 

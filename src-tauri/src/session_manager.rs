@@ -679,8 +679,102 @@ pub fn export_session_events(
             }
             Ok(md)
         }
+        "markdown-frontmatter" => {
+            let mut md = String::new();
+            md.push_str("---\n");
+            md.push_str(&format!("session_id: \"{}\"\n", session_id));
+            md.push_str(&format!("exported_at: \"{}\"\n", chrono_now_iso()));
+            md.push_str("---\n\n");
+            md.push_str("# Conversation Export\n\n");
+            for persisted in &events {
+                match &persisted.event {
+                    AppEvent::UserMessage { text } => {
+                        md.push_str(&format!("## User\n\n{}\n\n---\n\n", text));
+                    }
+                    AppEvent::AssistantMessage { text, model } => {
+                        md.push_str(&format!(
+                            "## Assistant ({})\n\n{}\n\n---\n\n",
+                            model, text
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(md)
+        }
+        "pdf-html" => {
+            let mut html = String::new();
+            html.push_str("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Conversation Export</title>");
+            html.push_str("<style>body{font-family:system-ui,-apple-system,sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333;}");
+            html.push_str(".user{background:#e3f2fd;border-radius:8px;padding:12px;margin:8px 0;}");
+            html.push_str(".assistant{background:#f5f5f5;border-radius:8px;padding:12px;margin:8px 0;}");
+            html.push_str("h2{font-size:14px;color:#666;margin:4px 0;}pre{white-space:pre-wrap;word-break:break-word;}</style></head><body>");
+            html.push_str(&format!("<h1>Session: {}</h1>", session_id));
+            for persisted in &events {
+                match &persisted.event {
+                    AppEvent::UserMessage { text } => {
+                        html.push_str(&format!("<div class=\"user\"><h2>User</h2><pre>{}</pre></div>", html_escape(text)));
+                    }
+                    AppEvent::AssistantMessage { text, model } => {
+                        html.push_str(&format!("<div class=\"assistant\"><h2>Assistant ({})</h2><pre>{}</pre></div>", model, html_escape(text)));
+                    }
+                    _ => {}
+                }
+            }
+            html.push_str("</body></html>");
+            Ok(html)
+        }
+        "clipboard" => {
+            let mut text = String::new();
+            for persisted in &events {
+                match &persisted.event {
+                    AppEvent::UserMessage { text: t } => {
+                        text.push_str(&format!("User: {}\n\n", t));
+                    }
+                    AppEvent::AssistantMessage { text: t, model } => {
+                        text.push_str(&format!("Assistant ({}): {}\n\n", model, t));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(text)
+        }
         _ => Err(format!("Unknown format: {}", format)),
     }
+}
+
+fn chrono_now_iso() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let secs_per_day = 86400u64;
+    let days = now / secs_per_day;
+    let rem = now % secs_per_day;
+    let hours = rem / 3600;
+    let mins = (rem % 3600) / 60;
+    let secs = rem % 60;
+    // Approximate date
+    let mut y = 1970u64;
+    let mut d = days;
+    loop {
+        let yd = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        if d < yd { break; }
+        d -= yd;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0usize;
+    while m < 12 && d >= mdays[m] {
+        d -= mdays[m];
+        m += 1;
+    }
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m + 1, d + 1, hours, mins, secs)
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Get a session's snapshot for restore.
@@ -992,6 +1086,76 @@ pub fn get_claude_code_session(uuid: &str) -> Result<Vec<ClaudeCodeLogEntry>, St
     }
 
     Err(format!("Claude Code session not found: {}", uuid))
+}
+
+/// Import a Claude Code session into Ollopa as a session snapshot.
+pub fn import_claude_code_session(uuid: &str) -> Result<String, String> {
+    let entries = get_claude_code_session(uuid)?;
+    let session_id = format!("imported-{}", uuid.chars().take(8).collect::<String>());
+    let now = current_timestamp_ms();
+
+    let mut events: Vec<PersistedEvent> = Vec::new();
+    let mut cost_usd = 0.0;
+    let mut model = "unknown".to_string();
+
+    for entry in &entries {
+        let ts = if entry.timestamp_ms > 0 { entry.timestamp_ms } else { now };
+        match entry.event_type.as_str() {
+            "user" => {
+                events.push(PersistedEvent {
+                    timestamp_ms: ts,
+                    event: AppEvent::UserMessage { text: entry.content.clone() },
+                });
+            }
+            "assistant" => {
+                if let Some(ref m) = entry.model {
+                    model = m.clone();
+                }
+                events.push(PersistedEvent {
+                    timestamp_ms: ts,
+                    event: AppEvent::AssistantMessage {
+                        text: entry.content.clone(),
+                        model: entry.model.clone().unwrap_or_else(|| "claude".to_string()),
+                    },
+                });
+                if let Some(ref usage) = entry.usage {
+                    let c = (usage.input_tokens as f64 * 0.003 + usage.output_tokens as f64 * 0.015) / 1000.0;
+                    cost_usd += c;
+                    events.push(PersistedEvent {
+                        timestamp_ms: ts + 1,
+                        event: AppEvent::TokenUsage {
+                            input_tokens: usage.input_tokens,
+                            output_tokens: usage.output_tokens,
+                            cost_usd: c,
+                        },
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let message_count = events.iter().filter(|e| {
+        matches!(e.event, AppEvent::UserMessage { .. } | AppEvent::AssistantMessage { .. })
+    }).count() as u32;
+
+    let snapshot = SessionSnapshot {
+        session_id: session_id.clone(),
+        project_path: None,
+        model,
+        created_at: events.first().map(|e| e.timestamp_ms).unwrap_or(now),
+        updated_at: now,
+        message_count,
+        status: SessionStatus::Completed,
+        cost_usd,
+        duration_ms: 0,
+        title: Some(format!("Imported: {}", &uuid[..8.min(uuid.len())])),
+        claude_session_id: Some(uuid.to_string()),
+        events,
+    };
+
+    save_snapshot(None, &snapshot)?;
+    Ok(session_id)
 }
 
 /// Parse an ISO 8601 timestamp like "2026-05-28T05:37:01.878Z" to milliseconds since epoch.

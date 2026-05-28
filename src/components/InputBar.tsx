@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import type { SlashCommand } from "../types";
+import type { SlashCommand, PromptTemplate } from "../types";
 
 interface InputBarProps {
   slashCommands: SlashCommand[];
@@ -12,6 +12,8 @@ interface InputBarProps {
   onPreviewTransform?: (input: string) => void;
   onTogglePreview?: () => void;
   showTransformPreview?: boolean;
+  promptTemplates?: PromptTemplate[];
+  onSelectTemplate?: (t: PromptTemplate) => void;
 }
 
 export default function InputBar({
@@ -25,6 +27,8 @@ export default function InputBar({
   onPreviewTransform,
   onTogglePreview,
   showTransformPreview,
+  promptTemplates,
+  onSelectTemplate,
 }: InputBarProps) {
   const [input, setInput] = useState(() => {
     const saved = localStorage.getItem("ollopa-input-draft");
@@ -47,6 +51,8 @@ export default function InputBar({
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templateFilter, setTemplateFilter] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -219,6 +225,49 @@ export default function InputBar({
           >
             &#128065;
           </button>
+        )}
+        {promptTemplates && promptTemplates.length > 0 && (
+          <div style={{ position: "relative", display: "inline-block" }}>
+            <button
+              className="attach-btn"
+              onClick={() => { setShowTemplates((s) => !s); setTemplateFilter(""); }}
+              title="Prompt templates"
+            >
+              <i className="fa-solid fa-file-lines" />
+            </button>
+            {showTemplates && (
+              <div className="slash-dropdown" style={{ bottom: "100%", left: 0, minWidth: 220 }}>
+                <div style={{ padding: "4px 8px" }}>
+                  <input
+                    type="text"
+                    placeholder="Filter templates..."
+                    value={templateFilter}
+                    onChange={(e) => setTemplateFilter(e.target.value)}
+                    style={{ width: "100%", padding: "4px 6px", fontSize: 12, border: "1px solid var(--border, #555)", borderRadius: 4, background: "var(--bg-1, #222)", color: "inherit" }}
+                    autoFocus
+                  />
+                </div>
+                {promptTemplates
+                  .filter((t) => t.name.toLowerCase().includes(templateFilter.toLowerCase()))
+                  .map((t) => (
+                    <div
+                      key={t.id}
+                      className="slash-item"
+                      onClick={() => {
+                        onSelectTemplate?.(t);
+                        setShowTemplates(false);
+                      }}
+                    >
+                      <span className="slash-cmd">{t.name}</span>
+                      <span className="slash-desc">{t.mode}</span>
+                    </div>
+                  ))}
+                {promptTemplates.filter((t) => t.name.toLowerCase().includes(templateFilter.toLowerCase())).length === 0 && (
+                  <div className="slash-item" style={{ opacity: 0.5 }}>No matching templates</div>
+                )}
+              </div>
+            )}
+          </div>
         )}
         <input
           ref={fileInputRef}
