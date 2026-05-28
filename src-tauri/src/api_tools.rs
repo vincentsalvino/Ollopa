@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -102,17 +103,33 @@ pub fn builtin_tools() -> Vec<ToolDefinition> {
     ]
 }
 
-pub fn execute_tool(name: &str, args: &Value) -> Result<String, String> {
+/// Resolve a path argument against the working directory.
+/// If the path is relative, it's resolved against working_dir.
+/// If working_dir is None, the path is used as-is.
+fn resolve_path(path_str: &str, working_dir: Option<&str>) -> PathBuf {
+    let p = Path::new(path_str);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else if let Some(wd) = working_dir {
+        Path::new(wd).join(p)
+    } else {
+        p.to_path_buf()
+    }
+}
+
+pub fn execute_tool(name: &str, args: &Value, working_dir: Option<&str>) -> Result<String, String> {
     match name {
         "read_file" => {
-            let path = args["path"].as_str().ok_or("Missing 'path' argument")?;
-            std::fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read file: {}", e))
+            let path_str = args["path"].as_str().ok_or("Missing 'path' argument")?;
+            let path = resolve_path(path_str, working_dir);
+            std::fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read file '{}': {}", path.display(), e))
         }
         "list_directory" => {
-            let path = args["path"].as_str().ok_or("Missing 'path' argument")?;
-            let entries = std::fs::read_dir(path)
-                .map_err(|e| format!("Failed to read directory: {}", e))?;
+            let path_str = args["path"].as_str().unwrap_or(".");
+            let path = resolve_path(path_str, working_dir);
+            let entries = std::fs::read_dir(&path)
+                .map_err(|e| format!("Failed to read directory '{}': {}", path.display(), e))?;
             let mut listing = Vec::new();
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
@@ -124,9 +141,11 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<String, String> {
         }
         "search_code" => {
             let pattern = args["pattern"].as_str().ok_or("Missing 'pattern' argument")?;
-            let path = args["path"].as_str().ok_or("Missing 'path' argument")?;
+            let path_str = args["path"].as_str().unwrap_or(".");
+            let path = resolve_path(path_str, working_dir);
+            let path_s = path.to_string_lossy().to_string();
             let mut results = Vec::new();
-            search_files_recursive(path, pattern, &mut results, 0, 5);
+            search_files_recursive(&path_s, pattern, &mut results, 0, 5);
             if results.is_empty() {
                 Ok("No matches found".to_string())
             } else {
@@ -137,8 +156,10 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<String, String> {
             Ok(crate::memory::read_memory_full())
         }
         "get_git_status" => {
-            let path = args["path"].as_str().ok_or("Missing 'path' argument")?;
-            let info = crate::git_intelligence::get_git_info(path);
+            let path_str = args["path"].as_str().unwrap_or(".");
+            let path = resolve_path(path_str, working_dir);
+            let path_s = path.to_string_lossy().to_string();
+            let info = crate::git_intelligence::get_git_info(&path_s);
             serde_json::to_string_pretty(&info)
                 .map_err(|e| format!("Failed to serialize git info: {}", e))
         }
