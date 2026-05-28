@@ -322,6 +322,41 @@ export interface AgentLoopData {
   max_iterations?: number;
 }
 
+// ═══════ Phase 3 — Smart Context + Learning ═══════
+
+export interface Skill {
+  id: string;
+  task_pattern: string;
+  tool_sequence: string[];
+  files_involved: string[];
+  success_count: number;
+  created_at: number;
+  last_used: number;
+  project_path: string | null;
+}
+
+export interface RepoMapEntry {
+  path: string;
+  language: string;
+  exported_symbols: string[];
+}
+
+export interface RepoMap {
+  entries: RepoMapEntry[];
+  project_path: string;
+  generated_at: number;
+  total_files: number;
+}
+
+export interface CostEstimate {
+  task: string;
+  model: string;
+  estimated_steps: number;
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  estimated_cost_usd: number;
+}
+
 export type AppEvent =
   | SessionStartedEvent
   | UserMessageEvent

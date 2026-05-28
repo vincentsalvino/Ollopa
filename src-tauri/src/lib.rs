@@ -695,11 +695,17 @@ fn optimizer_estimate_tokens(text: String) -> usize {
 async fn agent_run_loop(
     task: String,
     max_iterations: Option<usize>,
+    planning_model: Option<String>,
+    coding_model: Option<String>,
+    project_path: Option<String>,
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let config = agent_loop::AgentLoopConfig {
         max_iterations: max_iterations.unwrap_or(25),
+        planning_model,
+        coding_model,
+        project_path,
         ..Default::default()
     };
 
@@ -733,10 +739,80 @@ async fn agent_run_loop(
 
 #[tauri::command]
 async fn agent_loop_status(
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
 ) -> Result<String, String> {
-    // Return current agent loop state as JSON
     Ok("Agent loop status check - no active loop".to_string())
+}
+
+// ═══════ Phase 3 — Smart Context + Learning ═══════
+
+#[tauri::command]
+fn generate_repo_map(project_path: String) -> Result<codebase_indexer::RepoMap, String> {
+    codebase_indexer::generate_repo_map(&project_path)
+}
+
+#[tauri::command]
+fn repo_map_text(project_path: String) -> Result<String, String> {
+    let map = codebase_indexer::generate_repo_map(&project_path)?;
+    Ok(codebase_indexer::repo_map_to_text(&map))
+}
+
+#[tauri::command]
+fn select_files_for_task(
+    project_path: String,
+    task: String,
+    max_files: Option<usize>,
+    token_budget: Option<usize>,
+) -> Result<codebase_indexer::FileSelection, String> {
+    codebase_indexer::select_files_for_task(
+        &project_path,
+        &task,
+        max_files.unwrap_or(10),
+        token_budget.unwrap_or(32_000),
+    )
+}
+
+#[tauri::command]
+fn search_skills(task: String, project_path: Option<String>) -> Vec<second_brain::Skill> {
+    second_brain::search_skills(&task, project_path.as_deref())
+}
+
+#[tauri::command]
+fn list_skills() -> Vec<second_brain::Skill> {
+    second_brain::list_skills()
+}
+
+#[tauri::command]
+fn estimate_agent_cost(
+    task: String,
+    model: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let model_id = model.unwrap_or_else(|| "deepseek-v4-flash".to_string());
+    let estimated_steps = 5_usize;
+    let tokens_per_step = 2000_usize;
+    let planning_tokens = 1500_usize;
+    let reflect_tokens = 500_usize;
+
+    let total_input = planning_tokens + (tokens_per_step * estimated_steps) + (reflect_tokens * estimated_steps);
+    let total_output = 500 + (1000 * estimated_steps) + (200 * estimated_steps);
+
+    let (input_price, output_price) = match model_id.as_str() {
+        m if m.contains("flash") => (0.14, 0.28),
+        m if m.contains("pro") => (0.435, 0.87),
+        _ => (0.14, 0.28),
+    };
+
+    let estimated_cost = (total_input as f64 * input_price / 1_000_000.0)
+        + (total_output as f64 * output_price / 1_000_000.0);
+
+    Ok(serde_json::json!({
+        "task": task,
+        "model": model_id,
+        "estimated_steps": estimated_steps,
+        "estimated_input_tokens": total_input,
+        "estimated_output_tokens": total_output,
+        "estimated_cost_usd": estimated_cost,
+    }))
 }
 
 // ═══════ Provider Router ═══════
@@ -1362,6 +1438,13 @@ pub fn run() {
             optimizer_estimate_tokens,
             agent_run_loop,
             agent_loop_status,
+            // Phase 3 — Smart Context + Learning
+            generate_repo_map,
+            repo_map_text,
+            select_files_for_task,
+            search_skills,
+            list_skills,
+            estimate_agent_cost,
             router_list_providers,
             router_save_provider,
             router_delete_provider,

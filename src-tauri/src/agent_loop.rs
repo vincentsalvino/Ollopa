@@ -1,4 +1,4 @@
-use crate::api_client::{ChatMessage, DirectApiClient};
+use crate::api_client::DirectApiClient;
 use crate::ollopa_events::AppEvent;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -48,6 +48,10 @@ pub struct AgentLoopConfig {
     pub max_iterations: usize,
     pub auto_approve_safe: bool,
     pub auto_approve_medium: bool,
+    pub planning_model: Option<String>,
+    pub coding_model: Option<String>,
+    pub project_path: Option<String>,
+    pub token_budget: usize,
 }
 
 impl Default for AgentLoopConfig {
@@ -56,6 +60,10 @@ impl Default for AgentLoopConfig {
             max_iterations: 25,
             auto_approve_safe: true,
             auto_approve_medium: true,
+            planning_model: None,
+            coding_model: None,
+            project_path: None,
+            token_budget: 32_000,
         }
     }
 }
@@ -133,6 +141,7 @@ impl AgentLoop {
         app_handle: &AppHandle,
     ) -> Result<String, String> {
         self.state = AgentState::Planning;
+        let original_model = client.model().to_string();
 
         let _ = app_handle.emit(
             "app-event",
@@ -142,15 +151,71 @@ impl AgentLoop {
             },
         );
 
+        // Phase 3: Assemble smart context (repo map + skills + relevant files)
+        let mut context_parts: Vec<String> = Vec::new();
+
+        if let Some(ref project_path) = self.config.project_path {
+            // Inject repo map
+            if let Ok(map) = crate::codebase_indexer::generate_repo_map(project_path) {
+                let map_text = crate::codebase_indexer::repo_map_to_text(&map);
+                context_parts.push(map_text);
+            }
+
+            // Inject relevant file contents
+            if let Ok(selection) = crate::codebase_indexer::select_files_for_task(
+                project_path,
+                &self.task,
+                10,
+                self.config.token_budget,
+            ) {
+                if !selection.files.is_empty() {
+                    let mut file_context = String::from("# Relevant Files\n");
+                    for f in &selection.files {
+                        file_context.push_str(&format!(
+                            "\n## {} (score: {:.1}, ~{} tokens)\n```\n{}\n```\n",
+                            f.path, f.relevance_score, f.token_estimate,
+                            if f.content.len() > 8000 { &f.content[..8000] } else { &f.content }
+                        ));
+                    }
+                    context_parts.push(file_context);
+                }
+            }
+        }
+
+        // Inject matching skills from previous tasks
+        let skills = crate::second_brain::search_skills(&self.task, self.config.project_path.as_deref());
+        if !skills.is_empty() {
+            context_parts.push(crate::second_brain::skills_to_context(&skills));
+        }
+
+        let context_block = context_parts.join("\n\n---\n\n");
+
+        // Phase 3: Multi-model routing — use flash model for planning
+        if let Some(ref planning_model) = self.config.planning_model {
+            client.set_model(planning_model);
+        }
+
         // PLAN: Ask the LLM to create a structured plan
-        let plan_prompt = format!(
-            "You are an autonomous coding agent. Create a step-by-step plan to accomplish:\n\n\
-            {}\n\n\
-            Output ONLY a numbered list of specific steps. Each step should be a single action \
-            (read a file, edit a file, run a command, etc.). Be concise.\n\
-            Format: one step per line, numbered 1-N.",
-            self.task
-        );
+        let plan_prompt = if context_block.is_empty() {
+            format!(
+                "You are an autonomous coding agent. Create a step-by-step plan to accomplish:\n\n\
+                {}\n\n\
+                Output ONLY a numbered list of specific steps. Each step should be a single action \
+                (read a file, edit a file, run a command, etc.). Be concise.\n\
+                Format: one step per line, numbered 1-N.",
+                self.task
+            )
+        } else {
+            format!(
+                "You are an autonomous coding agent. Create a step-by-step plan to accomplish:\n\n\
+                {}\n\n\
+                Here is context about the codebase:\n\n{}\n\n\
+                Output ONLY a numbered list of specific steps. Each step should be a single action \
+                (read a file, edit a file, run a command, etc.). Be concise.\n\
+                Format: one step per line, numbered 1-N.",
+                self.task, context_block
+            )
+        };
 
         client.send_message(&plan_prompt, app_handle).await?;
 
@@ -178,6 +243,13 @@ impl AgentLoop {
         });
 
         self.state = AgentState::Executing;
+
+        // Phase 3: Switch to coding model for execution
+        if let Some(ref coding_model) = self.config.coding_model {
+            client.set_model(coding_model);
+        } else {
+            client.set_model(&original_model);
+        }
 
         // EXECUTE: Iterate through plan steps
         let plan_len = self.plan.as_ref().map(|p| p.steps.len()).unwrap_or(0);
@@ -247,8 +319,11 @@ impl AgentLoop {
 
                     summary_parts.push(format!("Step {}: {} - Done", step_idx + 1, step_desc));
 
-                    // REFLECT: Quick check on the result
+                    // REFLECT: Switch to flash model for cheap reflection
                     self.state = AgentState::Reflecting;
+                    if let Some(ref planning_model) = self.config.planning_model {
+                        client.set_model(planning_model);
+                    }
                     let reflect_prompt = format!(
                         "You just completed: {}\nResult: {}\n\n\
                         Was this step successful? If not, what should be adjusted? \
@@ -274,6 +349,10 @@ impl AgentLoop {
                     );
 
                     self.state = AgentState::Executing;
+                    // Switch back to coding model for next step
+                    if let Some(ref coding_model) = self.config.coding_model {
+                        client.set_model(coding_model);
+                    }
                 }
                 Err(e) => {
                     // Step failed — mark and continue
@@ -302,6 +381,10 @@ impl AgentLoop {
 
         // VERIFY: Summary of what was done
         self.state = AgentState::Verifying;
+
+        // Restore original model for verification
+        client.set_model(&original_model);
+
         let summary = summary_parts.join("\n");
 
         let verify_prompt = format!(
@@ -326,13 +409,30 @@ impl AgentLoop {
             },
         );
 
-        // Save skill to Second Brain for continuous learning
-        let files_involved: Vec<String> = Vec::new(); // Could be populated from tool calls
+        // Phase 3: Save skill with files collected from tool outputs
+        let files_involved: Vec<String> = self.plan.as_ref()
+            .map(|p| p.steps.iter()
+                .filter_map(|s| s.tool_output.as_ref())
+                .flat_map(|output| {
+                    // Extract file paths from tool outputs
+                    output.lines()
+                        .filter(|l| l.contains('/') && (l.ends_with(".rs") || l.ends_with(".ts") || l.ends_with(".tsx") || l.ends_with(".js") || l.ends_with(".py")))
+                        .map(|l| l.trim().to_string())
+                        .collect::<Vec<_>>()
+                })
+                .collect())
+            .unwrap_or_default();
+
         let _ = crate::second_brain::save_skill(
             &self.task,
             &step_descriptions,
             &files_involved,
         );
+
+        // Invalidate repo map if we modified files
+        if let Some(ref project_path) = self.config.project_path {
+            crate::codebase_indexer::invalidate_repo_map(project_path);
+        }
 
         Ok(final_summary)
     }
