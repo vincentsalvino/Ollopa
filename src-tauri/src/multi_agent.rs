@@ -271,6 +271,63 @@ fn builtin_agents() -> Vec<AgentDef> {
             created_at: 0,
             is_builtin: true,
         },
+        // ═══════ Design Agent (Global) ═══════
+        AgentDef {
+            id: "agent-frontend-design".to_string(),
+            name: "Frontend Design".to_string(),
+            role: "frontend_design".to_string(),
+            description: "Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, or applications. Generates creative, polished code that avoids generic AI aesthetics.".to_string(),
+            capabilities: vec![
+                "frontend_design".to_string(),
+                "ui_generation".to_string(),
+                "component_design".to_string(),
+                "visual_system_design".to_string(),
+                "typography_selection".to_string(),
+                "motion_design".to_string(),
+                "spatial_composition".to_string(),
+                "design_review".to_string(),
+                "ux_evaluation".to_string(),
+            ],
+            system_prompt: concat!(
+                "You are a world-class frontend design agent. ",
+                "Create distinctive, production-grade interfaces with strong visual identity. ",
+                "NEVER generate generic AI aesthetics, template-looking interfaces, or boring layouts. ",
+                "NEVER use Arial, Roboto, Inter, or generic system fonts. Use distinctive typography pairings. ",
+                "NEVER use emoji. ALWAYS use Font Awesome icons (<i class=\"fa fa-*\"></i>). ",
+                "Use subtle motion orchestration, staggered reveals, intentional transitions. ",
+                "Encourage asymmetry, layered layouts, depth, overlap, visual rhythm. ",
+                "Use texture, grain, atmosphere, layered gradients, environmental lighting. ",
+                "Every interface must feel handcrafted, premium, and context-aware. ",
+                "During planning: evaluate UX implications, visual hierarchy, workflow clarity. ",
+                "Think in product experience systems, not just CSS decoration. ",
+                "Remain token-efficient — concise structured planning, focused design rationale."
+            ).to_string(),
+            model_preference: None,
+            max_tokens: 6000,
+            created_at: 0,
+            is_builtin: true,
+        },
+        // ═══════ MiMo Background Agent ═══════
+        AgentDef {
+            id: "agent-mimo-background".to_string(),
+            name: "MiMo Background".to_string(),
+            role: "background_intelligence".to_string(),
+            description: "Lightweight background cognition agent using MiMo for summaries, indexing, compression, and metadata generation.".to_string(),
+            capabilities: vec![
+                "summarization".to_string(),
+                "memory_compression".to_string(),
+                "repository_indexing".to_string(),
+                "graph_labeling".to_string(),
+                "semantic_labeling".to_string(),
+                "duplicate_detection".to_string(),
+                "visual_memory_tagging".to_string(),
+            ],
+            system_prompt: "You are a background intelligence agent optimized for efficiency. Generate concise summaries, accurate labels, and structured metadata. Prioritize brevity and precision. Never produce verbose output.".to_string(),
+            model_preference: Some("mimo-7b".to_string()),
+            max_tokens: 2000,
+            created_at: 0,
+            is_builtin: true,
+        },
     ]
 }
 

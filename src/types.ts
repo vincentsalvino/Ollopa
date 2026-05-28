@@ -216,7 +216,12 @@ export type AppEvent =
   | SessionFinishedEvent
   | ErrorEvent
   | StreamingChunkEvent
-  | GenerationStoppedEvent;
+  | GenerationStoppedEvent
+  | ProviderFallbackEvent
+  | BackgroundTaskEvent
+  | DesignAgentActivatedEvent
+  | DesignAgentEvent
+  | RoutingTelemetryEvent;
 
 // ═══════ Event Store State ═══════
 
@@ -494,8 +499,8 @@ export interface AgentStats {
 
 // ═══════ Provider Router Types ═══════
 
-export type ProviderType = "Claude" | "DeepSeek" | "OpenAI" | "OpenRouter" | "NousResearch" | "Local" | "Custom";
-export type RoutingStrategy = "CostOptimized" | "QualityFirst" | "LatencyFirst" | "RoundRobin" | "Failover" | "Manual";
+export type ProviderType = "Claude" | "DeepSeek" | "OpenAI" | "OpenRouter" | "NousResearch" | "MiMo" | "Local" | "Custom";
+export type RoutingStrategy = "CostOptimized" | "QualityFirst" | "LatencyFirst" | "RoundRobin" | "Failover" | "Manual" | "PrimaryOnly" | "InlineFallback" | "BackgroundIntelligence" | "DesignFocused";
 export type HealthStatus = "Healthy" | "Degraded" | "Down" | "Unknown";
 
 export interface ModelConfig {
@@ -935,4 +940,303 @@ export interface PredictiveAnalysis {
   suggestions: PredictiveSuggestion[];
   smart_context: SmartContext;
   recommendations: WorkflowRecommendation[];
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase G — MiMo Provider + Design Agent System
+// ═══════════════════════════════════════════════════════════════
+
+// ═══════ MiMo + Inline Fallback Types ═══════
+
+export type FallbackTrigger =
+  | "rate_limit"
+  | "timeout"
+  | "transient_error"
+  | "quota_exhausted"
+  | "degraded_latency"
+  | "partial_generation_failure";
+
+export type ProviderRole = "Primary" | "Fallback" | "Background" | "Compression" | "Design";
+
+export interface InlineFallbackDecision {
+  original_provider: string;
+  original_model: string;
+  fallback_provider: string;
+  fallback_model: string;
+  trigger: string;
+  timestamp: number;
+  transparent: boolean;
+  estimated_cost_savings: number;
+}
+
+// ═══════ Background Intelligence Types ═══════
+
+export type BackgroundTaskType =
+  | "rolling_summary"
+  | "repository_indexing"
+  | "architecture_tagging"
+  | "graph_metadata_generation"
+  | "semantic_labeling"
+  | "retrieval_preparation"
+  | "duplicate_memory_detection"
+  | "session_compression"
+  | "visual_memory_tagging"
+  | "design_memory_update";
+
+export type BackgroundTaskStatus = "Queued" | "Running" | "Completed" | "Failed" | "Cancelled";
+export type BgTaskPriority = "Low" | "Normal" | "High";
+
+export interface BackgroundTask {
+  id: string;
+  task_type: BackgroundTaskType;
+  status: BackgroundTaskStatus;
+  priority: BgTaskPriority;
+  input: string;
+  output: string | null;
+  provider_used: string | null;
+  model_used: string | null;
+  token_count: number;
+  cost_usd: number;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+  batch_id: string | null;
+  project_path: string | null;
+}
+
+export interface BackgroundConfig {
+  enabled: boolean;
+  max_concurrent_tasks: number;
+  max_daily_token_budget: number;
+  batch_size: number;
+  preferred_provider: string;
+  auto_summarize: boolean;
+  auto_index: boolean;
+  auto_compress: boolean;
+  auto_detect_duplicates: boolean;
+}
+
+export interface TaskBatch {
+  id: string;
+  tasks: string[];
+  status: BackgroundTaskStatus;
+  total_tokens: number;
+  total_cost: number;
+  created_at: number;
+  completed_at: number | null;
+}
+
+export interface BackgroundStats {
+  config: BackgroundConfig;
+  total_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  queued_tasks: number;
+  running_tasks: number;
+  total_tokens_used: number;
+  total_cost_usd: number;
+  daily_tokens_remaining: number;
+  task_type_counts: Record<string, number>;
+  active_batches: number;
+}
+
+// ═══════ Design Agent Types ═══════
+
+export interface TypographyRules {
+  banned_fonts: string[];
+  recommended_display_fonts: string[];
+  recommended_body_fonts: string[];
+  principles: string[];
+}
+
+export interface MotionRules {
+  encouraged: string[];
+  avoided: string[];
+}
+
+export interface SpatialRules {
+  encouraged: string[];
+  avoided: string[];
+}
+
+export interface IconRules {
+  provider: string;
+  never_use: string[];
+  examples: string[];
+}
+
+export interface BackgroundRules {
+  encouraged: string[];
+  avoided: string[];
+}
+
+export interface DesignAgentSpec {
+  name: string;
+  description: string;
+  active: boolean;
+  auto_activate_triggers: string[];
+  design_philosophy: string[];
+  typography_rules: TypographyRules;
+  motion_rules: MotionRules;
+  spatial_rules: SpatialRules;
+  icon_rules: IconRules;
+  background_rules: BackgroundRules;
+  anti_patterns: string[];
+  created_at: number;
+  updated_at: number;
+}
+
+export interface StyleIdentity {
+  name: string;
+  aesthetic_direction: string;
+  mood: string[];
+  references: string[];
+  brand_keywords: string[];
+}
+
+export interface FontScale {
+  name: string;
+  size_px: number;
+  line_height: number;
+  weight: number;
+}
+
+export interface TypographySystem {
+  display_font: string;
+  body_font: string;
+  mono_font: string;
+  scale: FontScale[];
+}
+
+export interface MotionLanguage {
+  default_duration_ms: number;
+  easing: string;
+  stagger_delay_ms: number;
+  hover_scale: number;
+  transition_properties: string[];
+}
+
+export interface SpacingLanguage {
+  base_unit_px: number;
+  scale: number[];
+  container_max_width: string;
+  section_padding: string;
+}
+
+export interface ComponentPattern {
+  name: string;
+  component_type: string;
+  description: string;
+  css_properties: Record<string, string>;
+  created_at: number;
+}
+
+export interface ColorEntry {
+  name: string;
+  hex: string;
+  usage: string;
+}
+
+export interface DesignMemory {
+  id: string;
+  project_path: string | null;
+  project_style_identity: StyleIdentity;
+  typography_system: TypographySystem;
+  motion_language: MotionLanguage;
+  spacing_language: SpacingLanguage;
+  visual_principles: string[];
+  component_patterns: ComponentPattern[];
+  color_palette: ColorEntry[];
+  created_at: number;
+  updated_at: number;
+}
+
+export interface DesignFinding {
+  category: string;
+  severity: "Info" | "Warning" | "Critical";
+  description: string;
+  suggestion: string;
+}
+
+export interface DesignReview {
+  id: string;
+  project_path: string | null;
+  score: number;
+  findings: DesignFinding[];
+  recommendations: string[];
+  created_at: number;
+}
+
+export interface DesignActivation {
+  triggered: boolean;
+  trigger_keywords: string[];
+  agent_spec: DesignAgentSpec;
+  design_memory: DesignMemory | null;
+  planning_context: string | null;
+}
+
+export type DesignEventType =
+  | "design.direction.selected"
+  | "design.system.updated"
+  | "design.memory.stored"
+  | "design.review.completed"
+  | "design.theme.generated"
+  | "design.agent.activated"
+  | "design.agent.deactivated"
+  | "design.pattern.recorded";
+
+export interface DesignEventData {
+  event_type: DesignEventType;
+  project_path: string | null;
+  detail: string;
+  timestamp: number;
+}
+
+export interface DesignAgentStats {
+  agent_active: boolean;
+  total_memories: number;
+  total_reviews: number;
+  total_patterns: number;
+  total_events: number;
+  avg_review_score: number;
+  projects_with_design_memory: number;
+}
+
+// ═══════ New Event Types ═══════
+
+export interface ProviderFallbackEvent {
+  type: "provider_fallback";
+  original_provider: string;
+  fallback_provider: string;
+  reason: string;
+  transparent: boolean;
+}
+
+export interface BackgroundTaskEvent {
+  type: "background_task";
+  task_id: string;
+  task_type: string;
+  status: string;
+  provider: string;
+}
+
+export interface DesignAgentActivatedEvent {
+  type: "design_agent_activated";
+  trigger_keywords: string[];
+  has_memory: boolean;
+}
+
+export interface DesignAgentEvent {
+  type: "design_event";
+  event_type: string;
+  detail: string;
+}
+
+export interface RoutingTelemetryEvent {
+  type: "routing_telemetry";
+  provider: string;
+  model: string;
+  role: string;
+  strategy: string;
+  cost: number;
 }

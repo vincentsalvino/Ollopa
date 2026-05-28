@@ -94,9 +94,14 @@ fn index_path() -> PathBuf {
     brain_dir().join("semantic-index.json")
 }
 
+fn design_memory_dir() -> PathBuf {
+    brain_dir().join("design-memory")
+}
+
 fn ensure_dirs() {
     let _ = fs::create_dir_all(summaries_dir());
     let _ = fs::create_dir_all(decisions_dir());
+    let _ = fs::create_dir_all(design_memory_dir());
 }
 
 fn current_timestamp_ms() -> u64 {
@@ -1140,4 +1145,50 @@ impl Decision {
             DecisionStatus::Deprecated => "DEPRECATED",
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Design Memory Integration
+// Bridge between second_brain persistence and design_agent memory
+// ═══════════════════════════════════════════════════════════════
+
+/// Index a design memory entry into the semantic index
+pub fn index_design_memory(
+    memory_id: &str,
+    project_path: Option<&str>,
+    style_direction: &str,
+    typography: &str,
+    principles: &[String],
+) -> Result<(), String> {
+    ensure_dirs();
+    let content = format!(
+        "Design Memory: style={}, typography={}, principles={}",
+        style_direction,
+        typography,
+        principles.join(", ")
+    );
+
+    let entry = IndexEntry {
+        id: format!("idx-design-{}", current_timestamp_ms()),
+        source_type: "design_memory".to_string(),
+        source_id: memory_id.to_string(),
+        content,
+        keywords: extract_keywords(&format!(
+            "design frontend ui ux {} {} {}",
+            style_direction,
+            typography,
+            principles.join(" ")
+        )),
+        project_path: project_path.map(|s| s.to_string()),
+        created_at: current_timestamp_ms(),
+        relevance_score: 1.0,
+    };
+
+    add_to_index(&entry)
+}
+
+/// Search for design-related memories
+pub fn search_design_context(query: &str, project_path: Option<&str>) -> Vec<SearchResult> {
+    let design_query = format!("design frontend ui ux {}", query);
+    search(&design_query, project_path, 10)
 }

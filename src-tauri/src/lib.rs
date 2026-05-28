@@ -1,6 +1,8 @@
 mod api_client;
 mod api_keys;
 mod approval_manager;
+mod background_intelligence;
+mod design_agent;
 mod ollopa_events;
 #[allow(dead_code)]
 mod ollopa_process;
@@ -1224,6 +1226,223 @@ fn predictive_analysis(
     )
 }
 
+// ═══════ MiMo Provider + Inline Fallback ═══════
+
+#[tauri::command]
+fn router_inline_fallback(
+    task_type: String,
+    needs_tools: bool,
+    trigger: Option<String>,
+) -> provider_router::RoutingDecision {
+    let fallback_trigger = trigger.and_then(|t| match t.as_str() {
+        "rate_limit" => Some(provider_router::FallbackTrigger::RateLimit),
+        "timeout" => Some(provider_router::FallbackTrigger::Timeout),
+        "transient_error" => Some(provider_router::FallbackTrigger::TransientError),
+        "quota_exhausted" => Some(provider_router::FallbackTrigger::QuotaExhausted),
+        "degraded_latency" => Some(provider_router::FallbackTrigger::DegradedLatency),
+        "partial_generation_failure" => Some(provider_router::FallbackTrigger::PartialGenerationFailure),
+        _ => None,
+    });
+    provider_router::route_inline_fallback(&task_type, needs_tools, fallback_trigger)
+}
+
+#[tauri::command]
+fn router_background_intelligence(task_type: String) -> provider_router::RoutingDecision {
+    provider_router::route_background_intelligence(&task_type)
+}
+
+#[tauri::command]
+fn router_design_focused(
+    task_type: String,
+    needs_tools: bool,
+) -> provider_router::RoutingDecision {
+    provider_router::route_design_focused(&task_type, needs_tools)
+}
+
+#[tauri::command]
+fn router_mimo_suitable(task_type: String) -> bool {
+    provider_router::is_mimo_suitable(&task_type)
+}
+
+#[tauri::command]
+fn router_mimo_excluded(task_type: String) -> bool {
+    provider_router::is_mimo_excluded(&task_type)
+}
+
+// ═══════ Background Intelligence ═══════
+
+#[tauri::command]
+fn bg_get_config() -> background_intelligence::BackgroundConfig {
+    background_intelligence::load_config()
+}
+
+#[tauri::command]
+fn bg_save_config(
+    config: background_intelligence::BackgroundConfig,
+) -> Result<(), String> {
+    background_intelligence::save_config(&config)
+}
+
+#[tauri::command]
+fn bg_create_task(
+    task_type: String,
+    input: String,
+    priority: String,
+    project_path: Option<String>,
+) -> Result<background_intelligence::BackgroundTask, String> {
+    let tt = match task_type.as_str() {
+        "rolling_summary" => background_intelligence::BackgroundTaskType::RollingSummary,
+        "repository_indexing" => background_intelligence::BackgroundTaskType::RepositoryIndexing,
+        "architecture_tagging" => background_intelligence::BackgroundTaskType::ArchitectureTagging,
+        "graph_metadata_generation" => background_intelligence::BackgroundTaskType::GraphMetadataGeneration,
+        "semantic_labeling" => background_intelligence::BackgroundTaskType::SemanticLabeling,
+        "retrieval_preparation" => background_intelligence::BackgroundTaskType::RetrievalPreparation,
+        "duplicate_memory_detection" => background_intelligence::BackgroundTaskType::DuplicateMemoryDetection,
+        "session_compression" => background_intelligence::BackgroundTaskType::SessionCompression,
+        "visual_memory_tagging" => background_intelligence::BackgroundTaskType::VisualMemoryTagging,
+        "design_memory_update" => background_intelligence::BackgroundTaskType::DesignMemoryUpdate,
+        _ => return Err(format!("Unknown task type: {}", task_type)),
+    };
+    let p = match priority.as_str() {
+        "low" => background_intelligence::TaskPriority::Low,
+        "high" => background_intelligence::TaskPriority::High,
+        _ => background_intelligence::TaskPriority::Normal,
+    };
+    background_intelligence::create_task(tt, &input, p, project_path.as_deref())
+}
+
+#[tauri::command]
+fn bg_list_tasks(
+    status: Option<String>,
+) -> Vec<background_intelligence::BackgroundTask> {
+    background_intelligence::list_tasks(status.as_deref())
+}
+
+#[tauri::command]
+fn bg_complete_task(
+    id: String,
+    output: String,
+    tokens: u64,
+    cost: f64,
+    provider: String,
+    model: String,
+    success: bool,
+) -> Result<background_intelligence::BackgroundTask, String> {
+    background_intelligence::complete_task(&id, &output, tokens, cost, &provider, &model, success)
+}
+
+#[tauri::command]
+fn bg_delete_task(id: String) -> Result<(), String> {
+    background_intelligence::delete_task(&id)
+}
+
+#[tauri::command]
+fn bg_queue_next(
+    project_path: Option<String>,
+) -> Vec<background_intelligence::BackgroundTask> {
+    background_intelligence::queue_next_tasks(project_path.as_deref())
+}
+
+#[tauri::command]
+fn bg_create_batch(
+    task_ids: Vec<String>,
+) -> Result<background_intelligence::TaskBatch, String> {
+    background_intelligence::create_batch(&task_ids)
+}
+
+#[tauri::command]
+fn bg_list_batches() -> Vec<background_intelligence::TaskBatch> {
+    background_intelligence::list_batches()
+}
+
+#[tauri::command]
+fn bg_stats() -> background_intelligence::BackgroundStats {
+    background_intelligence::get_background_stats()
+}
+
+// ═══════ Design Agent ═══════
+
+#[tauri::command]
+fn design_get_spec() -> design_agent::DesignAgentSpec {
+    design_agent::load_spec()
+}
+
+#[tauri::command]
+fn design_save_spec(
+    spec: design_agent::DesignAgentSpec,
+) -> Result<(), String> {
+    design_agent::save_spec(&spec)
+}
+
+#[tauri::command]
+fn design_should_activate(prompt: String) -> design_agent::DesignActivation {
+    design_agent::should_activate(&prompt)
+}
+
+#[tauri::command]
+fn design_save_memory(
+    memory: design_agent::DesignMemory,
+) -> Result<(), String> {
+    design_agent::save_memory(&memory)
+}
+
+#[tauri::command]
+fn design_list_memories(
+    project_path: Option<String>,
+) -> Vec<design_agent::DesignMemory> {
+    design_agent::list_memories(project_path.as_deref())
+}
+
+#[tauri::command]
+fn design_create_default_memory(
+    project_path: Option<String>,
+) -> design_agent::DesignMemory {
+    design_agent::create_default_memory(project_path.as_deref())
+}
+
+#[tauri::command]
+fn design_delete_memory(id: String) -> Result<(), String> {
+    design_agent::delete_memory(&id)
+}
+
+#[tauri::command]
+fn design_add_pattern(
+    memory_id: String,
+    name: String,
+    component_type: String,
+    description: String,
+    css_properties: std::collections::HashMap<String, String>,
+) -> Result<design_agent::DesignMemory, String> {
+    design_agent::add_component_pattern(&memory_id, &name, &component_type, &description, css_properties)
+}
+
+#[tauri::command]
+fn design_create_review(
+    project_path: Option<String>,
+) -> design_agent::DesignReview {
+    design_agent::create_review(project_path.as_deref())
+}
+
+#[tauri::command]
+fn design_list_reviews(
+    project_path: Option<String>,
+) -> Vec<design_agent::DesignReview> {
+    design_agent::list_reviews(project_path.as_deref())
+}
+
+#[tauri::command]
+fn design_list_events(
+    project_path: Option<String>,
+    limit: Option<usize>,
+) -> Vec<design_agent::DesignEvent> {
+    design_agent::list_events(project_path.as_deref(), limit.unwrap_or(50))
+}
+
+#[tauri::command]
+fn design_stats() -> design_agent::DesignAgentStats {
+    design_agent::get_design_stats()
+}
+
 // ═══════ App Entry ═══════
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1383,6 +1602,36 @@ pub fn run() {
             predictive_smart_context,
             predictive_recommendations,
             predictive_analysis,
+            // Phase G — MiMo Provider + Inline Fallback
+            router_inline_fallback,
+            router_background_intelligence,
+            router_design_focused,
+            router_mimo_suitable,
+            router_mimo_excluded,
+            // Phase G — Background Intelligence
+            bg_get_config,
+            bg_save_config,
+            bg_create_task,
+            bg_list_tasks,
+            bg_complete_task,
+            bg_delete_task,
+            bg_queue_next,
+            bg_create_batch,
+            bg_list_batches,
+            bg_stats,
+            // Phase G — Design Agent
+            design_get_spec,
+            design_save_spec,
+            design_should_activate,
+            design_save_memory,
+            design_list_memories,
+            design_create_default_memory,
+            design_delete_memory,
+            design_add_pattern,
+            design_create_review,
+            design_list_reviews,
+            design_list_events,
+            design_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
