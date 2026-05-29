@@ -16,7 +16,6 @@ import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
-import AgentExecutionPanel from "./components/agents/AgentExecutionPanel";
 import BrainSearchModal from "./components/memory/BrainSearchModal";
 import WorkspacePanel from "./components/workspace/WorkspacePanel";
 import PredictivePanel from "./components/predictive/PredictivePanel";
@@ -70,8 +69,25 @@ function App() {
   // Agent panel
   const [showAgentPanel, setShowAgentPanel] = useState(false);
 
-  // Agent execution panel
-  const [showAgentExecPanel, setShowAgentExecPanel] = useState(false);
+  // Agent mode config (inline — no separate panel)
+  const [agentEnabled, setAgentEnabled] = useState(() => {
+    const saved = localStorage.getItem("ollopa-agent-enabled");
+    return saved !== null ? saved === "true" : true;
+  });
+  const [agentPlanningModel, setAgentPlanningModel] = useState(() =>
+    localStorage.getItem("ollopa-agent-planning-model") || "deepseek-v4-flash"
+  );
+  const [agentCodingModel, setAgentCodingModel] = useState(() =>
+    localStorage.getItem("ollopa-agent-coding-model") || "deepseek-v4-pro"
+  );
+  const [agentReviewModel, setAgentReviewModel] = useState(() =>
+    localStorage.getItem("ollopa-agent-review-model") || "deepseek-v4-flash"
+  );
+  const [agentMaxIterations, setAgentMaxIterations] = useState(() => {
+    const saved = localStorage.getItem("ollopa-agent-max-iter");
+    return saved ? parseInt(saved, 10) : 25;
+  });
+  const [showModelConfig, setShowModelConfig] = useState(false);
 
   // Brain search (Ctrl+K)
   const [showBrainSearch, setShowBrainSearch] = useState(false);
@@ -487,7 +503,25 @@ function App() {
     }
 
     try {
-      await invoke("send_input", { message: finalMessage });
+      // Auto-classify prompt for agent mode
+      let useAgent = false;
+      if (agentEnabled) {
+        try {
+          const classification = await invoke<{ needs_planning: boolean }>("classify_prompt", {
+            message: finalMessage,
+          });
+          useAgent = classification.needs_planning;
+        } catch (_) {}
+      }
+
+      await invoke("send_input", {
+        message: finalMessage,
+        agentMode: useAgent || undefined,
+        planningModel: useAgent ? agentPlanningModel : undefined,
+        codingModel: useAgent ? agentCodingModel : undefined,
+        maxIterations: useAgent ? agentMaxIterations : undefined,
+        projectPath: useAgent ? (projectPath || undefined) : undefined,
+      });
     } catch (e) {
       addToast(`Error: ${e}`, "error");
     } finally {
@@ -1098,6 +1132,9 @@ function App() {
                   <i className="fa-solid fa-building" /><span>Workspace</span>
                 </button>
                 <div className="popover-divider" />
+                <button className="popover-item" onClick={() => { setShowModelConfig(true); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-sliders" /><span>Model Config</span>
+                </button>
                 <button className="popover-item" onClick={() => { handleOpenSystemPrompt(); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-terminal" /><span>System Prompt</span>
                 </button>
@@ -1454,11 +1491,16 @@ function App() {
               <span>Predict</span>
             </button>
             <button
-              className="itoggle"
-              onClick={() => setShowAgentExecPanel(true)}
-              title="Agent Loop"
+              className={`itoggle${agentEnabled ? " active" : ""}`}
+              onClick={() => {
+                const next = !agentEnabled;
+                setAgentEnabled(next);
+                localStorage.setItem("ollopa-agent-enabled", String(next));
+                addToast(next ? "Agent mode ON — complex prompts will auto-plan" : "Agent mode OFF — direct responses only", "info");
+              }}
+              title={agentEnabled ? "Agent Mode ON (auto-plans complex prompts)" : "Agent Mode OFF"}
             >
-              <i className="fa-solid fa-play" />
+              <i className="fa-solid fa-robot" />
               <span>Agent</span>
             </button>
           </div>
@@ -1490,17 +1532,84 @@ function App() {
       <GraphPanel visible={showGraphPanel} onClose={() => setShowGraphPanel(false)} onToast={addToast} projectPath={projectPath} />
       <TokenPanel visible={showTokenPanel} onClose={() => setShowTokenPanel(false)} onToast={addToast} projectPath={projectPath} />
       <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} />
-      <AgentExecutionPanel
-        visible={showAgentExecPanel}
-        onClose={() => setShowAgentExecPanel(false)}
-        onToast={addToast}
-        agentPlan={state.agentPlan}
-        agentCurrentStep={state.agentCurrentStep}
-        isAgentRunning={state.isAgentRunning}
-      />
+
       <BrainSearchModal visible={showBrainSearch} onClose={() => setShowBrainSearch(false)} projectPath={projectPath} />
       <WorkspacePanel visible={showWorkspacePanel} onClose={() => setShowWorkspacePanel(false)} onToast={addToast} projectPath={projectPath} />
       <PredictivePanel visible={showPredictivePanel} onClose={() => setShowPredictivePanel(false)} onToast={addToast} projectPath={projectPath} />
+
+      {/* ═══════ Model Config Modal ═══════ */}
+      {showModelConfig && (
+        <div className="modal-overlay" onClick={() => setShowModelConfig(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0, fontSize: "14px", fontWeight: 600 }}>Model Configuration</h3>
+              <button onClick={() => setShowModelConfig(false)} style={{ background: "none", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "18px" }}>&times;</button>
+            </div>
+            <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "14px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: "10px", borderBottom: "1px solid var(--border)" }}>
+                <div>
+                  <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>Agent Mode</div>
+                  <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "2px" }}>Auto-plan complex prompts</div>
+                </div>
+                <button
+                  className={`provider-toggle-btn${agentEnabled ? " on" : ""}`}
+                  onClick={() => { const v = !agentEnabled; setAgentEnabled(v); localStorage.setItem("ollopa-agent-enabled", String(v)); }}
+                >{agentEnabled ? "ON" : "OFF"}</button>
+              </div>
+
+              {[
+                { label: "Planning Model", desc: "Used for creating plans and reflection (fast/cheap)", value: agentPlanningModel, setter: setAgentPlanningModel, key: "ollopa-agent-planning-model" },
+                { label: "Coding Model", desc: "Used for code generation and execution (quality)", value: agentCodingModel, setter: setAgentCodingModel, key: "ollopa-agent-coding-model" },
+                { label: "Review Model", desc: "Used for reviewing and verifying results", value: agentReviewModel, setter: setAgentReviewModel, key: "ollopa-agent-review-model" },
+              ].map((cfg) => (
+                <div key={cfg.label}>
+                  <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "4px" }}>{cfg.label}</div>
+                  <div style={{ fontSize: "9px", color: "var(--text-muted)", marginBottom: "6px" }}>{cfg.desc}</div>
+                  <select
+                    value={cfg.value}
+                    onChange={(e) => { cfg.setter(e.target.value); localStorage.setItem(cfg.key, e.target.value); }}
+                    style={{
+                      width: "100%", padding: "7px 10px", background: "var(--bg-tertiary)", color: "var(--text-primary)",
+                      border: "1px solid var(--border-accent)", borderRadius: "var(--radius)", fontSize: "12px",
+                      fontFamily: "var(--mono)", cursor: "pointer", outline: "none",
+                    }}
+                  >
+                    <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                    <option value="deepseek-v4-flash">deepseek-v4-flash</option>
+                    <option value="mimo-v2.5-pro">mimo-v2.5-pro</option>
+                    <option value="mimo-v2.5">mimo-v2.5</option>
+                    <option value="mimo-v2-flash">mimo-v2-flash</option>
+                  </select>
+                </div>
+              ))}
+
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "4px" }}>Max Iterations</div>
+                <div style={{ fontSize: "9px", color: "var(--text-muted)", marginBottom: "6px" }}>Maximum plan steps before stopping</div>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={agentMaxIterations}
+                  onChange={(e) => { const v = parseInt(e.target.value, 10) || 25; setAgentMaxIterations(v); localStorage.setItem("ollopa-agent-max-iter", String(v)); }}
+                  style={{
+                    width: "80px", padding: "7px 10px", background: "var(--bg-tertiary)", color: "var(--text-primary)",
+                    border: "1px solid var(--border-accent)", borderRadius: "var(--radius)", fontSize: "12px",
+                    fontFamily: "var(--mono)", outline: "none",
+                  }}
+                />
+              </div>
+
+              <div style={{ fontSize: "10px", color: "var(--text-muted)", padding: "8px 0 0", borderTop: "1px solid var(--border)" }}>
+                <i className="fa-solid fa-circle-info" style={{ marginRight: "5px" }} />
+                When Agent Mode is ON, complex prompts automatically trigger plan-execute-reflect loops.
+                Simple prompts (&quot;hi&quot;, &quot;what is X&quot;) always get direct responses.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Toast toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

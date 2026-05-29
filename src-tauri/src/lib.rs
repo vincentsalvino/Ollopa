@@ -68,9 +68,45 @@ async fn stop_session(state: State<'_, AppState>) -> Result<(), String> {
     session.stop().await
 }
 
+/// Classify a prompt to determine if it needs agent planning mode.
+#[tauri::command]
+fn classify_prompt(message: String) -> serde_json::Value {
+    let lower = message.to_lowercase();
+    let word_count = message.split_whitespace().count();
+
+    // Explicit agent triggers
+    let explicit = lower.starts_with("/plan")
+        || lower.starts_with("/agent")
+        || lower.contains("step by step")
+        || lower.contains("step-by-step");
+
+    // Complex task indicators
+    let complex_keywords = [
+        "implement", "refactor", "build", "create a", "set up", "migrate",
+        "redesign", "restructure", "convert", "integrate", "deploy",
+        "write a full", "add feature", "fix the bug", "debug",
+        "optimize", "rewrite", "scaffold", "generate", "automate",
+    ];
+    let keyword_hits = complex_keywords.iter().filter(|k| lower.contains(**k)).count();
+
+    let needs_planning = explicit || (word_count >= 20 && keyword_hits >= 1) || keyword_hits >= 2;
+
+    serde_json::json!({
+        "needs_planning": needs_planning,
+        "word_count": word_count,
+        "keyword_hits": keyword_hits,
+        "explicit_trigger": explicit,
+    })
+}
+
 #[tauri::command]
 async fn send_input(
     message: String,
+    agent_mode: Option<bool>,
+    planning_model: Option<String>,
+    coding_model: Option<String>,
+    max_iterations: Option<usize>,
+    project_path: Option<String>,
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
@@ -95,8 +131,11 @@ async fn send_input(
     };
     client.set_model(&model);
 
+    // Resolve effective project path (prefer explicit, fallback to working_dir)
+    let effective_project = project_path.or(working_dir.clone());
+
     // Enhance system prompt with project context when a working directory is set
-    let effective_prompt = if let Some(ref wd) = working_dir {
+    let effective_prompt = if let Some(ref wd) = effective_project {
         format!(
             "{}\n\n## Project Context\nYou are working on a project located at: {}\n\
             When using tools like read_file, list_directory, or search_code, \
@@ -118,8 +157,26 @@ async fn send_input(
     }
     client.set_cancel_token(token);
 
-    // Phase 3: Send via direct API (NO locks held — runs seconds)
-    let result = client.send_message(&message, &app_handle).await;
+    // Phase 3: Agent mode or direct send
+    let use_agent = agent_mode.unwrap_or(false);
+
+    let result = if use_agent {
+        // Run agent loop inline (avoids separate IPC call + CORS issues)
+        let config = agent_loop::AgentLoopConfig {
+            max_iterations: max_iterations.unwrap_or(25),
+            planning_model,
+            coding_model,
+            project_path: effective_project,
+            ..Default::default()
+        };
+        let mut loop_instance = agent_loop::AgentLoop::new(&message, config);
+        match loop_instance.run(&mut client, &app_handle).await {
+            Ok(_summary) => Ok(()),
+            Err(e) => Err(e),
+        }
+    } else {
+        client.send_message(&message, &app_handle).await
+    };
 
     // Clear cancel token
     {
@@ -152,8 +209,6 @@ async fn send_input(
 
     result
 }
-
-
 
 // ═══════ Conversation Persistence ═══════
 
@@ -1436,6 +1491,7 @@ pub fn run() {
             optimizer_list_rolling,
             optimizer_clear_data,
             optimizer_estimate_tokens,
+            classify_prompt,
             agent_run_loop,
             agent_loop_status,
             // Phase 3 — Smart Context + Learning
