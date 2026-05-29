@@ -75,8 +75,14 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn new() -> Self {
-        let model = std::env::var("ANTHROPIC_MODEL")
+        let raw_model = std::env::var("ANTHROPIC_MODEL")
             .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+        // Strip any ANSI escape codes that may leak from shell config
+        let model = raw_model
+            .replace("\x1b[1m", "")
+            .replace("\x1b[0m", "");
+        let re = regex::Regex::new(r"\[\d+m\]?").unwrap_or_else(|_| regex::Regex::new("$^").unwrap());
+        let model = re.replace_all(&model, "").trim().to_string();
         Self {
             working_dir: None,
             session_id: None,

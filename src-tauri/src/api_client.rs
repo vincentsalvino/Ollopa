@@ -5,6 +5,31 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 
+/// Strip ANSI escape codes from a string (e.g. \x1b[1m, [1m]).
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip ESC [ ... (letter)
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&nc) = chars.peek() {
+                    chars.next();
+                    if nc.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    // Also strip literal bracket codes like [1m], [0m] etc.
+    let re_bracket = regex::Regex::new(r"\[\d+m\]?").unwrap_or_else(|_| regex::Regex::new("$^").unwrap());
+    re_bracket.replace_all(&result, "").trim().to_string()
+}
+
 /// Configuration for the API client, read from environment variables.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -57,26 +82,24 @@ impl ApiConfig {
     }
 
     pub fn from_env() -> Result<Self, String> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
+        let api_key = std::env::var("DEEPSEEK_API_KEY")
+            .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
             .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
             .map_err(|_| {
-                "No API key found. Set ANTHROPIC_API_KEY environment variable.".to_string()
+                "No API key found. Set DEEPSEEK_API_KEY environment variable.".to_string()
             })?;
 
         let base_url = std::env::var("ANTHROPIC_BASE_URL")
             .unwrap_or_else(|_| "https://api.deepseek.com".to_string());
 
-        // Strip /anthropic suffix if present (DeepSeek uses OpenAI-compatible format)
         let base_url = base_url
             .trim_end_matches('/')
             .trim_end_matches("/anthropic")
             .to_string();
 
         let model = std::env::var("ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "deepseek-v4-pro".to_string())
-            // Strip ANSI escape codes that may have been accidentally embedded
-            .replace("[1m]", "")
-            .replace("\x1b[1m", "");
+            .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+        let model = strip_ansi(&model);
 
         Ok(Self {
             base_url,
@@ -365,7 +388,7 @@ impl DirectApiClient {
 
     /// Set the model.
     pub fn set_model(&mut self, model: &str) {
-        self.config.model = model.to_string();
+        self.config.model = strip_ansi(model);
     }
 
     /// Edit a message at a specific index and truncate history after it.

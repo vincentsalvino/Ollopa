@@ -372,9 +372,51 @@ body {
 
 /* ═══════ INPUT AREA ═══════ */
 .input-area {
-  display: flex; align-items: flex-end; gap: 10px; padding: 12px 18px 14px;
+  display: flex; align-items: flex-end; gap: 10px; padding: 12px 18px 10px;
   background: var(--bg-secondary); border-top: 1px solid var(--border); flex-shrink: 0;
 }
+.input-bar-col {
+  flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+}
+.input-toggles-row {
+  display: flex; gap: 2px; flex-wrap: wrap; padding: 0 2px;
+}
+.itoggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border: 1px solid var(--border); border-radius: 12px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  font-size: 10px; transition: all 0.15s; white-space: nowrap;
+}
+.itoggle i { font-size: 10px; }
+.itoggle span { font-size: 10px; }
+.itoggle:hover { color: var(--text-primary); border-color: var(--text-secondary); }
+.itoggle.active {
+  background: var(--accent-glow, rgba(99,102,241,0.12));
+  color: var(--accent); border-color: var(--accent);
+}
+
+/* Provider toggle in API Keys modal */
+.provider-toggles-section {
+  padding: 0 16px 12px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
+}
+.provider-toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0; border-bottom: 1px solid rgba(var(--border-rgb, 128,128,128), 0.2);
+}
+.provider-toggle-row:last-child { border-bottom: none; }
+.provider-toggle-info { display: flex; flex-direction: column; gap: 2px; }
+.provider-toggle-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.provider-toggle-models { font-size: 10px; color: var(--text-muted); }
+.provider-toggle-btn {
+  padding: 4px 12px; border-radius: 12px; font-size: 11px; font-weight: 600;
+  border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+  cursor: pointer; transition: all 0.15s; min-width: 44px; text-align: center;
+}
+.provider-toggle-btn.on {
+  background: var(--accent-glow, rgba(99,102,241,0.15));
+  color: var(--accent); border-color: var(--accent);
+}
+.provider-toggle-btn:hover { opacity: 0.8; }
 
 /* ═══════ DASHBOARD - MINI VIEW ═══════ */
 .mini-icon-btn {

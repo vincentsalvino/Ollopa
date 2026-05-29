@@ -124,13 +124,21 @@ export default function AgentExecutionPanel({
           onClick={onClose}
           style={{
             background: "none",
-            border: "none",
-            color: "var(--text-muted)",
+            border: "1px solid var(--border)",
+            color: "var(--text-primary)",
             cursor: "pointer",
             fontSize: "18px",
+            lineHeight: 1,
+            borderRadius: "4px",
+            width: "28px",
+            height: "28px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
+          title="Close Agent Panel"
         >
-          x
+          &times;
         </button>
       </div>
 
