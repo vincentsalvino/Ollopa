@@ -123,20 +123,29 @@ export default function AgentExecutionPanel({
         <button
           onClick={onClose}
           style={{
-            background: "none",
-            border: "1px solid var(--border)",
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border-accent)",
             color: "var(--text-primary)",
             cursor: "pointer",
-            fontSize: "18px",
+            fontSize: "16px",
             lineHeight: 1,
-            borderRadius: "4px",
-            width: "28px",
-            height: "28px",
+            borderRadius: "var(--radius)",
+            width: "30px",
+            height: "30px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            transition: "all 0.15s",
           }}
           title="Close Agent Panel"
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = "var(--danger)";
+            e.currentTarget.style.color = "var(--danger)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = "var(--border-accent)";
+            e.currentTarget.style.color = "var(--text-primary)";
+          }}
         >
           &times;
         </button>

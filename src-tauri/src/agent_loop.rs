@@ -69,6 +69,7 @@ impl Default for AgentLoopConfig {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(dead_code)]
 pub struct AgentLoopStatus {
     pub state: AgentState,
     pub current_iteration: usize,
@@ -107,6 +108,7 @@ impl AgentLoop {
         }
     }
 
+    #[allow(dead_code)]
     pub fn status(&self) -> AgentLoopStatus {
         AgentLoopStatus {
             state: self.state.clone(),
@@ -120,6 +122,7 @@ impl AgentLoop {
         }
     }
 
+    #[allow(dead_code)]
     pub fn pause(&mut self) {
         if self.state == AgentState::Executing || self.state == AgentState::Planning {
             self.paused = true;
@@ -127,6 +130,7 @@ impl AgentLoop {
         }
     }
 
+    #[allow(dead_code)]
     pub fn resume(&mut self) {
         if self.state == AgentState::Paused {
             self.paused = false;
