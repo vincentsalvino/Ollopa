@@ -135,7 +135,7 @@ impl SessionManager {
     /// Phase 4 of send: update model + snapshot after API response. Call under session lock (~5ms).
     pub fn finalize_send(&mut self, model: &str) {
         if model != "unknown" && !model.is_empty() {
-            self.model = model.to_string();
+            self.model = Self::clean_model(model);
         }
     }
 
@@ -178,9 +178,16 @@ impl SessionManager {
         &self.system_prompt
     }
 
+    /// Strip ANSI escape codes from model names.
+    fn clean_model(s: &str) -> String {
+        let cleaned = s.replace("\x1b[1m", "").replace("\x1b[0m", "");
+        let re = regex::Regex::new(r"\[\d+m\]?").unwrap_or_else(|_| regex::Regex::new("$^").unwrap());
+        re.replace_all(&cleaned, "").trim().to_string()
+    }
+
     /// Set the model.
     pub fn set_model(&mut self, model: &str) {
-        self.model = model.to_string();
+        self.model = Self::clean_model(model);
     }
 
     /// Get the current model.
