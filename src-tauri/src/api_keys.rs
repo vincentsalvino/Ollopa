@@ -45,10 +45,8 @@ fn ensure_dirs() {
 fn default_provider_keys() -> Vec<(String, String, String)> {
     vec![
         ("deepseek".to_string(), "DeepSeek".to_string(), "DEEPSEEK_API_KEY".to_string()),
-        ("claude".to_string(), "Anthropic Claude".to_string(), "ANTHROPIC_API_KEY".to_string()),
-        ("openai".to_string(), "OpenAI".to_string(), "OPENAI_API_KEY".to_string()),
+        ("mimo".to_string(), "Xiaomi MiMo".to_string(), "MIMO_API_KEY".to_string()),
         ("openrouter".to_string(), "OpenRouter".to_string(), "OPENROUTER_API_KEY".to_string()),
-        ("nous".to_string(), "Nous Research".to_string(), "NOUS_API_KEY".to_string()),
         ("tavily".to_string(), "Tavily (Web Search)".to_string(), "TAVILY_API_KEY".to_string()),
     ]
 }

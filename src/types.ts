@@ -19,7 +19,14 @@ export type TimelineEntryKind =
   | "status"
   | "error"
   | "session_start"
-  | "session_end";
+  | "session_end"
+  | "reasoning"
+  | "agent_plan"
+  | "agent_step"
+  | "agent_reflection"
+  | "shell_output"
+  | "file_edited"
+  | "agent_loop";
 
 export interface TimelineEntry {
   id: string;
@@ -37,7 +44,14 @@ export type TimelineData =
   | StatusData
   | ErrorData
   | SessionStartData
-  | SessionEndData;
+  | SessionEndData
+  | ReasoningData
+  | AgentPlanData
+  | AgentStepData
+  | AgentReflectionData
+  | ShellOutputData
+  | FileEditedData
+  | AgentLoopData;
 
 export interface UserMessageData {
   kind: "user_message";
@@ -203,6 +217,146 @@ export interface GenerationStoppedEvent {
   model: string;
 }
 
+// ═══════ Reasoning / Thinking Mode ═══════
+
+export interface ReasoningChunkEvent {
+  type: "reasoning_chunk";
+  text: string;
+  model: string;
+}
+
+export interface ReasoningData {
+  kind: "reasoning";
+  text: string;
+  model: string;
+}
+
+// ═══════ Agent Loop Events ═══════
+
+export interface AgentPlanCreatedEvent {
+  type: "agent_plan_created";
+  steps: string[];
+}
+
+export interface AgentStepStartedEvent {
+  type: "agent_step_started";
+  step_index: number;
+  description: string;
+}
+
+export interface AgentReflectionEvent {
+  type: "agent_reflection";
+  step_index: number;
+  result: string;
+  adjustment: string | null;
+}
+
+export interface ShellOutputEvent {
+  type: "shell_output";
+  command: string;
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+}
+
+export interface FileEditedEvent {
+  type: "file_edited";
+  path: string;
+  diff_summary: string;
+}
+
+export interface AgentLoopStartedEvent {
+  type: "agent_loop_started";
+  task: string;
+  max_iterations: number;
+}
+
+export interface AgentLoopFinishedEvent {
+  type: "agent_loop_finished";
+  task: string;
+  iterations: number;
+  success: boolean;
+  summary: string;
+}
+
+export interface AgentPlanData {
+  kind: "agent_plan";
+  steps: string[];
+}
+
+export interface AgentStepData {
+  kind: "agent_step";
+  step_index: number;
+  description: string;
+  status: "running" | "completed" | "failed";
+}
+
+export interface AgentReflectionData {
+  kind: "agent_reflection";
+  step_index: number;
+  result: string;
+  adjustment: string | null;
+}
+
+export interface ShellOutputData {
+  kind: "shell_output";
+  command: string;
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+}
+
+export interface FileEditedData {
+  kind: "file_edited";
+  path: string;
+  diff_summary: string;
+}
+
+export interface AgentLoopData {
+  kind: "agent_loop";
+  task: string;
+  status: "started" | "finished";
+  iterations?: number;
+  success?: boolean;
+  summary?: string;
+  max_iterations?: number;
+}
+
+// ═══════ Phase 3 — Smart Context + Learning ═══════
+
+export interface Skill {
+  id: string;
+  task_pattern: string;
+  tool_sequence: string[];
+  files_involved: string[];
+  success_count: number;
+  created_at: number;
+  last_used: number;
+  project_path: string | null;
+}
+
+export interface RepoMapEntry {
+  path: string;
+  language: string;
+  exported_symbols: string[];
+}
+
+export interface RepoMap {
+  entries: RepoMapEntry[];
+  project_path: string;
+  generated_at: number;
+  total_files: number;
+}
+
+export interface CostEstimate {
+  task: string;
+  model: string;
+  estimated_steps: number;
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  estimated_cost_usd: number;
+}
+
 export type AppEvent =
   | SessionStartedEvent
   | UserMessageEvent
@@ -216,7 +370,15 @@ export type AppEvent =
   | SessionFinishedEvent
   | ErrorEvent
   | StreamingChunkEvent
-  | GenerationStoppedEvent;
+  | GenerationStoppedEvent
+  | ReasoningChunkEvent
+  | AgentPlanCreatedEvent
+  | AgentStepStartedEvent
+  | AgentReflectionEvent
+  | ShellOutputEvent
+  | FileEditedEvent
+  | AgentLoopStartedEvent
+  | AgentLoopFinishedEvent;
 
 // ═══════ Event Store State ═══════
 
@@ -228,8 +390,13 @@ export interface EventStoreState {
   isTyping: boolean;
   isStreaming: boolean;
   streamingText: string;
+  reasoningText: string;
+  isReasoning: boolean;
   activeApproval: ApprovalRequestData | null;
   activeDiff: { filePath: string; oldContent: string; newContent: string; toolUseId: string } | null;
+  agentPlan: string[] | null;
+  agentCurrentStep: number | null;
+  isAgentRunning: boolean;
 }
 
 // ═══════ Session Meta (from backend) ═══════

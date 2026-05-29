@@ -38,8 +38,8 @@ function eventFingerprint(event: AppEvent): string {
 }
 
 function isDuplicate(event: AppEvent): boolean {
-  // Streaming chunks are high-frequency and never duplicates by design
-  if (event.type === "streaming_chunk") return false;
+  // Streaming/reasoning chunks are high-frequency and never duplicates by design
+  if (event.type === "streaming_chunk" || event.type === "reasoning_chunk") return false;
 
   const now = Date.now();
   const fp = eventFingerprint(event);
@@ -350,6 +350,102 @@ function processAppEvent(state: EventStoreState, event: AppEvent): EventStoreSta
         }),
       };
 
+    // ═══════ Reasoning / Thinking Mode ═══════
+
+    case "reasoning_chunk":
+      return {
+        ...state,
+        isReasoning: true,
+        reasoningText: state.reasoningText + event.text,
+      };
+
+    // ═══════ Agent Loop Events ═══════
+
+    case "agent_plan_created":
+      return {
+        ...state,
+        agentPlan: event.steps,
+        agentCurrentStep: null,
+        isAgentRunning: true,
+        timeline: addEntry(state.timeline, "agent_plan", {
+          kind: "agent_plan",
+          steps: event.steps,
+        }),
+      };
+
+    case "agent_step_started":
+      return {
+        ...state,
+        agentCurrentStep: event.step_index,
+        timeline: addEntry(state.timeline, "agent_step", {
+          kind: "agent_step",
+          step_index: event.step_index,
+          description: event.description,
+          status: "running",
+        }),
+      };
+
+    case "agent_reflection":
+      return {
+        ...state,
+        timeline: addEntry(state.timeline, "agent_reflection", {
+          kind: "agent_reflection",
+          step_index: event.step_index,
+          result: event.result,
+          adjustment: event.adjustment,
+        }),
+      };
+
+    case "shell_output":
+      return {
+        ...state,
+        timeline: addEntry(state.timeline, "shell_output", {
+          kind: "shell_output",
+          command: event.command,
+          stdout: event.stdout,
+          stderr: event.stderr,
+          exit_code: event.exit_code,
+        }),
+      };
+
+    case "file_edited":
+      return {
+        ...state,
+        timeline: addEntry(state.timeline, "file_edited", {
+          kind: "file_edited",
+          path: event.path,
+          diff_summary: event.diff_summary,
+        }),
+      };
+
+    case "agent_loop_started":
+      return {
+        ...state,
+        isAgentRunning: true,
+        timeline: addEntry(state.timeline, "agent_loop", {
+          kind: "agent_loop",
+          task: event.task,
+          status: "started",
+          max_iterations: event.max_iterations,
+        }),
+      };
+
+    case "agent_loop_finished":
+      return {
+        ...state,
+        isAgentRunning: false,
+        agentPlan: null,
+        agentCurrentStep: null,
+        timeline: addEntry(state.timeline, "agent_loop", {
+          kind: "agent_loop",
+          task: event.task,
+          status: "finished",
+          iterations: event.iterations,
+          success: event.success,
+          summary: event.summary,
+        }),
+      };
+
     default:
       return state;
   }
@@ -365,8 +461,13 @@ const initialState: EventStoreState = {
   isTyping: false,
   isStreaming: false,
   streamingText: "",
+  reasoningText: "",
+  isReasoning: false,
   activeApproval: null,
   activeDiff: null,
+  agentPlan: null,
+  agentCurrentStep: null,
+  isAgentRunning: false,
 };
 
 // ═══════ Hook ═══════

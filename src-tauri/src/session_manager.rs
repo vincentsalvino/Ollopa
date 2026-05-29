@@ -75,8 +75,14 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn new() -> Self {
-        let model = std::env::var("ANTHROPIC_MODEL")
+        let raw_model = std::env::var("ANTHROPIC_MODEL")
             .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+        // Strip any ANSI escape codes that may leak from shell config
+        let model = raw_model
+            .replace("\x1b[1m", "")
+            .replace("\x1b[0m", "");
+        let re = regex::Regex::new(r"\[\d+m\]?").unwrap_or_else(|_| regex::Regex::new("$^").unwrap());
+        let model = re.replace_all(&model, "").trim().to_string();
         Self {
             working_dir: None,
             session_id: None,
@@ -129,7 +135,7 @@ impl SessionManager {
     /// Phase 4 of send: update model + snapshot after API response. Call under session lock (~5ms).
     pub fn finalize_send(&mut self, model: &str) {
         if model != "unknown" && !model.is_empty() {
-            self.model = model.to_string();
+            self.model = Self::clean_model(model);
         }
     }
 
@@ -172,9 +178,16 @@ impl SessionManager {
         &self.system_prompt
     }
 
+    /// Strip ANSI escape codes from model names.
+    fn clean_model(s: &str) -> String {
+        let cleaned = s.replace("\x1b[1m", "").replace("\x1b[0m", "");
+        let re = regex::Regex::new(r"\[\d+m\]?").unwrap_or_else(|_| regex::Regex::new("$^").unwrap());
+        re.replace_all(&cleaned, "").trim().to_string()
+    }
+
     /// Set the model.
     pub fn set_model(&mut self, model: &str) {
-        self.model = model.to_string();
+        self.model = Self::clean_model(model);
     }
 
     /// Get the current model.

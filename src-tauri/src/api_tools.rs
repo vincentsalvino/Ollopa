@@ -100,6 +100,97 @@ pub fn builtin_tools() -> Vec<ToolDefinition> {
                 }),
             },
         },
+        // ═══════ Write Tools ═══════
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDef {
+                name: "write_file".to_string(),
+                description: "Create or overwrite a file with the given content".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to write" },
+                        "content": { "type": "string", "description": "Content to write" }
+                    },
+                    "required": ["path", "content"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDef {
+                name: "edit_file".to_string(),
+                description: "Edit a file by replacing a search string with a replacement string".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "File path to edit" },
+                        "search": { "type": "string", "description": "Exact text to find" },
+                        "replace": { "type": "string", "description": "Text to replace with" }
+                    },
+                    "required": ["path", "search", "replace"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDef {
+                name: "shell_execute".to_string(),
+                description: "Execute a shell command and return stdout, stderr, and exit code".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "Shell command to execute" },
+                        "cwd": { "type": "string", "description": "Working directory (optional)" }
+                    },
+                    "required": ["command"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDef {
+                name: "web_fetch".to_string(),
+                description: "Fetch a URL and return its text content".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "url": { "type": "string", "description": "URL to fetch" }
+                    },
+                    "required": ["url"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDef {
+                name: "git_command".to_string(),
+                description: "Execute a git command (add, commit, diff, log, etc.)".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "args": { "type": "string", "description": "Git arguments (e.g. 'status', 'diff --staged')" },
+                        "cwd": { "type": "string", "description": "Repository path (optional)" }
+                    },
+                    "required": ["args"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDef {
+                name: "save_memory".to_string(),
+                description: "Save a note to the Second Brain for future reference".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "content": { "type": "string", "description": "Content to remember" },
+                        "tags": { "type": "string", "description": "Comma-separated tags (optional)" }
+                    },
+                    "required": ["content"]
+                }),
+            },
+        },
     ]
 }
 
@@ -165,8 +256,99 @@ pub fn execute_tool(name: &str, args: &Value, working_dir: Option<&str>) -> Resu
         }
         "web_search" => {
             let query = args["query"].as_str().ok_or("Missing 'query' argument")?;
-            // Web search is async; return a placeholder for sync context
             Ok(format!("[Web search for '{}' — use the web search toggle for live results]", query))
+        }
+        // ═══════ Write Tools ═══════
+        "write_file" => {
+            let path_str = args["path"].as_str().ok_or("Missing 'path' argument")?;
+            let content = args["content"].as_str().ok_or("Missing 'content' argument")?;
+            let path = resolve_path(path_str, working_dir);
+            // Ensure parent directory exists
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(&path, content)
+                .map_err(|e| format!("Failed to write file '{}': {}", path.display(), e))?;
+            Ok(format!("File written: {} ({} bytes)", path.display(), content.len()))
+        }
+        "edit_file" => {
+            let path_str = args["path"].as_str().ok_or("Missing 'path' argument")?;
+            let search = args["search"].as_str().ok_or("Missing 'search' argument")?;
+            let replace = args["replace"].as_str().ok_or("Missing 'replace' argument")?;
+            let path = resolve_path(path_str, working_dir);
+            let content = std::fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read file '{}': {}", path.display(), e))?;
+            if !content.contains(search) {
+                return Err(format!("Search text not found in '{}'", path.display()));
+            }
+            let new_content = content.replacen(search, replace, 1);
+            std::fs::write(&path, &new_content)
+                .map_err(|e| format!("Failed to write file '{}': {}", path.display(), e))?;
+            Ok(format!("File edited: {} (replaced 1 occurrence)", path.display()))
+        }
+        "shell_execute" => {
+            let command = args["command"].as_str().ok_or("Missing 'command' argument")?;
+            let cwd = args["cwd"].as_str().or(working_dir);
+            let mut cmd = std::process::Command::new("sh");
+            cmd.arg("-c").arg(command);
+            if let Some(d) = cwd {
+                cmd.current_dir(d);
+            }
+            let output = cmd.output()
+                .map_err(|e| format!("Failed to execute command: {}", e))?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let exit_code = output.status.code().unwrap_or(-1);
+            Ok(format!("exit_code: {}\nstdout:\n{}\nstderr:\n{}", exit_code, stdout, stderr))
+        }
+        "web_fetch" => {
+            let url = args["url"].as_str().ok_or("Missing 'url' argument")?;
+            // Synchronous HTTP fetch using a blocking approach
+            let output = std::process::Command::new("curl")
+                .args(["--silent", "--max-time", "10", "-L", url])
+                .output()
+                .map_err(|e| format!("Failed to fetch URL: {}", e))?;
+            let body = String::from_utf8_lossy(&output.stdout).to_string();
+            if body.is_empty() {
+                let err = String::from_utf8_lossy(&output.stderr).to_string();
+                Err(format!("Failed to fetch URL: {}", err))
+            } else {
+                // Truncate to avoid overwhelming context
+                let max = 10000;
+                if body.len() > max {
+                    Ok(format!("{}\n\n[Truncated, {} total bytes]", &body[..max], body.len()))
+                } else {
+                    Ok(body)
+                }
+            }
+        }
+        "git_command" => {
+            let git_args = args["args"].as_str().ok_or("Missing 'args' argument")?;
+            let cwd = args["cwd"].as_str().or(working_dir);
+            let mut cmd = std::process::Command::new("git");
+            for arg in git_args.split_whitespace() {
+                cmd.arg(arg);
+            }
+            if let Some(d) = cwd {
+                cmd.current_dir(d);
+            }
+            let output = cmd.output()
+                .map_err(|e| format!("Failed to run git: {}", e))?;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if output.status.success() {
+                Ok(stdout)
+            } else {
+                Err(format!("git error: {}", stderr))
+            }
+        }
+        "save_memory" => {
+            let content = args["content"].as_str().ok_or("Missing 'content' argument")?;
+            let tags_str = args["tags"].as_str().unwrap_or("");
+            let tags: Vec<String> = tags_str.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+            crate::second_brain::index_note(content, working_dir, &tags)
+                .map_err(|e| format!("Failed to save memory: {}", e))?;
+            Ok("Memory saved to Second Brain".to_string())
         }
         _ => Err(format!("Unknown tool: {}", name)),
     }

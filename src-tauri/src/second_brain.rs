@@ -62,6 +62,20 @@ pub struct SearchResult {
     pub snippet: String,
 }
 
+// ═══════ Skill Acquisition (Phase 3) ═══════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Skill {
+    pub id: String,
+    pub task_pattern: String,
+    pub tool_sequence: Vec<String>,
+    pub files_involved: Vec<String>,
+    pub success_count: u32,
+    pub created_at: u64,
+    pub last_used: u64,
+    pub project_path: Option<String>,
+}
+
 /// Workspace intelligence overview
 #[derive(Debug, Clone, Serialize)]
 pub struct BrainStats {
@@ -94,9 +108,14 @@ fn index_path() -> PathBuf {
     brain_dir().join("semantic-index.json")
 }
 
+fn skills_dir() -> PathBuf {
+    brain_dir().join("skills")
+}
+
 fn ensure_dirs() {
     let _ = fs::create_dir_all(summaries_dir());
     let _ = fs::create_dir_all(decisions_dir());
+    let _ = fs::create_dir_all(skills_dir());
 }
 
 fn current_timestamp_ms() -> u64 {
@@ -1140,4 +1159,141 @@ impl Decision {
             DecisionStatus::Deprecated => "DEPRECATED",
         }
     }
+}
+
+// ═══════ Skill Acquisition (Phase 3) ═══════
+
+/// Save a skill learned from an agent loop execution.
+pub fn save_skill(
+    task: &str,
+    steps: &[String],
+    files_involved: &[String],
+) -> Result<(), String> {
+    ensure_dirs();
+
+    // Check if a similar skill already exists (update success_count if so)
+    let existing = search_skills(task, None);
+    for mut skill in existing {
+        if skill_similarity(&skill.task_pattern, task) > 0.7 {
+            skill.success_count += 1;
+            skill.last_used = current_timestamp_ms();
+            skill.tool_sequence = steps.to_vec();
+            skill.files_involved = files_involved.to_vec();
+            return persist_skill(&skill);
+        }
+    }
+
+    let skill = Skill {
+        id: format!("skill-{}", current_timestamp_ms()),
+        task_pattern: task.to_string(),
+        tool_sequence: steps.to_vec(),
+        files_involved: files_involved.to_vec(),
+        success_count: 1,
+        created_at: current_timestamp_ms(),
+        last_used: current_timestamp_ms(),
+        project_path: None,
+    };
+
+    persist_skill(&skill)?;
+
+    // Also index in semantic index for searchability
+    let content = format!(
+        "Skill: {}\nSteps:\n{}\nFiles: {}",
+        task,
+        steps.iter().enumerate()
+            .map(|(i, s)| format!("  {}. {}", i + 1, s))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        if files_involved.is_empty() { "none".to_string() } else { files_involved.join(", ") }
+    );
+    let tags = vec!["skill".to_string(), "agent-loop".to_string()];
+    let _ = index_note(&content, None, &tags);
+
+    Ok(())
+}
+
+fn persist_skill(skill: &Skill) -> Result<(), String> {
+    let path = skills_dir().join(format!("{}.json", skill.id));
+    let json = serde_json::to_string_pretty(skill)
+        .map_err(|e| format!("Failed to serialize skill: {}", e))?;
+    fs::write(&path, json).map_err(|e| format!("Failed to write skill: {}", e))
+}
+
+/// Search for skills matching a task description.
+pub fn search_skills(task: &str, project_path: Option<&str>) -> Vec<Skill> {
+    ensure_dirs();
+    let mut skills = list_skills();
+
+    // Filter by project if specified
+    if let Some(pp) = project_path {
+        skills.retain(|s| s.project_path.is_none() || s.project_path.as_deref() == Some(pp));
+    }
+
+    // Score and sort by relevance
+    let task_lower = task.to_lowercase();
+    let mut scored: Vec<(f64, Skill)> = skills
+        .into_iter()
+        .map(|s| {
+            let sim = skill_similarity(&s.task_pattern, &task_lower);
+            let boost = (s.success_count as f64).ln_1p() * 0.1;
+            (sim + boost, s)
+        })
+        .filter(|(score, _)| *score > 0.2)
+        .collect();
+
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.into_iter().map(|(_, s)| s).take(5).collect()
+}
+
+/// List all saved skills.
+pub fn list_skills() -> Vec<Skill> {
+    let dir = skills_dir();
+    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let content = fs::read_to_string(e.path()).ok()?;
+            serde_json::from_str::<Skill>(&content).ok()
+        })
+        .collect()
+}
+
+/// Format skills as context for LLM injection.
+pub fn skills_to_context(skills: &[Skill]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec!["# Relevant Skills from Previous Tasks".to_string()];
+    for skill in skills {
+        lines.push(format!(
+            "\n## Skill: {} (used {} times)\nSteps: {}\nFiles: {}",
+            skill.task_pattern,
+            skill.success_count,
+            skill.tool_sequence.join(" → "),
+            if skill.files_involved.is_empty() { "none".to_string() } else { skill.files_involved.join(", ") }
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Compute similarity between two task descriptions (word overlap).
+fn skill_similarity(a: &str, b: &str) -> f64 {
+    let a_lower = a.to_lowercase();
+    let b_lower = b.to_lowercase();
+    let a_words: std::collections::HashSet<&str> = a_lower
+        .split_whitespace()
+        .filter(|w| w.len() > 2)
+        .collect();
+    let b_words: std::collections::HashSet<&str> = b_lower
+        .split_whitespace()
+        .filter(|w| w.len() > 2)
+        .collect();
+
+    if a_words.is_empty() || b_words.is_empty() {
+        return 0.0;
+    }
+
+    let intersection = a_words.intersection(&b_words).count() as f64;
+    let union = a_words.union(&b_words).count() as f64;
+    intersection / union
 }

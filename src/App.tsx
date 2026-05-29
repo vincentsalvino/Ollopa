@@ -16,6 +16,7 @@ import BrainPanel from "./components/memory/BrainPanel";
 import GraphPanel from "./components/graphs/GraphPanel";
 import TokenPanel from "./components/optimizer/TokenPanel";
 import AgentPanel from "./components/agents/AgentPanel";
+import AgentExecutionPanel from "./components/agents/AgentExecutionPanel";
 import BrainSearchModal from "./components/memory/BrainSearchModal";
 import WorkspacePanel from "./components/workspace/WorkspacePanel";
 import PredictivePanel from "./components/predictive/PredictivePanel";
@@ -68,6 +69,9 @@ function App() {
 
   // Agent panel
   const [showAgentPanel, setShowAgentPanel] = useState(false);
+
+  // Agent execution panel
+  const [showAgentExecPanel, setShowAgentExecPanel] = useState(false);
 
   // Brain search (Ctrl+K)
   const [showBrainSearch, setShowBrainSearch] = useState(false);
@@ -194,9 +198,8 @@ function App() {
 
   // Available models (grouped by provider)
   const AVAILABLE_MODELS = [
-    { group: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] },
-    { group: "Anthropic (via DeepSeek)", models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"] },
-    { group: "OpenAI", models: ["gpt-4o", "gpt-4o-mini"] },
+    { group: "DeepSeek", models: ["deepseek-v4-pro", "deepseek-v4-flash"] },
+    { group: "Xiaomi MiMo", models: ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-flash"] },
   ];
   const ALL_MODELS = AVAILABLE_MODELS.flatMap((g) => g.models);
 
@@ -1023,15 +1026,8 @@ function App() {
           </div>
         </div>
 
-        {/* RIGHT: toggles + actions */}
+        {/* RIGHT: actions */}
         <div className="toolbar-right">
-          <button
-            className={`tbtn toggle enhance-toggle${transformSettings.enabled ? " active" : ""}`}
-            onClick={handleToggleTransform}
-            title={transformSettings.enabled ? "Auto-enhance ON" : "Auto-enhance OFF"}
-          >
-            <i className="fa-solid fa-wand-magic-sparkles" />
-          </button>
           <button
             className={`tbtn toggle sound-toggle${soundEnabled ? " active" : ""}`}
             onClick={toggleSound}
@@ -1039,14 +1035,6 @@ function App() {
           >
             <i className={`fa-solid ${soundEnabled ? "fa-volume-high" : "fa-volume-xmark"}`} />
           </button>
-          <button
-            className={`tbtn toggle web-search-toggle${webSearchSettings.enabled ? " active" : ""}`}
-            onClick={handleToggleWebSearch}
-            title={webSearchSettings.enabled ? "Web Search ON" : "Web Search OFF"}
-          >
-            <i className="fa-solid fa-globe" />
-          </button>
-          <div className="toolbar-divider" />
           <button className="tbtn" onClick={() => setShowSearch((s) => !s)} title="Search conversations">
             <i className="fa-solid fa-magnifying-glass" />
           </button>
@@ -1081,28 +1069,19 @@ function App() {
               </div>
             )}
           </div>
-          <div className="toolbar-divider" />
 
           {/* Settings Popover */}
           <div className="popover-wrapper">
             <button
               className="tbtn"
               onClick={() => { setShowSettingsPopover((s) => !s); setShowModelSelector(false); setShowProjectDropdown(false); setShowExportMenu(false); }}
-              title="Settings & Tools"
+              title="Settings & Panels"
             >
               <i className="fa-solid fa-gear" style={{ transition: "transform 0.3s ease", transform: showSettingsPopover ? "rotate(55deg)" : "" }} />
             </button>
             {showSettingsPopover && (
               <div className="settings-popover">
-                <div className="popover-title">Tools &amp; Settings</div>
-                <button className="popover-item" onClick={() => { handleSaveMemory(); setShowSettingsPopover(false); }}>
-                  <i className="fa-solid fa-floppy-disk" /><span>Memory</span>
-                </button>
-                <button className={`popover-item${showCompactWarning ? " compact-item warn" : ""}`} onClick={() => { handleCompact(); setShowSettingsPopover(false); }}>
-                  <i className="fa-solid fa-compress" /><span>Compact Context</span>
-                  {showCompactWarning && <span className="compact-badge">!</span>}
-                </button>
-                <div className="popover-divider" />
+                <div className="popover-title">Panels</div>
                 <button className="popover-item" onClick={() => { setShowBrainPanel(true); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-brain" /><span>Brain</span>
                 </button>
@@ -1118,27 +1097,12 @@ function App() {
                 <button className="popover-item" onClick={() => { setShowWorkspacePanel(true); setShowSettingsPopover(false); }}>
                   <i className="fa-solid fa-building" /><span>Workspace</span>
                 </button>
-                <button className="popover-item" onClick={() => { setShowPredictivePanel(true); setShowSettingsPopover(false); }}>
-                  <i className="fa-solid fa-wand-magic-sparkles" /><span>Predictive</span>
-                </button>
-                <button className="popover-item" onClick={() => { handleOpenSystemPrompt(); setShowSettingsPopover(false); }}>
-                  <i className="fa-solid fa-terminal" /><span>Prompt</span>
-                </button>
                 <div className="popover-divider" />
-                <button
-                  className={`popover-item${smartContextEnabled ? " active" : ""}`}
-                  onClick={() => {
-                    const next = !smartContextEnabled;
-                    setSmartContextEnabled(next);
-                    localStorage.setItem("ollopa-smart-context", String(next));
-                    invoke("set_smart_context", { enabled: next }).catch(() => {});
-                    setShowSettingsPopover(false);
-                  }}
-                >
-                  <i className="fa-solid fa-brain" /><span>Smart Context {smartContextEnabled ? "ON" : "OFF"}</span>
+                <button className="popover-item" onClick={() => { handleOpenSystemPrompt(); setShowSettingsPopover(false); }}>
+                  <i className="fa-solid fa-terminal" /><span>System Prompt</span>
                 </button>
                 <button className="popover-item" onClick={() => { setShowApiKeys(true); loadApiKeys(); loadProvidersList(); setShowSettingsPopover(false); }}>
-                  <i className="fa-solid fa-key" /><span>Manage API Keys</span>
+                  <i className="fa-solid fa-key" /><span>Providers &amp; API Keys</span>
                 </button>
               </div>
             )}
@@ -1275,15 +1239,44 @@ function App() {
             </div>
           )}
 
-          {/* API Key Management Modal */}
+          {/* Providers & API Keys Modal */}
           {showApiKeys && (
             <div className="modal-overlay" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>
               <div className="api-keys-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="api-keys-header">
-                  <h3><i className="fa-solid fa-key" /> API Keys</h3>
+                  <h3><i className="fa-solid fa-key" /> Providers &amp; API Keys</h3>
                   <button className="api-keys-close" onClick={() => { setShowApiKeys(false); setEditingKey(null); setKeyInput(""); }}>&times;</button>
                 </div>
-                <p className="api-keys-desc">Add API keys for each provider. Keys are saved locally and loaded automatically on startup.</p>
+                <p className="api-keys-desc">Manage providers and API keys. Keys are saved locally and loaded on startup.</p>
+
+                {/* Provider toggles */}
+                {providers.length > 0 && (
+                  <div className="provider-toggles-section">
+                    {providers.map((p) => (
+                      <div key={p.id} className="provider-toggle-row">
+                        <div className="provider-toggle-info">
+                          <span className="provider-toggle-name">{p.name}</span>
+                          <span className="provider-toggle-models">{p.models.map((m: { id: string }) => m.id).join(", ")}</span>
+                        </div>
+                        <button
+                          className={`provider-toggle-btn${p.enabled ? " on" : ""}`}
+                          onClick={async () => {
+                            const updated = { ...p, enabled: !p.enabled };
+                            try {
+                              await invoke("router_save_provider", { provider: updated });
+                              loadProvidersList();
+                            } catch (err) {
+                              addToast(`Failed to toggle provider: ${err}`, "error");
+                            }
+                          }}
+                        >
+                          {p.enabled ? "ON" : "OFF"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div className="api-keys-list">
                   {apiKeys.map((k) => {
                     const isCurrentProvider = currentProvider?.toLowerCase() === k.provider_name.toLowerCase();
@@ -1295,7 +1288,7 @@ function App() {
                         <span className="api-key-provider">
                           {k.provider_name}
                           {isCurrentProvider && <span className="api-key-active-badge">In Use</span>}
-                          {!providerEnabled && <span className="api-key-off-badge">Provider OFF</span>}
+                          {!providerEnabled && <span className="api-key-off-badge">OFF</span>}
                         </span>
                         <span className="api-key-envvar">{k.env_var}</span>
                       </div>
@@ -1391,19 +1384,85 @@ function App() {
             <span className="ring-pct">{Math.round(ctxPercentage)}%</span>
           </div>
         </button>
-        <InputBar
-          slashCommands={SLASH_COMMANDS}
-          onSend={handleSend}
-          onSendWithFiles={handleSendWithFiles}
-          isStreaming={state.isStreaming}
-          onStopGeneration={handleStopGeneration}
-          transformEnabled={transformSettings.enabled}
-          onPreviewTransform={handlePreviewTransform}
-          onTogglePreview={() => setShowTransformPreview((s) => !s)}
-          showTransformPreview={showTransformPreview}
-          promptTemplates={promptTemplates}
-          onSelectTemplate={handleSelectTemplate}
-        />
+        <div className="input-bar-col">
+          <InputBar
+            slashCommands={SLASH_COMMANDS}
+            onSend={handleSend}
+            onSendWithFiles={handleSendWithFiles}
+            isStreaming={state.isStreaming}
+            onStopGeneration={handleStopGeneration}
+            transformEnabled={transformSettings.enabled}
+            onPreviewTransform={handlePreviewTransform}
+            onTogglePreview={() => setShowTransformPreview((s) => !s)}
+            showTransformPreview={showTransformPreview}
+            promptTemplates={promptTemplates}
+            onSelectTemplate={handleSelectTemplate}
+          />
+          {/* Toggle buttons row */}
+          <div className="input-toggles-row">
+            <button
+              className={`itoggle${transformSettings.enabled ? " active" : ""}`}
+              onClick={handleToggleTransform}
+              title={transformSettings.enabled ? "Auto-enhance ON" : "Auto-enhance OFF"}
+            >
+              <i className="fa-solid fa-wand-magic-sparkles" />
+              <span>Enhance</span>
+            </button>
+            <button
+              className={`itoggle${webSearchSettings.enabled ? " active" : ""}`}
+              onClick={handleToggleWebSearch}
+              title={webSearchSettings.enabled ? "Web Search ON" : "Web Search OFF"}
+            >
+              <i className="fa-solid fa-globe" />
+              <span>Search</span>
+            </button>
+            <button
+              className={`itoggle${smartContextEnabled ? " active" : ""}`}
+              onClick={() => {
+                const next = !smartContextEnabled;
+                setSmartContextEnabled(next);
+                localStorage.setItem("ollopa-smart-context", String(next));
+                invoke("set_smart_context", { enabled: next }).catch(() => {});
+              }}
+              title={smartContextEnabled ? "Smart Context ON" : "Smart Context OFF"}
+            >
+              <i className="fa-solid fa-brain" />
+              <span>Context</span>
+            </button>
+            <button
+              className="itoggle"
+              onClick={handleCompact}
+              title="Compact memory"
+            >
+              <i className="fa-solid fa-compress" />
+              <span>Compact</span>
+            </button>
+            <button
+              className="itoggle"
+              onClick={handleSaveMemory}
+              title="Save to memory"
+            >
+              <i className="fa-solid fa-floppy-disk" />
+              <span>Memory</span>
+            </button>
+            <button
+              className="itoggle"
+              onClick={() => setShowPredictivePanel(true)}
+              title="Predictive workflows"
+            >
+              <i className="fa-solid fa-bolt" />
+              <span>Predict</span>
+            </button>
+            <button
+              className="itoggle"
+              onClick={() => setShowAgentExecPanel(true)}
+              title="Agent Loop"
+            >
+              <i className="fa-solid fa-play" />
+              <span>Agent</span>
+            </button>
+          </div>
+        </div>
       </footer>
 
       {/* ═══════ Modals ═══════ */}
@@ -1431,6 +1490,14 @@ function App() {
       <GraphPanel visible={showGraphPanel} onClose={() => setShowGraphPanel(false)} onToast={addToast} projectPath={projectPath} />
       <TokenPanel visible={showTokenPanel} onClose={() => setShowTokenPanel(false)} onToast={addToast} projectPath={projectPath} />
       <AgentPanel visible={showAgentPanel} onClose={() => setShowAgentPanel(false)} onToast={addToast} projectPath={projectPath} />
+      <AgentExecutionPanel
+        visible={showAgentExecPanel}
+        onClose={() => setShowAgentExecPanel(false)}
+        onToast={addToast}
+        agentPlan={state.agentPlan}
+        agentCurrentStep={state.agentCurrentStep}
+        isAgentRunning={state.isAgentRunning}
+      />
       <BrainSearchModal visible={showBrainSearch} onClose={() => setShowBrainSearch(false)} projectPath={projectPath} />
       <WorkspacePanel visible={showWorkspacePanel} onClose={() => setShowWorkspacePanel(false)} onToast={addToast} projectPath={projectPath} />
       <PredictivePanel visible={showPredictivePanel} onClose={() => setShowPredictivePanel(false)} onToast={addToast} projectPath={projectPath} />

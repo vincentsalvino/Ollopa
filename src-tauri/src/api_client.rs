@@ -5,6 +5,31 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 
+/// Strip ANSI escape codes from a string (e.g. \x1b[1m, [1m]).
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip ESC [ ... (letter)
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&nc) = chars.peek() {
+                    chars.next();
+                    if nc.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    // Also strip literal bracket codes like [1m], [0m] etc.
+    let re_bracket = regex::Regex::new(r"\[\d+m\]?").unwrap_or_else(|_| regex::Regex::new("$^").unwrap());
+    re_bracket.replace_all(&result, "").trim().to_string()
+}
+
 /// Configuration for the API client, read from environment variables.
 #[derive(Debug, Clone)]
 pub struct ApiConfig {
@@ -13,9 +38,9 @@ pub struct ApiConfig {
     pub model: String,
 }
 
-/// Pricing constants (DeepSeek defaults)
-const INPUT_PRICE_PER_M: f64 = 0.27;
-const OUTPUT_PRICE_PER_M: f64 = 1.10;
+/// Pricing constants (DeepSeek v4-pro promo pricing, valid until 2026/05/31)
+const INPUT_PRICE_PER_M: f64 = 0.435;
+const OUTPUT_PRICE_PER_M: f64 = 0.87;
 
 /// Maximum depth for recursive tool call follow-ups
 const MAX_TOOL_CALL_DEPTH: u32 = 5;
@@ -57,26 +82,24 @@ impl ApiConfig {
     }
 
     pub fn from_env() -> Result<Self, String> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
+        let api_key = std::env::var("DEEPSEEK_API_KEY")
+            .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
             .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
             .map_err(|_| {
-                "No API key found. Set ANTHROPIC_API_KEY environment variable.".to_string()
+                "No API key found. Set DEEPSEEK_API_KEY environment variable.".to_string()
             })?;
 
         let base_url = std::env::var("ANTHROPIC_BASE_URL")
             .unwrap_or_else(|_| "https://api.deepseek.com".to_string());
 
-        // Strip /anthropic suffix if present (DeepSeek uses OpenAI-compatible format)
         let base_url = base_url
             .trim_end_matches('/')
             .trim_end_matches("/anthropic")
             .to_string();
 
         let model = std::env::var("ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "deepseek-v4-pro".to_string())
-            // Strip ANSI escape codes that may have been accidentally embedded
-            .replace("[1m]", "")
-            .replace("\x1b[1m", "");
+            .unwrap_or_else(|_| "deepseek-v4-pro".to_string());
+        let model = strip_ansi(&model);
 
         Ok(Self {
             base_url,
@@ -94,6 +117,8 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCallMsg>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning_content: Option<String>,
 }
 
 impl ChatMessage {
@@ -104,6 +129,7 @@ impl ChatMessage {
             content: content.to_string(),
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         }
     }
 }
@@ -132,6 +158,8 @@ struct ChatRequest {
     max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<crate::api_tools::ToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    think: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +176,7 @@ struct StreamChoice {
 #[derive(Debug, Deserialize)]
 struct Delta {
     content: Option<String>,
+    reasoning_content: Option<String>,
     tool_calls: Option<Vec<DeltaToolCall>>,
 }
 
@@ -177,6 +206,7 @@ pub struct DirectApiClient {
     tools_enabled: bool,
     working_dir: Option<String>,
     tool_call_depth: u32,
+    thinking_enabled: bool,
 }
 
 fn conversations_dir() -> std::path::PathBuf {
@@ -229,6 +259,7 @@ impl DirectApiClient {
             tools_enabled: true,
             working_dir: None,
             tool_call_depth: 0,
+            thinking_enabled: false,
         })
     }
 
@@ -328,6 +359,17 @@ impl DirectApiClient {
         &self.system_prompt
     }
 
+    /// Enable or disable thinking/reasoning mode.
+    pub fn set_thinking_mode(&mut self, enabled: bool) {
+        self.thinking_enabled = enabled;
+    }
+
+    /// Check if thinking mode is enabled.
+    #[allow(dead_code)]
+    pub fn thinking_enabled(&self) -> bool {
+        self.thinking_enabled
+    }
+
     /// Enable or disable smart context assembly.
     pub fn set_smart_context(&mut self, enabled: bool) {
         self.smart_context_enabled = enabled;
@@ -346,7 +388,7 @@ impl DirectApiClient {
 
     /// Set the model.
     pub fn set_model(&mut self, model: &str) {
-        self.config.model = model.to_string();
+        self.config.model = strip_ansi(model);
     }
 
     /// Edit a message at a specific index and truncate history after it.
@@ -437,19 +479,32 @@ impl DirectApiClient {
             None
         };
 
+        let think = if self.thinking_enabled { Some(true) } else { None };
+
         let request = ChatRequest {
             model: self.config.model.clone(),
             messages: self.messages.clone(),
             stream: true,
             max_tokens: 4096,
             tools,
+            think,
         };
 
+        // MiMo supports both "Authorization: Bearer" and "api-key:" headers
+        let is_mimo = self.config.base_url.contains("xiaomimimo.com");
         let mut req_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("Content-Type", "application/json");
+
+        if is_mimo {
+            req_builder = req_builder
+                .header("api-key", &self.config.api_key)
+                .header("Authorization", format!("Bearer {}", self.config.api_key));
+        } else {
+            req_builder = req_builder
+                .header("Authorization", format!("Bearer {}", self.config.api_key));
+        }
 
         // Add OpenRouter-specific headers
         if is_openrouter_url(&self.config.base_url) {
@@ -492,6 +547,7 @@ impl DirectApiClient {
 
         // Stream the response with real-time chunk emission
         let mut full_response = String::new();
+        let mut full_reasoning = String::new();
         let mut stream = response.bytes_stream();
         let mut buffer = String::new();
         let mut consecutive_errors: u32 = 0;
@@ -548,6 +604,19 @@ impl DirectApiClient {
                                                     _finish_reason_str = fr.clone();
                                                 }
                                                 if let Some(ref delta) = choice.delta {
+                                                    // Handle reasoning_content (thinking mode)
+                                                    if let Some(ref reasoning) = delta.reasoning_content {
+                                                        if !reasoning.is_empty() {
+                                                            full_reasoning.push_str(reasoning);
+                                                            let _ = app_handle.emit(
+                                                                "app-event",
+                                                                AppEvent::ReasoningChunk {
+                                                                    text: reasoning.clone(),
+                                                                    model: self.config.model.clone(),
+                                                                },
+                                                            );
+                                                        }
+                                                    }
                                                     if let Some(ref content) = delta.content {
                                                         if !content.is_empty() {
                                                             full_response.push_str(content);
@@ -701,12 +770,14 @@ impl DirectApiClient {
                     },
                 }]),
                 tool_call_id: None,
+                reasoning_content: if full_reasoning.is_empty() { None } else { Some(full_reasoning.clone()) },
             });
             self.messages.push(ChatMessage {
                 role: "tool".to_string(),
                 content: output,
                 tool_calls: None,
                 tool_call_id: Some(tool_id),
+                reasoning_content: None,
             });
 
             // Recursive follow-up call with depth tracking
@@ -738,10 +809,14 @@ impl DirectApiClient {
             + est_output_tokens as f64 * OUTPUT_PRICE_PER_M)
             / 1_000_000.0;
 
-        // Store assistant response in history
+        // Store assistant response in history (with reasoning_content if present)
         let clean_response = strip_tool_call_text(&full_response);
         if !clean_response.is_empty() {
-            self.messages.push(ChatMessage::text("assistant", &clean_response));
+            let mut msg = ChatMessage::text("assistant", &clean_response);
+            if !full_reasoning.is_empty() {
+                msg.reasoning_content = Some(full_reasoning.clone());
+            }
+            self.messages.push(msg);
 
             // Emit the assistant message (cleaned of any tool call markers)
             let _ = app_handle.emit(

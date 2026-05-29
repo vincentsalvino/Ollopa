@@ -29,6 +29,7 @@ pub enum SearchProvider {
     DuckDuckGo,
     Tavily,
     SearXNG,
+    MiMoSearch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,6 +107,7 @@ pub async fn web_search(query: &str, settings: &WebSearchSettings) -> SearchResp
         SearchProvider::DuckDuckGo => search_duckduckgo(query, settings.max_results).await,
         SearchProvider::Tavily => search_tavily(query, settings.max_results).await,
         SearchProvider::SearXNG => search_searxng(query, settings.max_results).await,
+        SearchProvider::MiMoSearch => search_mimo(query, settings.max_results).await,
     }
 }
 
@@ -288,6 +290,136 @@ async fn search_searxng(query: &str, max_results: usize) -> SearchResponse {
         Err(_) => {}
     }
 
+    search_duckduckgo(query, max_results).await
+}
+
+// ═══════ MiMo Web Search (Phase 3) ═══════
+
+async fn search_mimo(query: &str, max_results: usize) -> SearchResponse {
+    let api_key = std::env::var("MIMO_API_KEY").unwrap_or_default();
+
+    if api_key.is_empty() {
+        return SearchResponse {
+            query: query.to_string(),
+            results: vec![SearchResult {
+                title: "MiMo Search unavailable".to_string(),
+                url: String::new(),
+                snippet: "MIMO_API_KEY not set. Configure it in settings to use MiMo web search.".to_string(),
+                source: "MiMo".to_string(),
+            }],
+            summary: "MiMo API key not configured".to_string(),
+            timestamp: current_timestamp_ms(),
+        };
+    }
+
+    let client = Client::new();
+
+    // MiMo's chat completion API with web search enabled via tool_choice
+    let body = serde_json::json!({
+        "model": "mimo-v2.5-pro",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant with web search capabilities. Search the web and provide accurate, sourced answers."
+            },
+            {
+                "role": "user",
+                "content": format!("Search the web for: {}", query)
+            }
+        ],
+        "tools": [
+            {
+                "type": "web_search",
+                "web_search": { "enable": true }
+            }
+        ],
+        "max_tokens": 1024,
+        "stream": false
+    });
+
+    match client.post("https://api.xiaomimimo.com/v1/chat/completions")
+        .header("api-key", &api_key)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                let content = json
+                    .get("choices")
+                    .and_then(|c| c.get(0))
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                // Parse the response into search results
+                let mut results = Vec::new();
+                let lines: Vec<&str> = content.lines().collect();
+                let mut current_snippet = String::new();
+
+                for line in &lines {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+                        if !current_snippet.is_empty() {
+                            results.push(SearchResult {
+                                title: current_snippet.chars().take(100).collect(),
+                                url: trimmed.to_string(),
+                                snippet: current_snippet.clone(),
+                                source: "MiMo".to_string(),
+                            });
+                            current_snippet.clear();
+                        }
+                    } else if !trimmed.is_empty() {
+                        if !current_snippet.is_empty() {
+                            current_snippet.push(' ');
+                        }
+                        current_snippet.push_str(trimmed);
+                    }
+                }
+
+                // If no structured results, use the whole response as one result
+                if results.is_empty() && !content.is_empty() {
+                    results.push(SearchResult {
+                        title: format!("MiMo search: {}", query),
+                        url: String::new(),
+                        snippet: content.chars().take(500).collect(),
+                        source: "MiMo".to_string(),
+                    });
+                }
+
+                results.truncate(max_results);
+
+                let response = SearchResponse {
+                    query: query.to_string(),
+                    results,
+                    summary: content.chars().take(300).collect(),
+                    timestamp: current_timestamp_ms(),
+                };
+
+                cache_search_result(&response);
+                return response;
+            }
+        }
+        Err(e) => {
+            return SearchResponse {
+                query: query.to_string(),
+                results: vec![SearchResult {
+                    title: "MiMo Search error".to_string(),
+                    url: String::new(),
+                    snippet: format!("Search failed: {}", e),
+                    source: "MiMo".to_string(),
+                }],
+                summary: format!("Error: {}", e),
+                timestamp: current_timestamp_ms(),
+            };
+        }
+    }
+
+    // Fallback to DuckDuckGo
     search_duckduckgo(query, max_results).await
 }
 
