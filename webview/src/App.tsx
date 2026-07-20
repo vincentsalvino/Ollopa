@@ -8,15 +8,40 @@ export interface Msg {
   ts: number;
 }
 
+export interface MemoryHit {
+  id: string;
+  title: string;
+  content: string;
+  scope: string;
+  status: string;
+  source: string;
+  tags: string[];
+  similarity: number;
+  category: string | null;
+  code_block: string | null;
+  use_when: string[];
+  avoid_when: string[];
+}
+
 interface Props {
   vscode: VsCodeApi;
   initialMsgs: Msg[];
 }
 
+const SAMPLE_QUERY = {
+  query: 'Express health endpoint',
+  scope: 'backend',
+  agent: 'test',
+  taskId: 'phase2-smoke',
+} as const;
+
 export function App({ vscode, initialMsgs }: Props): JSX.Element {
   const [msgs, setMsgs] = useState<Msg[]>(initialMsgs);
   const [status, setStatus] = useState<'connecting' | 'ready' | 'closed' | 'error'>('connecting');
   const [text, setText] = useState('');
+  const [memories, setMemories] = useState<MemoryHit[]>([]);
+  const [memSource, setMemSource] = useState<'cloud' | 'cache' | null>(null);
+  const [memLoading, setMemLoading] = useState(false);
   const idRef = useRef(0);
 
   useEffect(() => {
@@ -27,6 +52,16 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
         case 'sidecar:closed':  setStatus('closed');  break;
         case 'sidecar:error':   setStatus('error');   break;
         case 'chat:reply':      push('sidecar', detail.text); break;
+        case 'memory_result':
+          setMemLoading(false);
+          setMemSource(detail.source);
+          setMemories(detail.memories as MemoryHit[]);
+          push('system', `[memory] ${detail.memories.length} hit(s) (${detail.source})`);
+          break;
+        case 'memory_error':
+          setMemLoading(false);
+          push('system', `[memory] error: ${detail.message}`);
+          break;
       }
     };
     window.addEventListener('ollopa:inbound', onInbound as EventListener);
@@ -45,6 +80,14 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
     setText('');
   };
 
+  const runMemoryTest = () => {
+    setMemLoading(true);
+    setMemories([]);
+    setMemSource(null);
+    push('system', `[memory] querying: "${SAMPLE_QUERY.query}"`);
+    vscode.postMessage({ type: 'memory_query', ...SAMPLE_QUERY } satisfies Outbound);
+  };
+
   return (
     <div className="app">
       <header className="app__header">
@@ -59,6 +102,25 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
             <p className="msg__body">{m.text}</p>
           </article>
         ))}
+        {memories.length > 0 && (
+          <section className="mem">
+            <header className="mem__head">
+              <span>Memory hits</span>
+              {memSource && <span className={`mem__src mem__src--${memSource}`}>{memSource}</span>}
+            </header>
+            {memories.map((m) => (
+              <article key={m.id} className="mem__item">
+                <header className="mem__title">
+                  {m.title} <span className="mem__score">{(m.similarity ?? 0).toFixed(3)}</span>
+                </header>
+                <p className="mem__body">{m.content}</p>
+                {m.tags.length > 0 && (
+                  <p className="mem__tags">{m.tags.map((t) => `#${t}`).join(' ')}</p>
+                )}
+              </article>
+            ))}
+          </section>
+        )}
       </main>
       <form
         className="app__input"
@@ -75,6 +137,9 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
           autoFocus
         />
         <button type="submit" disabled={!text.trim()}>Send</button>
+        <button type="button" onClick={runMemoryTest} disabled={memLoading || status !== 'ready'}>
+          {memLoading ? 'Querying…' : 'Test memory'}
+        </button>
       </form>
     </div>
   );

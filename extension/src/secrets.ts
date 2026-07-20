@@ -2,6 +2,8 @@
  * Secret names stored in VS Code's SecretStorage. Kept here so the
  * `ollopa.configure` command and the sidecar launcher use the same keys.
  */
+import * as vscode from 'vscode';
+
 export const SECRET_KEYS = {
   supabaseUrl: 'ollopa.supabaseUrl',
   supabaseServiceKey: 'ollopa.supabaseServiceKey',

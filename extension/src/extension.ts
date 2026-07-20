@@ -90,6 +90,7 @@ async function configureCommand(context: vscode.ExtensionContext): Promise<Sidec
     openRouterKey: openRouter.trim(),
   });
   context.subscriptions.push(sidecar);
+  webview?.rebind();
   try {
     await sidecar.start();
   } catch (err) {

@@ -18,6 +18,10 @@ export type Inbound =
   | { type: 'sidecar:ready' }
   | { type: 'sidecar:closed' }
   | { type: 'sidecar:error'; message: string }
-  | { type: 'chat:reply'; text: string; from: 'sidecar' };
+  | { type: 'chat:reply'; text: string; from: 'sidecar' }
+  | { type: 'memory_result'; memories: unknown[]; source: 'cloud' | 'cache' }
+  | { type: 'memory_error'; message: string };
 
-export type Outbound = { type: 'chat:send'; text: string };
+export type Outbound =
+  | { type: 'chat:send'; text: string }
+  | { type: 'memory_query'; query: string; scope: string; agent: string; taskId: string };

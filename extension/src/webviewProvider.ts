@@ -3,28 +3,35 @@ import { randomBytes } from 'node:crypto';
 import { SidecarManager } from './sidecarManager';
 
 type WebviewInbound =
-  | { type: 'chat:send'; text: string };
+  | { type: 'chat:send'; text: string }
+  | { type: 'memory_query'; query: string; scope: string; agent: string; taskId: string };
 
 type WebviewOutbound =
   | { type: 'sidecar:ready' }
   | { type: 'sidecar:closed' }
   | { type: 'sidecar:error'; message: string }
-  | { type: 'chat:reply'; text: string; from: 'sidecar' };
+  | { type: 'chat:reply'; text: string; from: 'sidecar' }
+  | { type: 'memory_result'; memories: unknown[]; source: 'cloud' | 'cache' }
+  | { type: 'memory_error'; message: string };
 
 /**
  * Hosts the Ollopa chat webview in the right-side panel of the workbench.
  * The HTML is loaded from the Vite build under `webview/dist/`. In dev we
  * fall back to the Vite dev server (http://localhost:5173) so HMR works.
+ *
+ * Phase 2: also bridges `memory_query` requests. The sidecar responds with
+ * `{ kind: 'memory_result', memories, source }` or `{ kind: 'memory_error' }`.
  */
 export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewType = 'ollopa.chat';
 
   private view: vscode.WebviewView | undefined;
   private offSidecar: (() => void) | undefined;
+  private subscribedSidecar: SidecarManager | undefined;
 
   constructor(
     private readonly extensionPath: string,
-    private readonly sidecar: SidecarManager,
+    private readonly getSidecar: () => SidecarManager | undefined,
   ) {}
 
   resolveWebviewView(
@@ -46,9 +53,23 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
       this.handleFromWebview(msg);
     });
 
-    // Forward sidecar events → webview.
+    this.bindSidecarEvents();
+
+    // If a sidecar is already up at resolve-time, announce it now.
+    if (this.getSidecar()?.isReady()) this.post({ type: 'sidecar:ready' });
+  }
+
+  /**
+   * (Re)subscribe to the current sidecar instance. Called on view resolve and
+   * after the extension swaps the sidecar on `ollopa.configure` (reboot).
+   */
+  private bindSidecarEvents(): void {
     this.offSidecar?.();
-    this.offSidecar = this.sidecar.on((e) => {
+    this.offSidecar = undefined;
+    const sidecar = this.getSidecar();
+    if (!sidecar) return;
+    this.subscribedSidecar = sidecar;
+    this.offSidecar = sidecar.on((e) => {
       if (!this.view) return;
       if (e.type === 'status' && e.status === 'ready') {
         this.post({ type: 'sidecar:ready' });
@@ -57,31 +78,65 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
       } else if (e.type === 'status' && e.status === 'error') {
         this.post({ type: 'sidecar:error', message: e.message ?? 'unknown' });
       } else if (e.type === 'message') {
-        // Phase 1 contract: sidecar echoes { kind: 'echo', text } back.
-        const p = e.payload as { kind?: string; text?: string } | undefined;
-        if (p && p.kind === 'echo' && typeof p.text === 'string') {
-          this.post({ type: 'chat:reply', text: p.text, from: 'sidecar' });
-        }
+        this.routeSidecarMessage(e.payload);
       }
     });
+    if (sidecar.isReady()) this.post({ type: 'sidecar:ready' });
+  }
 
-    // If the sidecar is already up at resolve-time, announce it now.
-    if (this.sidecar.isReady()) this.post({ type: 'sidecar:ready' });
+  private routeSidecarMessage(payload: unknown): void {
+    if (!payload || typeof payload !== 'object') return;
+    const p = payload as { kind?: string; [k: string]: unknown };
+    switch (p.kind) {
+      case 'echo':
+        if (typeof (p as any).text === 'string') {
+          this.post({ type: 'chat:reply', text: (p as any).text, from: 'sidecar' });
+        }
+        return;
+      case 'memory_result': {
+        const source = p.source === 'cache' ? 'cache' : 'cloud';
+        const memories = Array.isArray(p.memories) ? p.memories : [];
+        this.post({ type: 'memory_result', memories, source });
+        return;
+      }
+      case 'memory_error':
+        this.post({ type: 'memory_error', message: String((p as any).message ?? 'unknown error') });
+        return;
+    }
   }
 
   reveal(): void {
-    // `workbench.view.ollopa` is contributed by the manifest; if missing, the
-    // command still runs but no panel pops. Phase 1 ships the manifest below.
-    vscode.commands.executeCommand('workbench.view.ollopa');
+    // `workbench.view.ollopa` is contributed by the manifest.
+    void vscode.commands.executeCommand('workbench.view.ollopa');
+  }
+
+  /** Re-bind to the current sidecar after a restart (e.g. after configure). */
+  rebind(): void {
+    this.bindSidecarEvents();
   }
 
   private handleFromWebview(msg: WebviewInbound): void {
+    const sidecar = this.getSidecar();
     if (msg.type === 'chat:send') {
-      if (!this.sidecar.isReady()) {
+      if (!sidecar?.isReady()) {
         this.post({ type: 'chat:reply', text: '[sidecar not ready]', from: 'sidecar' });
         return;
       }
-      this.sidecar.send({ kind: 'echo', text: msg.text });
+      sidecar.send({ kind: 'echo', text: msg.text });
+      return;
+    }
+    if (msg.type === 'memory_query') {
+      if (!sidecar?.isReady()) {
+        this.post({ type: 'memory_error', message: 'Sidecar not ready. Run "Ollopa: Configure" if you have not yet set credentials.' });
+        return;
+      }
+      sidecar.send({
+        kind: 'memory_query',
+        query: msg.query,
+        scope: msg.scope,
+        agent: msg.agent,
+        taskId: msg.taskId,
+      });
     }
   }
 
@@ -95,9 +150,7 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 
   private htmlFor(webview: vscode.Webview): string {
     const devServer = process.env.OLLOPA_WEBVIEW_DEV === '1';
-    if (devServer) {
-      return devHtml();
-    }
+    if (devServer) return devHtml();
     const dist = this.assetRoot();
     const indexJs = vscode.Uri.file(`${dist}/assets/index.js`);
     const indexCss = vscode.Uri.file(`${dist}/assets/index.css`);
@@ -122,6 +175,7 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
 
   dispose(): void {
     this.offSidecar?.();
+    this.offSidecar = undefined;
   }
 }
 

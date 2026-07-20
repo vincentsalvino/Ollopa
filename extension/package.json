@@ -38,6 +38,10 @@
       {
         "command": "ollopa.openPanel",
         "title": "Ollopa: Open Panel"
+      },
+      {
+        "command": "ollopa.configure",
+        "title": "Ollopa: Configure"
       }
     ]
   },

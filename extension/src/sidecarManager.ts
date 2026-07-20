@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import WebSocket from 'ws';
+import type { SidecarCredentials } from './secrets';
 
 export type SidecarEvent =
   | { type: 'status'; status: 'ready' | 'closed' | 'error'; message?: string }
@@ -21,6 +22,10 @@ type Listener = (e: SidecarEvent) => void;
  * Entry-point resolution: prefers compiled `sidecar/dist/start.js`; falls
  * back to `sidecar/src/start.ts` via `tsx` (dev). Throws clearly if neither
  * is available so the failure mode is obvious, not a silent hang.
+ *
+ * Credentials: passed as environment variables. If `null`, the sidecar boots
+ * in echo-only mode and the webview is told the sidecar is not yet ready
+ * for memory queries. The user is expected to run `Ollopa: Configure`.
  */
 export class SidecarManager {
   private proc: ChildProcessByStdio<null, Readable, Readable> | undefined;
@@ -31,9 +36,11 @@ export class SidecarManager {
   private bootResolver: (() => void) | null = null;
   private bootRejecter: ((err: Error) => void) | null = null;
   private readonly extensionPath: string;
+  private readonly credentials: SidecarCredentials | null;
 
-  constructor(extensionPath: string) {
+  constructor(extensionPath: string, credentials: SidecarCredentials | null) {
     this.extensionPath = extensionPath;
+    this.credentials = credentials;
   }
 
   on(listener: Listener): () => void {
@@ -55,7 +62,6 @@ export class SidecarManager {
   async start(): Promise<void> {
     if (this.proc) return;
     this.spawn();
-    // Wait until WS is open or we time out.
     await new Promise<void>((resolve, reject) => {
       this.bootResolver = resolve;
       this.bootRejecter = reject;
@@ -75,7 +81,6 @@ export class SidecarManager {
       bin = process.execPath;
       args = [distEntry];
     } else if (existsSync(srcEntry)) {
-      // Dev: run TS via tsx (installed at workspace root).
       bin = process.execPath;
       args = [path.join(this.extensionPath, 'node_modules', 'tsx', 'dist', 'cli.mjs'), srcEntry];
       if (!existsSync(args[0])) {
@@ -87,8 +92,20 @@ export class SidecarManager {
       throw new Error('No sidecar entry found. Expected sidecar/dist/start.js or sidecar/src/start.ts.');
     }
 
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      OLLOPA_SIDECAR: '1',
+    };
+    if (this.credentials) {
+      env.SUPABASE_URL = this.credentials.supabaseUrl;
+      env.SUPABASE_SERVICE_KEY = this.credentials.supabaseServiceKey;
+      if (this.credentials.openRouterKey) {
+        env.OPENROUTER_API_KEY = this.credentials.openRouterKey;
+      }
+    }
+
     const proc = spawn(bin, args, {
-      env: { ...process.env, OLLOPA_SIDECAR: '1' },
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     }) as ChildProcessByStdio<null, Readable, Readable>;
     this.proc = proc;
@@ -106,7 +123,6 @@ export class SidecarManager {
     });
 
     proc.stderr.on('data', (chunk: Buffer) => {
-      // Surface to host console; do not pop VS Code notifications for every line.
       console.error(`[ollopa sidecar] ${chunk.toString('utf8').trim()}`);
     });
 
