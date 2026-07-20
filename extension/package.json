@@ -1,0 +1,53 @@
+{
+  "name": "ollopa-extension",
+  "displayName": "Ollopa",
+  "description": "AI Coding Platform — chat-centric multi-agent assistant with persistent memory.",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "ollopa",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ollopa",
+          "title": "Ollopa",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "ollopa": [
+        {
+          "type": "webview",
+          "id": "ollopa.chat",
+          "name": "Ollopa Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ollopa.openPanel",
+        "title": "Ollopa: Open Panel"
+      }
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "ollopa-workspace",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Ollopa — VS Code extension monorepo",
+  "workspaces": [
+    "extension",
+    "webview",
+    "sidecar"
+  ],
+  "scripts": {
+    "build:webview": "npm run build --workspace webview",
+    "build:sidecar": "npm run build --workspace sidecar",
+    "build:extension": "npm run build --workspace extension",
+    "build": "npm run build:webview && npm run build:sidecar && npm run build:extension",
+    "dev:webview": "npm run dev --workspace webview",
+    "dev:sidecar": "npm run dev --workspace sidecar"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0"
+  }
+}
