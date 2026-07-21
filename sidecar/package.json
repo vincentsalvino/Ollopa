@@ -18,7 +18,9 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "@types/diff": "^7.0.2",
     "better-sqlite3": "^11.1.0",
+    "diff": "^9.0.0",
     "dotenv": "^16.4.0",
     "ws": "^8.16.0"
   }

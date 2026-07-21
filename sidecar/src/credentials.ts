@@ -46,3 +46,14 @@ export function hasSupabase(
 ): c is { supabaseUrl: string; supabaseServiceKey: string; openRouterKey: string | null } {
   return c.supabaseUrl !== null && c.supabaseServiceKey !== null;
 }
+
+/** Throws if the key is missing — chat completion is mandatory for the agent loop. */
+export function getOpenRouterKey(): string {
+  // Ensure dotenv has been considered before we decide the key is missing.
+  ensureDotenv();
+  const k = process.env.OPENROUTER_API_KEY;
+  if (!k) {
+    throw new Error('OPENROUTER_API_KEY not set (set it via ollopa.configure or .env)');
+  }
+  return k;
+}

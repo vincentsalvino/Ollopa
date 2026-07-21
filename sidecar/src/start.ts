@@ -1,22 +1,23 @@
 /**
- * Ollopa sidecar — Phase 2: WebSocket echo + memory_query.
+ * Ollopa sidecar — Phase 3: Quick Mode.
  *
- * Protocol (Phase 2):
- *   inbound  { kind: 'echo',         text: string }
- *   inbound  { kind: 'memory_query', query: string, scope: string, agent: string, taskId: string }
+ * Protocol (additions over Phases 1–2):
+ *   inbound  { kind: 'chat:send', mode: 'quick', text, taskId }
+ *   inbound  { kind: 'tool_output', taskId, toolName, output, kind }
  *
- *   outbound { kind: 'echo',         text: string }
- *   outbound { kind: 'memory_result', memories: RetrievedMemory[], source: 'cloud' | 'cache' }
- *   outbound { kind: 'memory_error',  message: string }
+ *   outbound { kind: 'agent_thought',  taskId, message, agent: 'implementation' }
+ *   outbound { kind: 'tool_call',      taskId, toolName, toolArgs }
+ *   outbound { kind: 'task_final_diff',taskId, diff }
+ *   outbound { kind: 'task_error',     taskId, error }
+ *   outbound { kind: 'task_complete',  taskId }
  *
  * Lifecycle:
- *   1. Pick a random free port.
- *   2. Print `PORT=<n>\n` on stdout (the extension host reads this to connect).
- *   3. Accept WebSocket connections.
+ *   1. Pick a random free port, print `PORT=<n>\n` on stdout.
+ *   2. Accept WebSocket connections.
+ *   3. For each `chat:send { mode: 'quick' }`, fire-and-forget the
+ *      Implementation agent. Per-task tool_output replies are awaited
+ *      via a shared ToolAwaiter.
  *   4. Graceful shutdown on SIGTERM / SIGINT.
- *
- * Credentials come from env (set by the extension host from SecretStorage,
- * or loaded from sidecar/.env when run standalone).
  */
 import { createServer, Server } from 'node:net';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -24,6 +25,8 @@ import { loadCredentials, hasSupabase } from './credentials';
 import { initSupabase } from './memory/supabaseClient';
 import { initLocalCache } from './memory/localCache';
 import { retrieveMemory } from './memory/memoryService';
+import { runQuickMode, type AgentEvent } from './agents/implementation';
+import { ToolAwaiter, type ToolOutputPayload } from './agents/toolAwaiter';
 
 const HOST = '127.0.0.1';
 
@@ -68,7 +71,39 @@ function isMemoryQueryRequest(p: unknown): p is MemoryQueryRequest {
     && typeof o.taskId === 'string';
 }
 
-function startWsServer(port: number): WebSocketServer {
+interface QuickStartRequest {
+  kind: 'chat:send';
+  mode: 'quick';
+  text: string;
+  taskId: string;
+}
+
+function isQuickStart(p: unknown): p is QuickStartRequest {
+  if (!p || typeof p !== 'object') return false;
+  const o = p as Record<string, unknown>;
+  return o.kind === 'chat:send' && o.mode === 'quick'
+    && typeof o.text === 'string' && typeof o.taskId === 'string';
+}
+
+interface ToolOutputRequest {
+  kind: 'tool_output';
+  taskId: string;
+  toolName: string;
+  output: string;
+  kind_kind: 'terminal' | 'diff' | 'file' | 'error';
+}
+
+function isToolOutput(p: unknown): p is ToolOutputRequest {
+  if (!p || typeof p !== 'object') return false;
+  const o = p as Record<string, unknown>;
+  return o.kind === 'tool_output'
+    && typeof o.taskId === 'string'
+    && typeof o.toolName === 'string'
+    && typeof o.output === 'string'
+    && typeof o.kind_kind === 'string';
+}
+
+function startWsServer(port: number, awaiter: ToolAwaiter): WebSocketServer {
   const wss = new WebSocketServer({ host: HOST, port });
 
   wss.on('connection', (ws: WebSocket) => {
@@ -95,6 +130,39 @@ function startWsServer(port: number): WebSocketServer {
         }
         return;
       }
+      if (isToolOutput(payload)) {
+        const out: ToolOutputPayload = {
+          toolName: payload.toolName,
+          output: payload.output,
+          kind: payload.kind_kind,
+        };
+        const resolved = awaiter.resolve(payload.taskId, out);
+        if (!resolved) {
+          // No pending tool — could be a stale reply. Log and ignore.
+          console.warn(`[sidecar] tool_output with no pending task: ${payload.taskId}`);
+        }
+        return;
+      }
+      if (isQuickStart(payload)) {
+        // Fire-and-forget. The agent will stream events back over `ws`.
+        const ctx = {
+          taskId: payload.taskId,
+          send: (event: AgentEvent) => {
+            try { ws.send(JSON.stringify(event)); }
+            catch (err) {
+              console.warn(`[sidecar] send failed for task ${payload.taskId}:`, (err as Error).message);
+            }
+          },
+          awaiter,
+        };
+        runQuickMode(payload.text, ctx).catch((err) => {
+          console.error(`[sidecar] runQuickMode crashed:`, err);
+          try {
+            ws.send(JSON.stringify({ kind: 'task_error', taskId: payload.taskId, error: (err as Error).message }));
+          } catch { /* socket may be closed */ }
+        });
+        return;
+      }
       ws.send(JSON.stringify({ kind: 'error', message: 'unknown message kind' }));
     });
 
@@ -107,7 +175,6 @@ function startWsServer(port: number): WebSocketServer {
 }
 
 async function main(): Promise<void> {
-  // 1. Credentials → Supabase client (best-effort).
   const creds = loadCredentials();
   if (hasSupabase(creds)) {
     initSupabase(creds.supabaseUrl, creds.supabaseServiceKey);
@@ -116,17 +183,17 @@ async function main(): Promise<void> {
     console.error('[sidecar] No Supabase credentials — memory_query will fall back to local cache');
   }
 
-  // 2. Local cache is always available so offline path is real.
   initLocalCache();
   console.error('[sidecar] Local cache initialised');
 
-  // 3. WS server.
+  const awaiter = new ToolAwaiter();
   const port = await findFreePort();
-  const wss = startWsServer(port);
+  const wss = startWsServer(port, awaiter);
   process.stdout.write(`PORT=${port}\n`);
 
   const shutdown = (sig: string) => {
     console.error(`[sidecar] ${sig} received, shutting down`);
+    awaiter.rejectAll('sidecar shutting down');
     wss.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 3000).unref();
   };
