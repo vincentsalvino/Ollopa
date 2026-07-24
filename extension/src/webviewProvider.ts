@@ -1,10 +1,15 @@
 import * as vscode from 'vscode';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { SidecarManager } from './sidecarManager';
+import * as tempWorkspace from './tempWorkspace';
+import { execute, isKnownTool, type ToolCall, type ToolOutput } from './toolBridge';
+import type { ProviderConfig, SidecarCredentials } from './secrets';
 
 type WebviewInbound =
-  | { type: 'chat:send'; text: string }
-  | { type: 'memory_query'; query: string; scope: string; agent: string; taskId: string };
+  | { type: 'chat:send'; text: string; mode: 'quick' }
+  | { type: 'task_accept'; taskId: string }
+  | { type: 'task_reject'; taskId: string }
+  | { type: 'set_provider_mode'; forceDirect: boolean };
 
 type WebviewOutbound =
   | { type: 'sidecar:ready' }
@@ -12,26 +17,41 @@ type WebviewOutbound =
   | { type: 'sidecar:error'; message: string }
   | { type: 'chat:reply'; text: string; from: 'sidecar' }
   | { type: 'memory_result'; memories: unknown[]; source: 'cloud' | 'cache' }
-  | { type: 'memory_error'; message: string };
+  | { type: 'memory_error'; message: string }
+  | { type: 'task_started'; taskId: string }
+  | { type: 'agent_thought'; taskId: string; message: string; agent: 'implementation' }
+  | { type: 'tool_call'; taskId: string; toolName: string; toolArgs: unknown }
+  | { type: 'tool_output'; taskId: string; toolName: string; output: string; kind: ToolOutput['kind'] }
+  | { type: 'task_final_diff'; taskId: string; diff: string }
+  | { type: 'task_error'; taskId: string; message: string }
+  | { type: 'task_complete'; taskId: string }
+  | { type: 'task_applied'; taskId: string; applied: string[] }
+  | { type: 'task_rejected'; taskId: string }
+  | { type: 'provider_status'; forceDirect: boolean; omnirouteUp: boolean; omnirouteUrl: string | null; providerCount: number }
+  | { type: 'task_backend'; taskId: string; backend: { kind: 'omniroute' | 'direct'; provider?: string; model: string } };
 
 /**
  * Hosts the Ollopa chat webview in the right-side panel of the workbench.
  * The HTML is loaded from the Vite build under `webview/dist/`. In dev we
  * fall back to the Vite dev server (http://localhost:5173) so HMR works.
  *
- * Phase 2: also bridges `memory_query` requests. The sidecar responds with
- * `{ kind: 'memory_result', memories, source }` or `{ kind: 'memory_error' }`.
+ * Phase 3: Quick Mode. The provider now:
+ *   - Creates a temp workspace on each `chat:send { mode: 'quick' }`.
+ *   - Forwards `tool_call` events from the sidecar to the in-process
+ *     tool bridge, then sends `tool_output` back to the sidecar.
+ *   - On `task_accept`/`task_reject`, applies the diff or discards.
  */
 export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewType = 'ollopa.chat';
 
   private view: vscode.WebviewView | undefined;
   private offSidecar: (() => void) | undefined;
-  private subscribedSidecar: SidecarManager | undefined;
 
   constructor(
     private readonly extensionPath: string,
     private readonly getSidecar: () => SidecarManager | undefined,
+    private readonly getCredentials: () => SidecarCredentials | null,
+    private readonly getProviderConfig: () => ProviderConfig | null = () => null,
   ) {}
 
   resolveWebviewView(
@@ -50,25 +70,19 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
     webviewView.webview.html = this.htmlFor(webviewView.webview);
 
     webviewView.webview.onDidReceiveMessage((msg: WebviewInbound) => {
-      this.handleFromWebview(msg);
+      void this.handleFromWebview(msg);
     });
 
     this.bindSidecarEvents();
 
-    // If a sidecar is already up at resolve-time, announce it now.
     if (this.getSidecar()?.isReady()) this.post({ type: 'sidecar:ready' });
   }
 
-  /**
-   * (Re)subscribe to the current sidecar instance. Called on view resolve and
-   * after the extension swaps the sidecar on `ollopa.configure` (reboot).
-   */
   private bindSidecarEvents(): void {
     this.offSidecar?.();
     this.offSidecar = undefined;
     const sidecar = this.getSidecar();
     if (!sidecar) return;
-    this.subscribedSidecar = sidecar;
     this.offSidecar = sidecar.on((e) => {
       if (!this.view) return;
       if (e.type === 'status' && e.status === 'ready') {
@@ -78,15 +92,16 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
       } else if (e.type === 'status' && e.status === 'error') {
         this.post({ type: 'sidecar:error', message: e.message ?? 'unknown' });
       } else if (e.type === 'message') {
-        this.routeSidecarMessage(e.payload);
+        void this.routeSidecarMessage(e.payload, sidecar);
       }
     });
     if (sidecar.isReady()) this.post({ type: 'sidecar:ready' });
   }
 
-  private routeSidecarMessage(payload: unknown): void {
+  private async routeSidecarMessage(payload: unknown, sidecar: SidecarManager): Promise<void> {
     if (!payload || typeof payload !== 'object') return;
     const p = payload as { kind?: string; [k: string]: unknown };
+
     switch (p.kind) {
       case 'echo':
         if (typeof (p as any).text === 'string') {
@@ -102,42 +117,148 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
       case 'memory_error':
         this.post({ type: 'memory_error', message: String((p as any).message ?? 'unknown error') });
         return;
+      case 'agent_thought':
+        this.post({
+          type: 'agent_thought',
+          taskId: String((p as any).taskId ?? ''),
+          message: String((p as any).message ?? ''),
+          agent: 'implementation',
+        });
+        return;
+      case 'tool_call': {
+        const taskId = String((p as any).taskId ?? '');
+        const toolName = String((p as any).toolName ?? '');
+        const toolArgs = (p as any).toolArgs ?? {};
+        this.post({ type: 'tool_call', taskId, toolName, toolArgs });
+        if (!isKnownTool(toolName)) {
+          sidecar.sendToolOutput(taskId, toolName, `unknown tool: ${toolName}`, 'error');
+          return;
+        }
+        const call: ToolCall = { toolName, args: toolArgs as Record<string, unknown> };
+        let out: ToolOutput;
+        try { out = await execute(taskId, call); }
+        catch (err) {
+          out = { toolName, output: `bridge error: ${(err as Error).message}`, kind: 'error' };
+        }
+        // Forward a copy of the tool_output to the webview so it can render
+        // it under the tool_call card. The sidecar already got its copy via
+        // sendToolOutput.
+        this.post({ type: 'tool_output', taskId, toolName: out.toolName, output: out.output, kind: out.kind });
+        sidecar.sendToolOutput(taskId, out.toolName, out.output, out.kind);
+        return;
+      }
+      case 'task_final_diff':
+        this.post({ type: 'task_final_diff', taskId: String((p as any).taskId ?? ''), diff: String((p as any).diff ?? '') });
+        return;
+      case 'task_error':
+        this.post({ type: 'task_error', taskId: String((p as any).taskId ?? ''), message: String((p as any).error ?? 'unknown') });
+        return;
+      case 'task_complete':
+        this.post({ type: 'task_complete', taskId: String((p as any).taskId ?? '') });
+        return;
+      case 'task_backend': {
+        const b = (p as any).backend;
+        if (!b || typeof b !== 'object') return;
+        this.post({
+          type: 'task_backend',
+          taskId: String((p as any).taskId ?? ''),
+          backend: {
+            kind: b.kind === 'direct' ? 'direct' : 'omniroute',
+            provider: typeof b.provider === 'string' ? b.provider : undefined,
+            model: String(b.model ?? ''),
+          },
+        });
+        return;
+      }
     }
   }
 
   reveal(): void {
-    // `workbench.view.ollopa` is contributed by the manifest.
     void vscode.commands.executeCommand('workbench.view.ollopa');
   }
 
-  /** Re-bind to the current sidecar after a restart (e.g. after configure). */
   rebind(): void {
     this.bindSidecarEvents();
   }
 
-  private handleFromWebview(msg: WebviewInbound): void {
+  postProviderStatus(cfg: ProviderConfig | null, opts: { omnirouteUp?: boolean } = {}): void {
+    const omnirouteUrl = cfg?.omnirouteUrl ?? null;
+    const enabledProviders = (cfg?.directProviders ?? []).filter((p) => p.enabled);
+    this.post({
+      type: 'provider_status',
+      forceDirect: cfg?.forceDirect ?? false,
+      omnirouteUp: opts.omnirouteUp ?? false,
+      omnirouteUrl,
+      providerCount: enabledProviders.length,
+    });
+  }
+
+  private async handleFromWebview(msg: WebviewInbound): Promise<void> {
     const sidecar = this.getSidecar();
     if (msg.type === 'chat:send') {
-      if (!sidecar?.isReady()) {
-        this.post({ type: 'chat:reply', text: '[sidecar not ready]', from: 'sidecar' });
+      // The chat client requires the OpenRouter key (Phase 3 = real LLM).
+      // If we don't have creds, fail fast with a useful message.
+      if (!this.getCredentials()?.openRouterKey) {
+        this.post({ type: 'task_error', taskId: '', message: 'OpenRouter API key not configured. Run "Ollopa: Configure".' });
         return;
       }
-      sidecar.send({ kind: 'echo', text: msg.text });
+      if (!sidecar?.isReady()) {
+        this.post({ type: 'task_error', taskId: '', message: 'Sidecar not ready. Run "Ollopa: Configure" if you have not yet set credentials.' });
+        return;
+      }
+      if (msg.mode !== 'quick') {
+        this.post({ type: 'task_error', taskId: '', message: `Mode "${msg.mode}" is not implemented in this build.` });
+        return;
+      }
+      const taskId = randomUUID();
+      const workspaceRoot = this.resolveWorkspaceRoot();
+      if (!workspaceRoot) {
+        this.post({ type: 'task_error', taskId, message: 'No workspace root configured. Set ollopa.workspaceRoot in settings or open a folder.' });
+        return;
+      }
+      try {
+        await tempWorkspace.create(workspaceRoot, taskId);
+      } catch (err) {
+        this.post({ type: 'task_error', taskId, message: `Could not create temp workspace: ${(err as Error).message}` });
+        return;
+      }
+      this.post({ type: 'task_started', taskId });
+      sidecar.send({ kind: 'chat:send', mode: 'quick', text: msg.text, taskId });
       return;
     }
-    if (msg.type === 'memory_query') {
-      if (!sidecar?.isReady()) {
-        this.post({ type: 'memory_error', message: 'Sidecar not ready. Run "Ollopa: Configure" if you have not yet set credentials.' });
+    if (msg.type === 'task_accept') {
+      const ctx = tempWorkspace.getContext(msg.taskId);
+      if (!ctx) {
+        this.post({ type: 'task_error', taskId: msg.taskId, message: 'No temp workspace for this task.' });
         return;
       }
-      sidecar.send({
-        kind: 'memory_query',
-        query: msg.query,
-        scope: msg.scope,
-        agent: msg.agent,
-        taskId: msg.taskId,
-      });
+      try {
+        const applied = await tempWorkspace.apply(ctx);
+        await tempWorkspace.cleanup(msg.taskId);
+        this.post({ type: 'task_applied', taskId: msg.taskId, applied });
+      } catch (err) {
+        this.post({ type: 'task_error', taskId: msg.taskId, message: `Apply failed: ${(err as Error).message}` });
+      }
+      return;
     }
+    if (msg.type === 'task_reject') {
+      await tempWorkspace.cleanup(msg.taskId);
+      this.post({ type: 'task_rejected', taskId: msg.taskId });
+      return;
+    }
+    if (msg.type === 'set_provider_mode') {
+      const cfg = vscode.workspace.getConfiguration('ollopa');
+      await cfg.update('forceDirect', msg.forceDirect, vscode.ConfigurationTarget.Global);
+      // The configuration listener in extension.ts picks this up and rebinds.
+      return;
+    }
+  }
+
+  private resolveWorkspaceRoot(): string | null {
+    const fromConfig = vscode.workspace.getConfiguration('ollopa').get<string>('workspaceRoot');
+    if (fromConfig && fromConfig.trim().length > 0) return fromConfig.trim();
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    return folder?.uri.fsPath ?? null;
   }
 
   private post(msg: WebviewOutbound): void {

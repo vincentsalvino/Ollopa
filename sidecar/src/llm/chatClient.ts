@@ -1,18 +1,18 @@
 /**
- * Chat completion client (OpenRouter).
+ * Chat completion client — Phase 3.5.
  *
- * Same fetch pattern as `embedding.ts`: bearer auth, JSON body, 10s connect
- * budget on the caller side, structured error on non-2xx.
+ * In production this delegates to the provider router (OmniRoute default,
+ * direct OpenAI-compatible providers as fallback). The mock path is kept
+ * identical so the Phase 3 test suite keeps passing.
  *
  * Mocking: when `process.env.OLLOPA_LLM_MODE === 'mock'`, calls return a
  * deterministic scripted sequence so the agent loop is testable without
  * spending tokens. The script lives in `chatClient.mock.ts`.
  */
 import { runMock as runMockImpl, hasMockScript } from './chatClient.mock';
-import { getOpenRouterKey } from '../credentials';
+import { loadCredentials } from '../credentials';
 import { LLM_MODEL } from './llmConfig';
-
-const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+import { chatWithRouter, type ResolvedChatResult } from './providerRouter';
 
 export interface ToolCall {
   id: string;
@@ -48,6 +48,15 @@ export interface ChatResult {
   finishReason: 'stop' | 'tool_calls' | 'length' | 'error';
 }
 
+/**
+ * The most recent resolved backend. Exposed so callers (start.ts / webview
+ * via the sidecar) can render a "OmniRoute · auto" or "Direct · deepseek" chip.
+ */
+let lastBackend: ResolvedChatResult['backend'] | null = null;
+export function getLastBackend(): ResolvedChatResult['backend'] | null {
+  return lastBackend;
+}
+
 export async function chatCompletion(
   messages: ChatMessage[],
   tools: ToolDefinition[],
@@ -59,66 +68,14 @@ export async function chatCompletion(
     return runMockImpl(messages, tools);
   }
 
-  const apiKey = getOpenRouterKey();
-  const body: Record<string, unknown> = {
-    model: LLM_MODEL,
-    messages,
-    temperature: 0.2,
-  };
-  if (tools.length > 0) body.tools = tools;
-
-  const res = await fetch(ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
+  // Production path: route through OmniRoute (default) or direct providers.
+  const creds = loadCredentials();
+  const result = await chatWithRouter(messages, tools, {
+    omnirouteUrl: creds.omnirouteUrl,
+    forceDirect: creds.forceDirect,
+    directProviders: creds.directProviders,
+    defaultModel: LLM_MODEL,
   });
-
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => '');
-    throw new Error(`OpenRouter chat ${res.status}: ${errBody.slice(0, 200)}`);
-  }
-  const json = (await res.json()) as OpenRouterChatResponse;
-  const choice = json.choices?.[0];
-  if (!choice) throw new Error('OpenRouter returned no choices');
-
-  const raw = choice.message ?? { role: 'assistant', content: '' };
-  const toolCalls = (raw.tool_calls ?? []).map((tc) => parseToolCall(tc));
-
-  return {
-    message: {
-      role: 'assistant',
-      content: raw.content ?? '',
-      tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-    },
-    finishReason: choice.finish_reason === 'tool_calls' ? 'tool_calls' : 'stop',
-  };
-}
-
-function parseToolCall(tc: RawToolCall): ToolCall {
-  let args: Record<string, unknown> = {};
-  if (tc.function?.arguments) {
-    try { args = JSON.parse(tc.function.arguments); }
-    catch { args = { _raw: tc.function.arguments }; }
-  }
-  return { id: tc.id, name: tc.function?.name ?? '', args };
-}
-
-interface RawToolCall {
-  id: string;
-  type?: string;
-  function?: { name?: string; arguments?: string };
-}
-
-interface OpenRouterChatResponse {
-  choices?: Array<{
-    finish_reason?: string;
-    message?: {
-      role: string;
-      content?: string | null;
-      tool_calls?: RawToolCall[];
-    };
-  }>;
+  lastBackend = result.backend;
+  return result;
 }

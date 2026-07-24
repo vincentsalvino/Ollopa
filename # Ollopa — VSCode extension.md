@@ -345,29 +345,170 @@ After a Review FAIL (and before retry or final fail):
 ## 10. Build Phases & Milestones
 
 ### Phase 1: Scaffold & Sidecar Bridge (2 weeks)
-- [ ] Initialize VS Code extension project with webview panel.
-- [ ] Create React webview with basic chat layout (input, message list).
-- [ ] Implement sidecar spawner (fork) with WebSocket connection.
-- [ ] Establish two‑way communication: extension host ↔ webview ↔ sidecar.
-- [ ] Implement `webviewProvider` and `sidecarManager`.
+- [x] Initialize VS Code extension project with webview panel.
+- [x] Create React webview with basic chat layout (input, message list).
+- [x] Implement sidecar spawner (fork) with WebSocket connection.
+- [x] Establish two‑way communication: extension host ↔ webview ↔ sidecar.
+- [x] Implement `webviewProvider` and `sidecarManager`.
 - **Milestone:** User can type a message in chat and see an echo reply from the sidecar.
 
 ### Phase 2: Memory Core (1 week)
-- [ ] Set up Supabase project with `memories` table schema, RLS, and hybrid search RPC.
-- [ ] Store Supabase credentials in VS Code `SecretStorage`.
-- [ ] Implement sidecar Supabase client and `match_memories` call.
-- [ ] Create local SQLite cache and sync logic.
-- [ ] Implement memory retrieval with offline fallback.
+- [x] Set up Supabase project with `memories` table schema, RLS, and hybrid search RPC.
+- [x] Store Supabase credentials in VS Code `SecretStorage`.
+- [x] Implement sidecar Supabase client and `match_memories` call.
+- [x] Create local SQLite cache and sync logic.
+- [x] Implement memory retrieval with offline fallback.
 - **Milestone:** Sidecar can retrieve relevant patterns for a hardcoded query.
 
 ### Phase 3: Quick Mode Agent (3 weeks)
-- [ ] Define Implementation agent system prompt and LangGraph state machine (single node with tool loop).
-- [ ] Implement tool definitions (search_replace, read_file, execute_safe_bash, run_lint, check_git_diff) as WebSocket proxies.
-- [ ] Implement temp workspace creation in extension host (copy folder).
-- [ ] Wire tool execution: extension host applies edits to temp workspace, runs bash, etc., and returns output.
-- [ ] Stream agent thoughts and tool calls to webview; render `MessageCard` with diff.
-- [ ] Build accept/reject UI for final diff; apply to real workspace on accept.
+- [x] Define Implementation agent system prompt and LangGraph state machine (single node with tool loop).
+- [x] Implement tool definitions (search_replace, read_file, execute_safe_bash, run_lint, check_git_diff) as WebSocket proxies.
+- [x] Implement temp workspace creation in extension host (copy folder).
+- [x] Wire tool execution: extension host applies edits to temp workspace, runs bash, etc., and returns output.
+- [x] Stream agent thoughts and tool calls to webview; render `MessageCard` with diff.
+- [x] Build accept/reject UI for final diff; apply to real workspace on accept.
 - **Milestone:** User can give a simple task like “rename function foo to bar” and see the diff applied after approval.
+
+## Phase 3.5 — OmniRoute Integration + Paid Provider Fallback
+
+**Goal:** Make OmniRoute the default LLM backend, with a direct path for cheap paid keys as fallback.
+
+**Status:** ✅ Shipped (2026-07-24).
+
+### Architecture
+
+```
+Sidecar (chatClient.ts)
+    │
+    ├─[if OmniRoute healthy]───► POST http://localhost:20128/v1/chat/completions
+    │                              model: "auto" (or user-chosen model from OmniRoute's catalog)
+    │
+    └─[if OmniRoute down or
+        user forces direct]────► Minimal Direct Provider Router
+                                    ├─ DeepSeek (api.deepseek.com)
+                                    ├─ OpenRouter (openrouter.ai)
+                                    ├─ Mimo (api.mimo.com)
+                                    └─ (configured via VS Code settings + SecretStorage)
+```
+
+---
+
+### Implementation Checklist
+
+#### 1. OmniRoute Detection & Startup
+- [x] Ping `http://localhost:20128/v1/models` on extension activation
+- [x] Expose `ollopa.omnirouteUrl` setting (default: `http://localhost:20128`)
+- [x] Show warning in webview status bar if OmniRoute is not running
+- [x] Offer to run `npx omniroute` via terminal or child process
+- [x] Add command `ollopa.startOmniRoute` to spawn OmniRoute as a managed process
+
+#### 2. Modify `sidecar/src/llm/chatClient.ts`
+- [x] Replace direct OpenRouter call with a decision function:
+  ```ts
+  if (omnirouteAvailable && !forceDirect) {
+      return callOmniRoute(messages, tools, model);
+  } else {
+      return callDirectProvider(messages, tools, providerConfig);
+  }
+  ```
+- [x] Implement `callOmniRoute` — POST to `<omnirouteUrl>/v1/chat/completions` with model `"auto"`
+- [x] Implement `callDirectProvider` — reads provider list, picks first enabled, calls OpenAI-compatible endpoint
+
+#### 3. Direct Provider Configuration
+- [x] Add `ollopa.directProviders` VS Code setting (array of provider objects):
+  ```json
+  [
+    { "name": "deepseek", "baseUrl": "https://api.deepseek.com/v1", "enabled": true, "keyAlias": "deepseek_key1" },
+    { "name": "openrouter", "baseUrl": "https://openrouter.ai/api/v1", "enabled": true, "keyAlias": "openrouter_main" }
+  ]
+  ```
+- [x] Store actual API keys in SecretStorage under `ollopa.providerKey.<alias>`
+- [x] Extension host reads settings, fetches keys, sends `provider_config` message to sidecar on startup and on change
+- [x] Sidecar maintains ordered provider list and tries each in order until one succeeds
+
+#### 4. UI Updates
+- [x] Add provider status chip in webview (e.g., "OmniRoute · auto" or "Direct · deepseek")
+- [x] Add toggle between OmniRoute and direct mode in the chat input area
+- [ ] Model selector populates from OmniRoute's `/v1/models` in OmniRoute mode
+- [ ] Model selector shows static list of known cheap models in direct mode
+
+#### 5. Fallback Logic
+- [x] Auto-fallback to direct providers if OmniRoute is configured but unreachable
+- [x] Notify UI when fallback occurs
+- [x] Return a clear error to the user if both OmniRoute and direct providers fail
+
+---
+
+### Acceptance Criteria
+- [x] With OmniRoute running, all Quick Mode tasks route through it using model `auto`
+- [ ] User can select any model from OmniRoute's catalog
+- [x] User can add DeepSeek / OpenRouter / Mimo keys in VS Code settings and use them in direct mode
+- [x] Switching between OmniRoute and direct mode works instantly
+- [x] When OmniRoute stops, tasks automatically fall back to the first available direct provider
+- [x] Integration does not break the existing Phase 3 test suite
+
+
+## Phase 3.6 — Skills & Plugins Ecosystem
+
+**Goal:** Add an open-source plugin system with tools, slash commands, hooks, and custom LLM providers — integrated into Ollopa.
+
+### Plugin Locations
+- `<workspace>/.ollopa/plugins/*.js` — project-level
+- `~/.ollopa/plugins/*.js` — global, user-level
+
+### What a Plugin Can Do
+| Type | Description |
+|------|-------------|
+| **Tools** | Expose new agent-callable functions (e.g., `fetch_jira_issue`, `run_migrations`) |
+| **Slash Commands** | User-typed commands like `/deploy staging` handled by the plugin |
+| **Hooks** | `onBeforeTool` / `onAfterTool` callbacks for pre/post tool execution |
+| **Providers** | Register new LLM backends in the direct provider list |
+
+---
+
+### Implementation Checklist
+
+#### 1. Plugin Loader (`sidecar/src/plugins/loader.ts`)
+- [ ] Scan plugin directories and `require()` each file on startup
+- [ ] Validate plugin shape against `OllopaPlugin` interface
+- [ ] Register exports into registry: `tools`, `commands`, `hooks`, `providers`
+- [ ] Add `chokidar` watcher for hot reload on file changes
+- [ ] Reload plugins on the fly without sidecar restart
+
+#### 2. Integration with Agent
+- [ ] Merge plugin tools with built-in tools when building the system prompt
+- [ ] Route LLM tool calls to `plugin.executeTool()` if the tool belongs to a plugin
+- [ ] Provide a sandboxed context to plugins (temp workspace, memory access)
+- [ ] Extend WebSocket protocol: `chat:command { command, args }`
+- [ ] Route slash commands to the correct plugin and return result as a message card
+
+#### 3. Sandboxing (MVP)
+- [ ] Restrict plugin file access to temp workspace or plugin's own directory
+- [ ] Log a warning for plugins requesting network access
+- [ ] Add `network` permission field to plugin manifest
+- [ ] (Future) Move plugins to `worker_threads` or a dedicated VM sandbox
+
+#### 4. UI
+- [ ] Show available slash commands in a webview help menu
+- [ ] (Future) Support plugin-registered custom settings UI components
+
+#### 5. Example Plugins (ship with Ollopa)
+- [ ] `format-on-save.js` — hooks `afterTool` on `search_replace` and runs Prettier
+- [ ] `commit-message.js` — adds `/commit` command that generates a commit message from current diff
+- [ ] `groq-provider.js` — registers Groq as a new direct provider
+
+#### 6. OmniRoute MCP Bridge Plugin
+- [ ] Write a plugin that connects to OmniRoute's MCP server
+- [ ] Expose OmniRoute's 104 tools to the agent via the plugin tool registry
+
+---
+
+### Acceptance Criteria
+- [ ] Creating `.ollopa/plugins/hello.js` with a `/hello` export works after restart or hot reload
+- [ ] A plugin tool `count_lines` can be called by the Implementation agent during a Quick Mode task
+- [ ] Hooks fire correctly (e.g., `search_replace` triggers a formatting hook)
+- [ ] Sidecar does not crash if a plugin throws an error
+- [ ] Modifying a plugin file while the sidecar runs updates the registry within seconds
 
 ### Phase 4: Task Mode – Planning & Contract (2 weeks)
 - [ ] Architect agent: prompt, ability to call `define_contract`.

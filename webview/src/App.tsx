@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Inbound, Outbound, VsCodeApi } from './global';
 
 export interface Msg {
@@ -23,6 +23,30 @@ export interface MemoryHit {
   avoid_when: string[];
 }
 
+interface ToolCallView {
+  taskId: string;
+  toolName: string;
+  toolArgs: unknown;
+  output?: { kind: 'terminal' | 'diff' | 'file' | 'error'; output: string };
+}
+
+interface TaskView {
+  taskId: string;
+  status: 'running' | 'finished' | 'errored';
+  thoughts: string[];
+  toolCalls: ToolCallView[];
+  finalDiff?: string;
+  errorMessage?: string;
+  backend?: { kind: 'omniroute' | 'direct'; provider?: string; model: string };
+}
+
+interface ProviderStatus {
+  forceDirect: boolean;
+  omnirouteUp: boolean;
+  omnirouteUrl: string | null;
+  providerCount: number;
+}
+
 interface Props {
   vscode: VsCodeApi;
   initialMsgs: Msg[];
@@ -35,13 +59,18 @@ const SAMPLE_QUERY = {
   taskId: 'phase2-smoke',
 } as const;
 
+type Mode = 'quick' | 'task';
+
 export function App({ vscode, initialMsgs }: Props): JSX.Element {
   const [msgs, setMsgs] = useState<Msg[]>(initialMsgs);
   const [status, setStatus] = useState<'connecting' | 'ready' | 'closed' | 'error'>('connecting');
   const [text, setText] = useState('');
+  const [mode, setMode] = useState<Mode>('quick');
   const [memories, setMemories] = useState<MemoryHit[]>([]);
   const [memSource, setMemSource] = useState<'cloud' | 'cache' | null>(null);
   const [memLoading, setMemLoading] = useState(false);
+  const [tasks, setTasks] = useState<TaskView[]>([]);
+  const [provider, setProvider] = useState<ProviderStatus>({ forceDirect: false, omnirouteUp: false, omnirouteUrl: null, providerCount: 0 });
   const idRef = useRef(0);
 
   useEffect(() => {
@@ -62,6 +91,57 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
           setMemLoading(false);
           push('system', `[memory] error: ${detail.message}`);
           break;
+        case 'task_started':
+          upsertTask(detail.taskId, (t) => ({ ...t, status: 'running', thoughts: [], toolCalls: [] }));
+          break;
+        case 'agent_thought':
+          upsertTask(detail.taskId, (t) => ({ ...t, thoughts: [...t.thoughts, detail.message] }));
+          break;
+        case 'tool_call':
+          upsertTask(detail.taskId, (t) => ({
+            ...t,
+            toolCalls: [...t.toolCalls, { taskId: detail.taskId, toolName: detail.toolName, toolArgs: detail.toolArgs }],
+          }));
+          break;
+        case 'tool_output':
+          upsertTask(detail.taskId, (t) => {
+            const calls = t.toolCalls.slice();
+            for (let i = calls.length - 1; i >= 0; i--) {
+              if (calls[i].toolName === detail.toolName && !calls[i].output) {
+                calls[i] = { ...calls[i], output: { kind: detail.kind, output: detail.output } };
+                break;
+              }
+            }
+            return { ...t, toolCalls: calls };
+          });
+          break;
+        case 'task_final_diff':
+          upsertTask(detail.taskId, (t) => ({ ...t, finalDiff: detail.diff }));
+          break;
+        case 'task_error':
+          upsertTask(detail.taskId, (t) => ({ ...t, status: 'errored', errorMessage: detail.message }));
+          push('system', `[task ${detail.taskId.slice(0, 8)}] error: ${detail.message}`);
+          break;
+        case 'task_complete':
+          upsertTask(detail.taskId, (t) => ({ ...t, status: t.status === 'errored' ? t.status : 'finished' }));
+          break;
+        case 'task_applied':
+          push('system', `[task ${detail.taskId.slice(0, 8)}] applied: ${detail.applied.join(', ') || '(no files)'}`);
+          break;
+        case 'task_rejected':
+          push('system', `[task ${detail.taskId.slice(0, 8)}] rejected and discarded`);
+          break;
+        case 'provider_status':
+          setProvider({
+            forceDirect: detail.forceDirect,
+            omnirouteUp: detail.omnirouteUp,
+            omnirouteUrl: detail.omnirouteUrl,
+            providerCount: detail.providerCount,
+          });
+          break;
+        case 'task_backend':
+          upsertTask(detail.taskId, (t) => ({ ...t, backend: detail.backend }));
+          break;
       }
     };
     window.addEventListener('ollopa:inbound', onInbound as EventListener);
@@ -72,13 +152,50 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
     setMsgs((prev) => [...prev, { id: `m${idRef.current++}`, role, text: t, ts: Date.now() }]);
   };
 
+  function upsertTask(taskId: string, mut: (t: TaskView) => TaskView): void {
+    setTasks((prev) => {
+      const idx = prev.findIndex((t) => t.taskId === taskId);
+      if (idx === -1) {
+        return [...prev, mut({ taskId, status: 'running', thoughts: [], toolCalls: [] })];
+      }
+      const copy = prev.slice();
+      copy[idx] = mut(prev[idx]);
+      return copy;
+    });
+  }
+
   const send = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
     push('user', trimmed);
-    vscode.postMessage({ type: 'chat:send', text: trimmed } satisfies Outbound);
+    if (mode === 'task') {
+      push('system', '[task mode] not implemented in this build');
+      return;
+    }
+    vscode.postMessage({ type: 'chat:send', text: trimmed, mode: 'quick' } satisfies Outbound);
     setText('');
   };
+
+  const acceptTask = (taskId: string) => {
+    vscode.postMessage({ type: 'task_accept', taskId } satisfies Outbound);
+  };
+  const rejectTask = (taskId: string) => {
+    vscode.postMessage({ type: 'task_reject', taskId } satisfies Outbound);
+  };
+
+  const toggleForceDirect = () => {
+    const next = !provider.forceDirect;
+    setProvider({ ...provider, forceDirect: next });
+    vscode.postMessage({ type: 'set_provider_mode', forceDirect: next } satisfies Outbound);
+  };
+
+  const providerChip = provider.forceDirect
+    ? `Direct · ${provider.providerCount} provider${provider.providerCount === 1 ? '' : 's'}`
+    : provider.omnirouteUp
+      ? 'OmniRoute · auto'
+      : provider.omnirouteUrl
+        ? 'OmniRoute · down (fallback)'
+        : 'No OmniRoute configured';
 
   const runMemoryTest = () => {
     setMemLoading(true);
@@ -92,15 +209,26 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
     <div className="app">
       <header className="app__header">
         <span className="app__title">Ollopa</span>
+        <span
+          className={`app__chip app__chip--${provider.forceDirect ? 'direct' : provider.omnirouteUp ? 'omniroute' : 'down'}`}
+          title={provider.omnirouteUrl ?? 'No OmniRoute URL configured'}
+        >
+          {providerChip}
+        </span>
         <span className={`app__status app__status--${status}`}>{status}</span>
       </header>
       <main className="app__stream" aria-live="polite">
-        {msgs.length === 0 && <p className="app__empty">Type a message and press Enter — the sidecar will echo it back.</p>}
+        {msgs.length === 0 && tasks.length === 0 && (
+          <p className="app__empty">Type a task and press Enter. The Implementation agent will work in a temp copy of your workspace; review the diff before applying.</p>
+        )}
         {msgs.map((m) => (
           <article key={m.id} className={`msg msg--${m.role}`}>
             <header className="msg__head">{m.role}</header>
             <p className="msg__body">{m.text}</p>
           </article>
+        ))}
+        {tasks.map((t) => (
+          <TaskCard key={t.taskId} task={t} onAccept={acceptTask} onReject={rejectTask} />
         ))}
         {memories.length > 0 && (
           <section className="mem">
@@ -115,7 +243,7 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
                 </header>
                 <p className="mem__body">{m.content}</p>
                 {m.tags.length > 0 && (
-                  <p className="mem__tags">{m.tags.map((t) => `#${t}`).join(' ')}</p>
+                  <p className="mem__tags">{m.tags.map((tg) => `#${tg}`).join(' ')}</p>
                 )}
               </article>
             ))}
@@ -129,11 +257,36 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
           send();
         }}
       >
+        <div className="mode">
+          <button
+            type="button"
+            className={`mode__btn ${mode === 'quick' ? 'mode__btn--active' : ''}`}
+            onClick={() => setMode('quick')}
+          >
+            Quick
+          </button>
+          <button
+            type="button"
+            className={`mode__btn ${mode === 'task' ? 'mode__btn--active' : ''}`}
+            onClick={() => setMode('task')}
+            title="Task Mode is implemented in Phase 4"
+          >
+            Task
+          </button>
+          <button
+            type="button"
+            className={`mode__btn ${provider.forceDirect ? 'mode__btn--active' : ''}`}
+            onClick={toggleForceDirect}
+            title="Toggle OmniRoute vs direct providers"
+          >
+            {provider.forceDirect ? 'Direct' : 'OmniRoute'}
+          </button>
+        </div>
         <input
-          aria-label="Message"
+          aria-label="Task"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Say something…"
+          placeholder="e.g. rename function foo to bar in src/utils.ts"
           autoFocus
         />
         <button type="submit" disabled={!text.trim()}>Send</button>
@@ -143,4 +296,83 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
       </form>
     </div>
   );
+}
+
+function TaskCard({ task, onAccept, onReject }: { task: TaskView; onAccept: (id: string) => void; onReject: (id: string) => void }): JSX.Element {
+  return (
+    <article className={`task task--${task.status}`}>
+      <header className="task__head">
+        <span>Implementation · <code>{task.taskId.slice(0, 8)}</code></span>
+        {task.backend && (
+          <span className={`task__backend task__backend--${task.backend.kind}`}>
+            {task.backend.kind === 'omniroute'
+              ? `OmniRoute · ${task.backend.model}`
+              : `Direct · ${task.backend.provider ?? '?'} · ${task.backend.model}`}
+          </span>
+        )}
+        <span className={`task__status task__status--${task.status}`}>{task.status}</span>
+      </header>
+      {task.thoughts.map((t, i) => (
+        <p key={i} className="task__thought">{t}</p>
+      ))}
+      {task.toolCalls.map((tc, i) => (
+        <ToolCallCard key={i} call={tc} />
+      ))}
+      {task.finalDiff && <DiffCard diff={task.finalDiff} taskId={task.taskId} onAccept={onAccept} onReject={onReject} />}
+      {task.errorMessage && <p className="task__error">{task.errorMessage}</p>}
+    </article>
+  );
+}
+
+function ToolCallCard({ call }: { call: ToolCallView }): JSX.Element {
+  const [open, setOpen] = useState(true);
+  return (
+    <details className="tool" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="tool__head">
+        <span className="tool__name">{call.toolName}</span>
+        {!call.output && <span className="tool__pending">…</span>}
+      </summary>
+      <div className="tool__body">
+        <div className="tool__args">
+          <header>args</header>
+          <pre>{JSON.stringify(call.toolArgs, null, 2)}</pre>
+        </div>
+        {call.output && (
+          <div className={`tool__out tool__out--${call.output.kind}`}>
+            <header>{call.output.kind}</header>
+            <pre>{call.output.output}</pre>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function DiffCard({ diff, taskId, onAccept, onReject }: { diff: string; taskId: string; onAccept: (id: string) => void; onReject: (id: string) => void }): JSX.Element {
+  const lines = useMemo(() => diff.split('\n'), [diff]);
+  return (
+    <div className="diff">
+      <header className="diff__head">
+        <span>Final diff</span>
+        <span className="diff__actions">
+          <button type="button" className="diff__btn diff__btn--accept" onClick={() => onAccept(taskId)}>Apply</button>
+          <button type="button" className="diff__btn diff__btn--reject" onClick={() => onReject(taskId)}>Reject</button>
+        </span>
+      </header>
+      <pre className="diff__body">
+        {lines.map((line, i) => (
+          <DiffLine key={i} line={line} />
+        ))}
+      </pre>
+    </div>
+  );
+}
+
+function DiffLine({ line }: { line: string }): JSX.Element {
+  let cls = 'diff__line';
+  if (line.startsWith('+') && !line.startsWith('+++')) cls += ' diff__line--add';
+  else if (line.startsWith('-') && !line.startsWith('---')) cls += ' diff__line--del';
+  else if (line.startsWith('@@')) cls += ' diff__line--hunk';
+  else if (line.startsWith('diff ') || line.startsWith('index ')) cls += ' diff__line--file';
+  return <div className={cls}>{line || ' '}</div>;
 }

@@ -3,7 +3,8 @@ import { Readable } from 'node:stream';
 import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import WebSocket from 'ws';
-import type { SidecarCredentials } from './secrets';
+import type { ProviderConfig, SidecarCredentials } from './secrets';
+import { serialiseDirectProviders } from './secrets';
 
 export type SidecarEvent =
   | { type: 'status'; status: 'ready' | 'closed' | 'error'; message?: string }
@@ -37,10 +38,12 @@ export class SidecarManager {
   private bootRejecter: ((err: Error) => void) | null = null;
   private readonly extensionPath: string;
   private readonly credentials: SidecarCredentials | null;
+  private readonly providerConfig: ProviderConfig | null;
 
-  constructor(extensionPath: string, credentials: SidecarCredentials | null) {
+  constructor(extensionPath: string, credentials: SidecarCredentials | null, providerConfig: ProviderConfig | null = null) {
     this.extensionPath = extensionPath;
     this.credentials = credentials;
+    this.providerConfig = providerConfig;
   }
 
   on(listener: Listener): () => void {
@@ -57,6 +60,13 @@ export class SidecarManager {
       throw new Error('Sidecar not connected');
     }
     this.ws.send(JSON.stringify(payload));
+  }
+
+  /** Convenience for sending a tool_output reply back to the sidecar. */
+  sendToolOutput(taskId: string, toolName: string, output: string, kind: 'terminal' | 'diff' | 'file' | 'error'): void {
+    // The sidecar protocol uses `kind_kind` to avoid colliding with the
+    // outer `kind: 'tool_output'` discriminator.
+    this.send({ kind: 'tool_output', taskId, toolName, output, kind_kind: kind });
   }
 
   async start(): Promise<void> {
@@ -102,6 +112,15 @@ export class SidecarManager {
       if (this.credentials.openRouterKey) {
         env.OPENROUTER_API_KEY = this.credentials.openRouterKey;
       }
+    }
+    if (this.providerConfig) {
+      if (this.providerConfig.omnirouteUrl) {
+        env.OLLOPA_OMNIROUTE_URL = this.providerConfig.omnirouteUrl;
+      }
+      if (this.providerConfig.forceDirect) {
+        env.OLLOPA_FORCE_DIRECT = '1';
+      }
+      env.OLLOPA_DIRECT_PROVIDERS = serialiseDirectProviders(this.providerConfig.directProviders);
     }
 
     const proc = spawn(bin, args, {

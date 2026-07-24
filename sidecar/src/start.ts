@@ -27,6 +27,8 @@ import { initLocalCache } from './memory/localCache';
 import { retrieveMemory } from './memory/memoryService';
 import { runQuickMode, type AgentEvent } from './agents/implementation';
 import { ToolAwaiter, type ToolOutputPayload } from './agents/toolAwaiter';
+import { pingOmniRoute } from './llm/providerRouter';
+import { LLM_MODEL } from './llm/llmConfig';
 
 const HOST = '127.0.0.1';
 
@@ -145,16 +147,19 @@ function startWsServer(port: number, awaiter: ToolAwaiter): WebSocketServer {
       }
       if (isQuickStart(payload)) {
         // Fire-and-forget. The agent will stream events back over `ws`.
-        const ctx = {
-          taskId: payload.taskId,
-          send: (event: AgentEvent) => {
-            try { ws.send(JSON.stringify(event)); }
-            catch (err) {
-              console.warn(`[sidecar] send failed for task ${payload.taskId}:`, (err as Error).message);
-            }
-          },
-          awaiter,
+        const send = (event: AgentEvent) => {
+          try { ws.send(JSON.stringify(event)); }
+          catch (err) {
+            console.warn(`[sidecar] send failed for task ${payload.taskId}:`, (err as Error).message);
+          }
         };
+        const ctx = { taskId: payload.taskId, send, awaiter };
+
+        // Decide the backend up-front so the UI can show a chip immediately.
+        // The router does the same check on every call — this is purely for
+        // the user-facing label.
+        void announceBackend(payload.taskId, send).catch(() => { /* best-effort */ });
+
         runQuickMode(payload.text, ctx).catch((err) => {
           console.error(`[sidecar] runQuickMode crashed:`, err);
           try {
@@ -172,6 +177,23 @@ function startWsServer(port: number, awaiter: ToolAwaiter): WebSocketServer {
   });
 
   return wss;
+}
+
+async function announceBackend(taskId: string, send: (e: AgentEvent) => void): Promise<void> {
+  const creds = loadCredentials();
+  let backend: { kind: 'omniroute' | 'direct'; provider?: string; model: string } | null = null;
+  if (!creds.forceDirect && creds.omnirouteUrl && await pingOmniRoute(creds.omnirouteUrl)) {
+    backend = { kind: 'omniroute', model: 'auto' };
+  } else {
+    const first = creds.directProviders.find((p) => p.enabled && p.apiKey);
+    if (first) {
+      backend = { kind: 'direct', provider: first.name, model: first.model ?? LLM_MODEL };
+    }
+  }
+  if (!backend) return; // Router will throw a clear error on first call.
+  // Cast: `task_backend` is a side-channel event the extension webview knows
+  // about. The closed `AgentEvent` union is for the agent loop; this is a UI hint.
+  (send as (e: unknown) => void)({ kind: 'task_backend', taskId, backend });
 }
 
 async function main(): Promise<void> {

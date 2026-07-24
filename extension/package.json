@@ -16,6 +16,34 @@
     "watch": "tsc -p tsconfig.json --watch"
   },
   "contributes": {
+    "configuration": {
+      "title": "Ollopa",
+      "properties": {
+        "ollopa.workspaceRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the workspace the agent edits. If empty, uses the first opened folder."
+        },
+        "ollopa.omnirouteUrl": {
+          "type": "string",
+          "default": "http://localhost:20128",
+          "description": "Base URL for the OmniRoute LLM router. Empty disables OmniRoute."
+        },
+        "ollopa.forceDirect": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip OmniRoute and go straight to the first available direct provider."
+        },
+        "ollopa.directProviders": {
+          "type": "array",
+          "default": [
+            { "name": "openrouter", "baseUrl": "https://openrouter.ai/api/v1", "enabled": true, "keyAlias": "__openrouter__" },
+            { "name": "deepseek", "baseUrl": "https://api.deepseek.com/v1", "enabled": false, "keyAlias": "deepseek_key1" }
+          ],
+          "description": "Direct OpenAI-compatible providers tried in order when OmniRoute is unavailable or direct mode is forced. API keys are stored under ollopa.providerKey.<keyAlias> in SecretStorage. Use keyAlias '__openrouter__' to reuse the global OpenRouter key."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -42,6 +70,14 @@
       {
         "command": "ollopa.configure",
         "title": "Ollopa: Configure"
+      },
+      {
+        "command": "ollopa.startOmniRoute",
+        "title": "Ollopa: Start OmniRoute"
+      },
+      {
+        "command": "ollopa.addProviderKey",
+        "title": "Ollopa: Add Provider API Key"
       }
     ]
   },

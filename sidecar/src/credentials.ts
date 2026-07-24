@@ -26,10 +26,15 @@ function ensureDotenv(): void {
   dotenvLoaded = true;
 }
 
+import { parseDirectProvidersEnv, type DirectProviderConfig } from './llm/providerRouter';
+
 export interface Credentials {
   supabaseUrl: string | null;
   supabaseServiceKey: string | null;
   openRouterKey: string | null;
+  omnirouteUrl: string | null;
+  forceDirect: boolean;
+  directProviders: DirectProviderConfig[];
 }
 
 export function loadCredentials(): Credentials {
@@ -38,12 +43,15 @@ export function loadCredentials(): Credentials {
     supabaseUrl: process.env.SUPABASE_URL ?? null,
     supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY ?? null,
     openRouterKey: process.env.OPENROUTER_API_KEY ?? null,
+    omnirouteUrl: process.env.OLLOPA_OMNIROUTE_URL?.trim() || null,
+    forceDirect: process.env.OLLOPA_FORCE_DIRECT === '1',
+    directProviders: parseDirectProvidersEnv(process.env.OLLOPA_DIRECT_PROVIDERS),
   };
 }
 
 export function hasSupabase(
   c: Credentials,
-): c is { supabaseUrl: string; supabaseServiceKey: string; openRouterKey: string | null } {
+): c is Credentials & { supabaseUrl: string; supabaseServiceKey: string } {
   return c.supabaseUrl !== null && c.supabaseServiceKey !== null;
 }
 

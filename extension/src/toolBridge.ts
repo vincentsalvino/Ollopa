@@ -7,8 +7,16 @@
  * sending the result back to the sidecar.
  */
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { isAbsolute, join, normalize, resolve } from 'node:path';
 import { createTwoFilesPatch } from 'diff';
-import { getContext, readTempFile, writeTempFile, type TempContext } from './tempWorkspace';
+import {
+  getContext,
+  markChanged,
+  readTempFile,
+  writeTempFile,
+  type TempContext,
+} from './tempWorkspace';
 import { isSecretPath } from './filePolicy';
 import { verifyCommand, getWhitelist } from './commandWhitelist';
 
@@ -36,11 +44,11 @@ export async function execute(taskId: string, call: ToolCall): Promise<ToolOutpu
   }
 
   switch (call.toolName) {
-    case 'search_replace': return searchReplace(ctx, call.args);
-    case 'read_file':      return readFileTool(ctx, call.args);
+    case 'search_replace':    return searchReplace(ctx, call.args);
+    case 'read_file':         return readFileTool(ctx, call.args);
     case 'execute_safe_bash': return safeBash(ctx, call.args);
-    case 'run_lint':       return runLint(ctx, call.args);
-    case 'check_git_diff': return checkDiff(ctx);
+    case 'run_lint':          return runLint(ctx, call.args);
+    case 'check_git_diff':    return checkDiff(ctx);
     default:
       return { toolName: call.toolName, output: `unknown tool: ${call.toolName}`, kind: 'error' };
   }
@@ -77,7 +85,6 @@ async function searchReplace(ctx: TempContext, args: Record<string, unknown>): P
   }
   const updated = current.replace(oldStr, newStr);
   await writeTempFile(ctx, filePath, updated);
-  const { markChanged } = await import('./tempWorkspace');
   markChanged(ctx.taskId, filePath);
   const patch = createTwoFilesPatch(`a/${filePath}`, `b/${filePath}`, current, updated, undefined, undefined, { context: 3 });
   return { toolName: 'search_replace', output: patch, kind: 'diff' };
@@ -157,7 +164,9 @@ async function safeBash(ctx: TempContext, args: Record<string, unknown>): Promis
 // ---------- run_lint ----------
 
 async function runLint(ctx: TempContext, args: Record<string, unknown>): Promise<ToolOutput> {
-  const filePaths = Array.isArray(args.filePaths) ? args.filePaths.filter((p): p is string => typeof p === 'string') : [];
+  const filePaths = Array.isArray(args.filePaths)
+    ? args.filePaths.filter((p): p is string => typeof p === 'string')
+    : [];
   if (filePaths.length === 0) {
     return { toolName: 'run_lint', output: 'no filePaths provided', kind: 'error' };
   }
@@ -190,8 +199,6 @@ async function runLint(ctx: TempContext, args: Record<string, unknown>): Promise
 // ---------- check_git_diff ----------
 
 async function checkDiff(ctx: TempContext): Promise<ToolOutput> {
-  const { markChanged, readTempFile } = await import('./tempWorkspace');
-  // Walk the temp tree, diff against the real for changed files we tracked.
   const diffs: string[] = [];
   for (const rel of ctx.changedFiles) {
     const original = await safeReadReal(ctx, rel);
@@ -207,21 +214,17 @@ async function checkDiff(ctx: TempContext): Promise<ToolOutput> {
     return { toolName: 'check_git_diff', output: '(no changes recorded)', kind: 'terminal' };
   }
   return { toolName: 'check_git_diff', output: diffs.join('\n'), kind: 'diff' };
-  // Suppress unused import warning under strict mode (we use markChanged
-  // through a side-effect call inside searchReplace; keeping the import here
-  // would be cleaner — but we already imported it lazily above).
-  void markChanged;
 }
 
 async function safeReadReal(ctx: TempContext, rel: string): Promise<string | null> {
-  const { readFile } = await import('node:fs/promises');
-  const { resolve, join, normalize } = await import('node:path');
   const norm = normalize(rel);
-  if (norm.startsWith('..')) return null;
+  if (isAbsolute(norm) || norm.startsWith('..')) return null;
   const abs = join(ctx.realPath, norm);
-  // Defensive: make sure abs is still inside realPath.
-  const real = resolve(ctx.realPath);
-  if (!resolve(abs).startsWith(real)) return null;
+  // Defensive: confirm the resolved path is still inside realPath.
+  if (!resolve(abs).startsWith(resolve(ctx.realPath) + '\\') &&
+      !resolve(abs).startsWith(resolve(ctx.realPath) + '/')) {
+    return null;
+  }
   try { return await readFile(abs, 'utf8'); }
   catch { return null; }
 }
