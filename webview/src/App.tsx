@@ -71,6 +71,8 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
   const [memLoading, setMemLoading] = useState(false);
   const [tasks, setTasks] = useState<TaskView[]>([]);
   const [provider, setProvider] = useState<ProviderStatus>({ forceDirect: false, omnirouteUp: false, omnirouteUrl: null, providerCount: 0 });
+  const [commands, setCommands] = useState<Array<{ name: string; description: string }>>([]);
+  const [showHelp, setShowHelp] = useState(false);
   const idRef = useRef(0);
 
   useEffect(() => {
@@ -142,6 +144,12 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
         case 'task_backend':
           upsertTask(detail.taskId, (t) => ({ ...t, backend: detail.backend }));
           break;
+        case 'command_list':
+          setCommands(detail.commands);
+          break;
+        case 'command_result':
+          push('system', `[${detail.command}] ${detail.output}`);
+          break;
       }
     };
     window.addEventListener('ollopa:inbound', onInbound as EventListener);
@@ -168,12 +176,26 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
     const trimmed = text.trim();
     if (!trimmed) return;
     push('user', trimmed);
+    if (trimmed.startsWith('/')) {
+      // Slash command: parse `/name args…` and dispatch.
+      const space = trimmed.indexOf(' ');
+      const cmd = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space);
+      const args = space === -1 ? '' : trimmed.slice(space + 1);
+      vscode.postMessage({ type: 'chat:command', command: cmd, args } satisfies Outbound);
+      setText('');
+      return;
+    }
     if (mode === 'task') {
       push('system', '[task mode] not implemented in this build');
       return;
     }
     vscode.postMessage({ type: 'chat:send', text: trimmed, mode: 'quick' } satisfies Outbound);
     setText('');
+  };
+
+  const refreshCommands = () => {
+    vscode.postMessage({ type: 'list_commands' } satisfies Outbound);
+    setShowHelp(true);
   };
 
   const acceptTask = (taskId: string) => {
@@ -218,8 +240,24 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
         <span className={`app__status app__status--${status}`}>{status}</span>
       </header>
       <main className="app__stream" aria-live="polite">
-        {msgs.length === 0 && tasks.length === 0 && (
-          <p className="app__empty">Type a task and press Enter. The Implementation agent will work in a temp copy of your workspace; review the diff before applying.</p>
+        {msgs.length === 0 && tasks.length === 0 && !showHelp && (
+          <p className="app__empty">Type a task and press Enter. The Implementation agent will work in a temp copy of your workspace; review the diff before applying. Type <code>/</code> for slash commands.</p>
+        )}
+        {showHelp && (
+          <section className="help">
+            <header className="help__head">
+              <span>Slash commands</span>
+              <button type="button" onClick={() => setShowHelp(false)}>×</button>
+            </header>
+            {commands.length === 0
+              ? <p className="help__empty">No plugins loaded. Drop a <code>.js</code> file into <code>.ollopa/plugins/</code> or <code>~/.ollopa/plugins/</code> and restart the sidecar.</p>
+              : commands.map((c) => (
+                  <div key={c.name} className="help__cmd">
+                    <code>/{c.name}</code>
+                    <span>{c.description}</span>
+                  </div>
+                ))}
+          </section>
         )}
         {msgs.map((m) => (
           <article key={m.id} className={`msg msg--${m.role}`}>
@@ -292,6 +330,9 @@ export function App({ vscode, initialMsgs }: Props): JSX.Element {
         <button type="submit" disabled={!text.trim()}>Send</button>
         <button type="button" onClick={runMemoryTest} disabled={memLoading || status !== 'ready'}>
           {memLoading ? 'Querying…' : 'Test memory'}
+        </button>
+        <button type="button" onClick={refreshCommands} title="List installed slash commands">
+          /
         </button>
       </form>
     </div>

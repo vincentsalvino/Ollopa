@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import WebSocket from 'ws';
+import * as vscode from 'vscode';
 import type { ProviderConfig, SidecarCredentials } from './secrets';
 import { serialiseDirectProviders } from './secrets';
 
@@ -106,6 +107,15 @@ export class SidecarManager {
       ...process.env,
       OLLOPA_SIDECAR: '1',
     };
+    // Workspace root is the source of the project plugin dir. The sidecar
+    // also uses it as a fallback for plugin loading when no task is running.
+    const wsRoot = vscode.workspace.getConfiguration('ollopa').get<string>('workspaceRoot');
+    if (wsRoot && wsRoot.trim().length > 0) {
+      env.OLLOPA_WORKSPACE_ROOT = wsRoot.trim();
+    } else {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      if (folder) env.OLLOPA_WORKSPACE_ROOT = folder.uri.fsPath;
+    }
     if (this.credentials) {
       env.SUPABASE_URL = this.credentials.supabaseUrl;
       env.SUPABASE_SERVICE_KEY = this.credentials.supabaseServiceKey;

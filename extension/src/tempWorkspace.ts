@@ -30,6 +30,11 @@ export function allContexts(): TempContext[] {
   return Array.from(contexts.values());
 }
 
+/** Alias of `allContexts` for callers that prefer the "list" verb. */
+export function listContexts(): TempContext[] {
+  return allContexts();
+}
+
 export async function create(realPath: string, taskId: string): Promise<TempContext> {
   if (contexts.has(taskId)) {
     throw new Error(`temp workspace already exists for taskId ${taskId}`);

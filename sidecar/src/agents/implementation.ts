@@ -24,6 +24,7 @@ import { TOOL_DEFS } from '../tools/definitions';
 import { retrieveMemory } from '../memory/memoryService';
 import { ToolAwaiter, type ToolOutputPayload } from './toolAwaiter';
 import { buildUnifiedDiff, replayEdits } from './diffSynth';
+import { getRegistry, runHooks, type PluginContext } from '../plugins/loader';
 
 export interface SearchReplaceEdit {
   filePath: string;
@@ -35,6 +36,7 @@ export interface AgentEvent {
   kind:
     | 'agent_thought'
     | 'tool_call'
+    | 'tool_output'
     | 'task_final_diff'
     | 'task_error'
     | 'task_complete';
@@ -44,6 +46,8 @@ export interface AgentEvent {
   agent?: 'implementation';
   toolName?: string;
   toolArgs?: Record<string, unknown>;
+  output?: string;
+  outputKind?: 'terminal' | 'diff' | 'file' | 'error';
   diff?: string;
   error?: string;
 }
@@ -52,7 +56,18 @@ export interface AgentContext {
   taskId: string;
   send: (event: AgentEvent) => void;
   awaiter: ToolAwaiter;
+  /** Path to the temp workspace for this task, or null if not a file task. */
+  tempWorkspace: string | null;
 }
+
+/** Names of tools the extension host knows how to execute. */
+const BUILTIN_TOOLS = new Set([
+  'search_replace',
+  'read_file',
+  'execute_safe_bash',
+  'run_lint',
+  'check_git_diff',
+]);
 
 /**
  * Run the agent to completion. Resolves with the list of search_replace
@@ -96,9 +111,18 @@ export async function runQuickMode(
         memoryBlock ? `\nRelevant memories from prior tasks:\n${memoryBlock}` : '',
       ]
         .filter(Boolean)
-        .join('\n'),
+      .join('\n'),
     },
     { role: 'user', content: task },
+  ];
+
+  // Merge plugin tool definitions into what the model sees.
+  const toolDefs = [
+    ...TOOL_DEFS,
+    ...Array.from(getRegistry().tools.values()).map((e) => ({
+      type: 'function' as const,
+      function: e.tool.definition,
+    })),
   ];
 
   const edits: SearchReplaceEdit[] = [];
@@ -108,7 +132,7 @@ export async function runQuickMode(
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     let result: ChatResult;
     try {
-      result = await chatCompletion(messages, TOOL_DEFS);
+      result = await chatCompletion(messages, toolDefs);
     } catch (err) {
       const msg = (err as Error).message;
       ctx.send({ kind: 'task_error', taskId: ctx.taskId, error: msg });
@@ -135,28 +159,45 @@ export async function runQuickMode(
         toolArgs: tc.args,
       });
 
-      // Remember the edit if this is a search_replace.
-      if (tc.name === 'search_replace') {
-        const a = tc.args as Partial<SearchReplaceEdit>;
-        if (typeof a.filePath === 'string' && typeof a.old_str === 'string' && typeof a.new_str === 'string') {
-          edits.push({ filePath: a.filePath, old_str: a.old_str, new_str: a.new_str });
-        }
-      }
-      // Cache the file's original content if this is a read_file.
-      if (tc.name === 'read_file') {
-        const a = tc.args as { filePath?: string };
-        if (a.filePath && !fileSnapshots.has(a.filePath)) {
-          // The actual content comes back in the tool_output; we patch it
-          // into the snapshot map there (the bridge tells us).
+      // Fire before-hook for builtin tools. Plugin tools get their own ctx.
+      if (BUILTIN_TOOLS.has(tc.name)) {
+        await runHooks('before', { toolName: tc.name, args: tc.args });
+
+        // Remember the edit if this is a search_replace.
+        if (tc.name === 'search_replace') {
+          const a = tc.args as Partial<SearchReplaceEdit>;
+          if (typeof a.filePath === 'string' && typeof a.old_str === 'string' && typeof a.new_str === 'string') {
+            edits.push({ filePath: a.filePath, old_str: a.old_str, new_str: a.new_str });
+          }
         }
       }
 
       let output: ToolOutputPayload;
       try {
-        output = await ctx.awaiter.awaitToolOutput(ctx.taskId);
+        if (BUILTIN_TOOLS.has(tc.name)) {
+          output = await ctx.awaiter.awaitToolOutput(ctx.taskId);
+        } else {
+          output = await runPluginTool(tc.name, tc.args, ctx);
+          // Echo to the webview so the tool card shows the plugin's output.
+          ctx.send({
+            kind: 'tool_output',
+            taskId: ctx.taskId,
+            toolName: output.toolName,
+            output: output.output,
+            outputKind: output.kind,
+          });
+        }
       } catch (err) {
-        ctx.send({ kind: 'task_error', taskId: ctx.taskId, error: (err as Error).message });
+        const e = err as Error;
+        if (BUILTIN_TOOLS.has(tc.name)) {
+          await runHooks('after', { toolName: tc.name, args: tc.args, error: e });
+        }
+        ctx.send({ kind: 'task_error', taskId: ctx.taskId, error: e.message });
         return edits;
+      }
+
+      if (BUILTIN_TOOLS.has(tc.name)) {
+        await runHooks('after', { toolName: tc.name, args: tc.args, output: { toolName: output.toolName, output: output.output, kind: output.kind } });
       }
 
       // If the tool_output is from a read_file, capture the original content
@@ -191,6 +232,35 @@ export async function runQuickMode(
   }
   ctx.send({ kind: 'task_complete', taskId: ctx.taskId });
   return edits;
+}
+
+/**
+ * Execute a plugin-registered tool in-process. Plugin errors are surfaced
+ * as tool errors rather than thrown — the agent loop should keep going.
+ */
+async function runPluginTool(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: AgentContext,
+): Promise<ToolOutputPayload> {
+  const entry = getRegistry().tools.get(name);
+  if (!entry) {
+    return { toolName: name, output: `unknown plugin tool: ${name}`, kind: 'error' };
+  }
+  const plugCtx: PluginContext = {
+    tempWorkspaceRoot: ctx.tempWorkspace,
+    retrieveMemory: async () => [], // best-effort: a future revision can wire real retrieval
+  };
+  try {
+    const r = await entry.tool.handler(args, plugCtx);
+    const kind: ToolOutputPayload['kind'] =
+      r.kind === 'diff' || r.kind === 'file' || r.kind === 'error' || r.kind === 'terminal'
+        ? r.kind
+        : 'terminal';
+    return { toolName: name, output: r.output, kind };
+  } catch (err) {
+    return { toolName: name, output: `plugin tool failed: ${(err as Error).message}`, kind: 'error' };
+  }
 }
 
 function synthesizeDiff(

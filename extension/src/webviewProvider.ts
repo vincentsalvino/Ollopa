@@ -9,7 +9,9 @@ type WebviewInbound =
   | { type: 'chat:send'; text: string; mode: 'quick' }
   | { type: 'task_accept'; taskId: string }
   | { type: 'task_reject'; taskId: string }
-  | { type: 'set_provider_mode'; forceDirect: boolean };
+  | { type: 'set_provider_mode'; forceDirect: boolean }
+  | { type: 'chat:command'; command: string; args: string }
+  | { type: 'list_commands' };
 
 type WebviewOutbound =
   | { type: 'sidecar:ready' }
@@ -28,7 +30,9 @@ type WebviewOutbound =
   | { type: 'task_applied'; taskId: string; applied: string[] }
   | { type: 'task_rejected'; taskId: string }
   | { type: 'provider_status'; forceDirect: boolean; omnirouteUp: boolean; omnirouteUrl: string | null; providerCount: number }
-  | { type: 'task_backend'; taskId: string; backend: { kind: 'omniroute' | 'direct'; provider?: string; model: string } };
+  | { type: 'task_backend'; taskId: string; backend: { kind: 'omniroute' | 'direct'; provider?: string; model: string } }
+  | { type: 'command_list'; commands: Array<{ name: string; description: string }> }
+  | { type: 'command_result'; taskId: string; command: string; output: string; kind: 'info' | 'success' | 'warning' | 'error' };
 
 /**
  * Hosts the Ollopa chat webview in the right-side panel of the workbench.
@@ -156,6 +160,35 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
       case 'task_complete':
         this.post({ type: 'task_complete', taskId: String((p as any).taskId ?? '') });
         return;
+      case 'tool_output': {
+        // Plugin tool ran in-process on the sidecar and streamed the result
+        // as an event. The sidecar did NOT send this to the bridge via
+        // sendToolOutput (there is no awaiter), so we forward it to the
+        // webview so the user sees the output under the tool card.
+        this.post({
+          type: 'tool_output',
+          taskId: String((p as any).taskId ?? ''),
+          toolName: String((p as any).toolName ?? ''),
+          output: String((p as any).output ?? ''),
+          kind: ((p as any).outputKind ?? 'terminal') as ToolOutput['kind'],
+        });
+        return;
+      }
+      case 'command_list': {
+        const cmds = Array.isArray((p as any).commands) ? (p as any).commands : [];
+        this.post({ type: 'command_list', commands: cmds });
+        return;
+      }
+      case 'command_result': {
+        this.post({
+          type: 'command_result',
+          taskId: String((p as any).taskId ?? ''),
+          command: String((p as any).command ?? ''),
+          output: String((p as any).output ?? ''),
+          kind: ((p as any).kind_ ?? 'info') as 'info' | 'success' | 'warning' | 'error',
+        });
+        return;
+      }
       case 'task_backend': {
         const b = (p as any).backend;
         if (!b || typeof b !== 'object') return;
@@ -216,14 +249,36 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
         this.post({ type: 'task_error', taskId, message: 'No workspace root configured. Set ollopa.workspaceRoot in settings or open a folder.' });
         return;
       }
+      let tempPath: string | undefined;
       try {
-        await tempWorkspace.create(workspaceRoot, taskId);
+        const ctx = await tempWorkspace.create(workspaceRoot, taskId);
+        tempPath = ctx.tempPath;
       } catch (err) {
         this.post({ type: 'task_error', taskId, message: `Could not create temp workspace: ${(err as Error).message}` });
         return;
       }
       this.post({ type: 'task_started', taskId });
-      sidecar.send({ kind: 'chat:send', mode: 'quick', text: msg.text, taskId });
+      // Forward the temp workspace path so the sidecar can run plugin tools
+      // against it (file access for plugins is restricted to that path).
+      const payload: Record<string, unknown> = { kind: 'chat:send', mode: 'quick', text: msg.text, taskId };
+      if (tempPath) payload.tempWorkspace = tempPath;
+      sidecar.send(payload);
+      return;
+    }
+    if (msg.type === 'chat:command') {
+      if (!sidecar?.isReady()) {
+        this.post({ type: 'command_result', taskId: '', command: msg.command, output: 'Sidecar not ready.', kind: 'error' });
+        return;
+      }
+      const taskId = randomUUID();
+      const payload: Record<string, unknown> = { kind: 'chat:command', command: msg.command, args: msg.args, taskId };
+      const tempRoot = this.mostRecentTempRoot();
+      if (tempRoot) payload.tempWorkspace = tempRoot;
+      sidecar.send(payload);
+      return;
+    }
+    if (msg.type === 'list_commands') {
+      sidecar?.send({ kind: 'list_commands' });
       return;
     }
     if (msg.type === 'task_accept') {
@@ -259,6 +314,18 @@ export class WebviewProvider implements vscode.WebviewViewProvider, vscode.Dispo
     if (fromConfig && fromConfig.trim().length > 0) return fromConfig.trim();
     const folder = vscode.workspace.workspaceFolders?.[0];
     return folder?.uri.fsPath ?? null;
+  }
+
+  /**
+   * Best-effort: pick a temp workspace root to give a slash command access
+   * to. The most recent task's temp root is the right default — slash
+   * commands usually act on whatever the user is currently editing. If no
+   * task has run yet, return undefined and the sidecar will see null ctx.
+   */
+  private mostRecentTempRoot(): string | undefined {
+    const tasks = tempWorkspace.listContexts();
+    if (tasks.length === 0) return undefined;
+    return tasks[tasks.length - 1].tempPath;
   }
 
   private post(msg: WebviewOutbound): void {

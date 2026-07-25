@@ -73,6 +73,13 @@ html, body, #root { height: 100%; margin: 0; }
 .app__chip--omniroute { background: #183a2a; color: #6ee7a0; }
 .app__chip--direct { background: #2a2433; color: #d6b3ff; }
 .app__chip--down { background: #3a1f1f; color: #ff8a8a; }
+
+.help { margin: 0; padding: 8px 10px; border: 1px solid #2c3142; border-radius: 8px; background: #11141d; }
+.help__head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 6px; }
+.help__head button { background: transparent; color: var(--muted); border: none; cursor: pointer; font-size: 14px; }
+.help__empty { color: var(--muted); font-size: 12px; margin: 0; }
+.help__cmd { display: flex; gap: 8px; padding: 4px 0; font-size: 13px; }
+.help__cmd code { color: var(--accent); min-width: 120px; }
 .task__thought { margin: 0; color: var(--fg); font-size: 13px; }
 .task__error { color: #ff8a8a; font-size: 12px; margin: 0; }
 

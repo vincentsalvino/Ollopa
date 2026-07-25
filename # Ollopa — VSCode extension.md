@@ -452,6 +452,8 @@ Sidecar (chatClient.ts)
 
 **Goal:** Add an open-source plugin system with tools, slash commands, hooks, and custom LLM providers — integrated into Ollopa.
 
+**Status:** ✅ Shipped (2026-07-24).
+
 ### Plugin Locations
 - `<workspace>/.ollopa/plugins/*.js` — project-level
 - `~/.ollopa/plugins/*.js` — global, user-level
@@ -469,46 +471,47 @@ Sidecar (chatClient.ts)
 ### Implementation Checklist
 
 #### 1. Plugin Loader (`sidecar/src/plugins/loader.ts`)
-- [ ] Scan plugin directories and `require()` each file on startup
-- [ ] Validate plugin shape against `OllopaPlugin` interface
-- [ ] Register exports into registry: `tools`, `commands`, `hooks`, `providers`
-- [ ] Add `chokidar` watcher for hot reload on file changes
-- [ ] Reload plugins on the fly without sidecar restart
+- [x] Scan plugin directories and `require()` each file on startup
+- [x] Validate plugin shape against `OllopaPlugin` interface
+- [x] Register exports into registry: `tools`, `commands`, `hooks`, `providers`
+- [x] Add `fs.watch` watcher (with 200ms debounce) for hot reload on file changes
+- [x] Reload plugins on the fly without sidecar restart
+- [x] Async `init` hook for plugins that register tools dynamically (e.g. MCP bridge)
 
 #### 2. Integration with Agent
-- [ ] Merge plugin tools with built-in tools when building the system prompt
-- [ ] Route LLM tool calls to `plugin.executeTool()` if the tool belongs to a plugin
-- [ ] Provide a sandboxed context to plugins (temp workspace, memory access)
-- [ ] Extend WebSocket protocol: `chat:command { command, args }`
-- [ ] Route slash commands to the correct plugin and return result as a message card
+- [x] Merge plugin tools with built-in tools when building the system prompt
+- [x] Route LLM tool calls to `plugin.executeTool()` if the tool belongs to a plugin
+- [x] Provide a sandboxed context to plugins (temp workspace, memory access)
+- [x] Extend WebSocket protocol: `chat:command { command, args }`, `list_commands`
+- [x] Route slash commands to the correct plugin and return result as a message card
 
 #### 3. Sandboxing (MVP)
-- [ ] Restrict plugin file access to temp workspace or plugin's own directory
-- [ ] Log a warning for plugins requesting network access
-- [ ] Add `network` permission field to plugin manifest
+- [x] Restrict plugin file access to temp workspace (already enforced by tool bridge for builtins)
+- [x] Log a warning for plugins requesting network access (`network: true` field on tools)
+- [x] Add `network` permission field to plugin manifest
 - [ ] (Future) Move plugins to `worker_threads` or a dedicated VM sandbox
 
 #### 4. UI
-- [ ] Show available slash commands in a webview help menu
+- [x] Show available slash commands in a webview help menu (`/` button or `/` input prefix)
 - [ ] (Future) Support plugin-registered custom settings UI components
 
 #### 5. Example Plugins (ship with Ollopa)
-- [ ] `format-on-save.js` — hooks `afterTool` on `search_replace` and runs Prettier
-- [ ] `commit-message.js` — adds `/commit` command that generates a commit message from current diff
-- [ ] `groq-provider.js` — registers Groq as a new direct provider
+- [x] `format-on-save.js` — hooks `afterTool` on `search_replace` and runs Prettier
+- [x] `commit-message.js` — adds `/commit` command that generates a commit message from current diff
+- [x] `groq-provider.js` — registers Groq as a new direct provider
 
 #### 6. OmniRoute MCP Bridge Plugin
-- [ ] Write a plugin that connects to OmniRoute's MCP server
-- [ ] Expose OmniRoute's 104 tools to the agent via the plugin tool registry
+- [x] Write a plugin that connects to OmniRoute's MCP server
+- [x] Expose OmniRoute's tools to the agent via the plugin tool registry
 
 ---
 
 ### Acceptance Criteria
-- [ ] Creating `.ollopa/plugins/hello.js` with a `/hello` export works after restart or hot reload
-- [ ] A plugin tool `count_lines` can be called by the Implementation agent during a Quick Mode task
-- [ ] Hooks fire correctly (e.g., `search_replace` triggers a formatting hook)
-- [ ] Sidecar does not crash if a plugin throws an error
-- [ ] Modifying a plugin file while the sidecar runs updates the registry within seconds
+- [x] Creating `.ollopa/plugins/hello.js` with a `/hello` export works after restart or hot reload
+- [x] A plugin tool `count_lines` can be called by the Implementation agent during a Quick Mode task
+- [x] Hooks fire correctly (e.g., `search_replace` triggers a formatting hook)
+- [x] Sidecar does not crash if a plugin throws an error (errors logged, loop continues)
+- [x] Modifying a plugin file while the sidecar runs updates the registry within seconds
 
 ### Phase 4: Task Mode – Planning & Contract (2 weeks)
 - [ ] Architect agent: prompt, ability to call `define_contract`.

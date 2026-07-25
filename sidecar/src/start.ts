@@ -29,6 +29,8 @@ import { runQuickMode, type AgentEvent } from './agents/implementation';
 import { ToolAwaiter, type ToolOutputPayload } from './agents/toolAwaiter';
 import { pingOmniRoute } from './llm/providerRouter';
 import { LLM_MODEL } from './llm/llmConfig';
+import { runCommand as runSlashCommand } from './plugins/commands.js';
+import { loadAll, startWatcher, stopWatcher } from './plugins/loader.js';
 
 const HOST = '127.0.0.1';
 
@@ -78,6 +80,8 @@ interface QuickStartRequest {
   mode: 'quick';
   text: string;
   taskId: string;
+  /** Absolute path to the temp workspace for this task. */
+  tempWorkspace?: string;
 }
 
 function isQuickStart(p: unknown): p is QuickStartRequest {
@@ -85,6 +89,22 @@ function isQuickStart(p: unknown): p is QuickStartRequest {
   const o = p as Record<string, unknown>;
   return o.kind === 'chat:send' && o.mode === 'quick'
     && typeof o.text === 'string' && typeof o.taskId === 'string';
+}
+
+interface CommandRequest {
+  kind: 'chat:command';
+  command: string;
+  args: string;
+  taskId: string;
+  tempWorkspace?: string;
+}
+
+function isCommandRequest(p: unknown): p is CommandRequest {
+  if (!p || typeof p !== 'object') return false;
+  const o = p as Record<string, unknown>;
+  return o.kind === 'chat:command'
+    && typeof o.command === 'string'
+    && typeof o.taskId === 'string';
 }
 
 interface ToolOutputRequest {
@@ -103,6 +123,11 @@ function isToolOutput(p: unknown): p is ToolOutputRequest {
     && typeof o.toolName === 'string'
     && typeof o.output === 'string'
     && typeof o.kind_kind === 'string';
+}
+
+interface ListCommandsRequest { kind: 'list_commands' }
+function isListCommands(p: unknown): p is ListCommandsRequest {
+  return !!p && typeof p === 'object' && (p as any).kind === 'list_commands';
 }
 
 function startWsServer(port: number, awaiter: ToolAwaiter): WebSocketServer {
@@ -153,7 +178,12 @@ function startWsServer(port: number, awaiter: ToolAwaiter): WebSocketServer {
             console.warn(`[sidecar] send failed for task ${payload.taskId}:`, (err as Error).message);
           }
         };
-        const ctx = { taskId: payload.taskId, send, awaiter };
+        const ctx = {
+          taskId: payload.taskId,
+          send,
+          awaiter,
+          tempWorkspace: payload.tempWorkspace ?? null,
+        };
 
         // Decide the backend up-front so the UI can show a chip immediately.
         // The router does the same check on every call — this is purely for
@@ -166,6 +196,29 @@ function startWsServer(port: number, awaiter: ToolAwaiter): WebSocketServer {
             ws.send(JSON.stringify({ kind: 'task_error', taskId: payload.taskId, error: (err as Error).message }));
           } catch { /* socket may be closed */ }
         });
+        return;
+      }
+      if (isCommandRequest(payload)) {
+        const send = (event: AgentEvent) => {
+          try { ws.send(JSON.stringify(event)); }
+          catch (err) {
+            console.warn(`[sidecar] send failed for ${payload.taskId}:`, (err as Error).message);
+          }
+        };
+        void runSlashCommand(payload.command, payload.args ?? '', {
+          taskId: payload.taskId,
+          send,
+          tempWorkspace: payload.tempWorkspace ?? null,
+        }).catch((err: Error) => {
+          send({ kind: 'task_error', taskId: payload.taskId, error: err.message });
+        });
+        return;
+      }
+      if (isListCommands(payload)) {
+        const { listCommands } = await import('./plugins/commands.js');
+        const cmds = listCommands();
+        try { ws.send(JSON.stringify({ kind: 'command_list', commands: cmds })); }
+        catch { /* socket closed */ }
         return;
       }
       ws.send(JSON.stringify({ kind: 'error', message: 'unknown message kind' }));
@@ -208,6 +261,19 @@ async function main(): Promise<void> {
   initLocalCache();
   console.error('[sidecar] Local cache initialised');
 
+  // Phase 3.6: load plugins from the workspace's .ollopa/plugins and from
+  // ~/.ollopa/plugins. The workspace root is taken from
+  // OLLOPA_WORKSPACE_ROOT (the extension host sets this), with cwd() as a
+  // dev fallback. The watcher hot-reloads on any file change.
+  const workspaceRoot = process.env.OLLOPA_WORKSPACE_ROOT?.trim() || process.cwd();
+  const reg = await loadAll(workspaceRoot);
+  const toolCount = reg.tools.size;
+  const cmdCount = reg.commands.size;
+  console.error(`[sidecar] plugins: ${toolCount} tool(s), ${cmdCount} command(s) loaded`);
+  startWatcher(workspaceRoot, async () => {
+    console.error('[sidecar] plugin registry reloaded');
+  });
+
   const awaiter = new ToolAwaiter();
   const port = await findFreePort();
   const wss = startWsServer(port, awaiter);
@@ -216,6 +282,7 @@ async function main(): Promise<void> {
   const shutdown = (sig: string) => {
     console.error(`[sidecar] ${sig} received, shutting down`);
     awaiter.rejectAll('sidecar shutting down');
+    stopWatcher();
     wss.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 3000).unref();
   };
