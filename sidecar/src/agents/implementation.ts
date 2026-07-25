@@ -25,6 +25,7 @@ import { retrieveMemory } from '../memory/memoryService';
 import { ToolAwaiter, type ToolOutputPayload } from './toolAwaiter';
 import { buildUnifiedDiff, replayEdits } from './diffSynth';
 import { getRegistry, runHooks, type PluginContext } from '../plugins/loader';
+import { buildSystemPrompt } from './principles';
 
 export interface SearchReplaceEdit {
   filePath: string;
@@ -101,17 +102,15 @@ export async function runQuickMode(
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content: [
-        'You are the Ollopa Implementation agent in Quick Mode.',
+      content: buildSystemPrompt('implementation', [
+        'You are in Quick Mode — single agent, no plan, no review.',
         'You operate on a temporary copy of the user\'s workspace. All file modifications',
         'go through the provided tools; never assume a change is persisted until the user',
         'approves the final diff.',
         'Workflow: read files you need first, make focused edits with search_replace,',
         'then call check_git_diff before finishing. Stop when the change is complete.',
         memoryBlock ? `\nRelevant memories from prior tasks:\n${memoryBlock}` : '',
-      ]
-        .filter(Boolean)
-      .join('\n'),
+      ]),
     },
     { role: 'user', content: task },
   ];

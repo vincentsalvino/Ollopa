@@ -11,8 +11,9 @@
 
 * **Local‑first, cloud‑augmented:** All agent logic, tool execution, and file editing happen locally. Only the knowledge base (memories) is synced to the cloud (Supabase).
 * **Chat‑centric interface:** A dedicated side‑panel webview hosts the entire interaction—message stream, tool calls, diffs, and approvals—seamlessly integrated into the VS Code workbench.
-* **Memory that improves:** Every mistake is captured, distilled, and stored. The system learns your codebase’s conventions and anti‑patterns over time.
+* **Memory that improves:** Every mistake is captured, distilled, and stored. The system learns your codebase's conventions and anti‑patterns over time.
 * **Safe by design:** Contract‑driven development, isolated file workspaces, whitelisted shell commands, and deterministic security checks (semgrep) prevent agents from causing harm.
+* **Engineering principles embedded:** KISS, DRY, YAGNI, SOLID, Boy Scout Rule, Fail‑Fast, and other principles are embedded in agent prompts, contract templates, tool execution, and the review audit — not just documented, but enforced at every layer.
 * **Lightweight stack:** One Node.js sidecar process (orchestrator + memory client + refinery), VS Code extension host, React webview. No external services except Supabase.
 
 ---
@@ -57,7 +58,7 @@
                                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    Sidecar Process (Node.js)                        │
-│  · LangGraph.js orchestrator (agent state machine)                  │
+│  · LangGraph.js orchestrator (agent state machine for Task Mode)    │
 │  · Direct Supabase client (scoped credentials)                      │
 │  · Local SQLite cache for offline memory                            │
 │  · Refinery (distillation pipeline) – runs on timer or after task   │
@@ -84,13 +85,13 @@
 **Responsibilities:**
 - **Lifecycle:** Activates when VS Code starts, deactivates on shutdown, kills sidecar process.
 - **Sidecar spawner:** Forks `sidecar/start.js` as a child process, passes a random available port and Supabase credentials (from `SecretStorage`) via environment variables.
-- **WebSocket bridge:** Connects to the sidecar’s WebSocket server. Relays messages between webview and sidecar, translating webview `postMessage` to WebSocket frames and vice versa.
+- **WebSocket bridge:** Connects to the sidecar's WebSocket server. Relays messages between webview and sidecar, translating webview `postMessage` to WebSocket frames and vice versa.
 - **Command execution:** Intercepts tool calls that require VS Code integration:
   - `search_replace` → `WorkspaceEdit` to apply changes to the temporary workspace folder.
   - `execute_safe_bash` → spawns command in a dedicated VS Code Terminal, captures output, and enforces whitelist before execution.
-  - `check_git_diff` → uses VS Code’s built‑in Git extension API to get diff for the temp workspace.
+  - `check_git_diff` → uses VS Code's built‑in Git extension API to get diff for the temp workspace.
   - `secure_read_file` → reads from the temp workspace via `vscode.workspace.fs`.
-- **Diagnostics:** Feeds lint output (`run_lint`) into VS Code’s Problems panel.
+- **Diagnostics:** Feeds lint output (`run_lint`) into VS Code's Problems panel.
 - **UI integration:** Creates left sidebar view (`Agent Status`), status bar item, and the Ollopa webview panel.
 
 **Key files:**
@@ -112,7 +113,7 @@ A React application (built with Vite) that is loaded into the webview panel. It 
     - Input parameters.
     - Output (terminal, file diff with syntax highlighting).
   - Inline diff viewer: toggle between unified diff and final file view.
-  - “Apply” / “Reject” buttons for Quick Mode edits.
+  - "Apply" / "Reject" buttons for Quick Mode edits.
 - **Right sidebar:** Context files, current `.contract.json`, retrieved memories used.
 
 **Key components:**
@@ -134,110 +135,166 @@ A React application (built with Vite) that is loaded into the webview panel. It 
 
 ### 3.3 Sidecar Orchestrator (`sidecar/`)
 
-A standalone Node.js process (no npm dependencies outside its own folder) that runs the AI agent logic.
+A standalone Node.js process that runs the AI agent logic.
 
-**Stack:** TypeScript, LangGraph.js, OpenAI/OpenRouter SDK, Supabase JS client, `better-sqlite3` (for local cache), `ws` (WebSocket server).
+**Stack:** TypeScript, LangGraph.js (Task Mode), OpenAI-compatible client (OmniRoute or direct providers), Supabase JS client, `better-sqlite3` (for local cache), `ws` (WebSocket server).
 
 **Startup:**
-1. Reads `OLLOPA_PORT` and `SUPABASE_*` env vars.
+1. Reads env vars (`OLLOPA_PORT`, `SUPABASE_*`, `OLLOPA_OMNIROUTE_URL`, etc.).
 2. Connects to Supabase; initializes local SQLite cache.
 3. Starts WebSocket server on the assigned port.
-4. Emits `ready` status to extension host.
+4. Loads plugins from `.ollopa/plugins/` directories.
+5. Emits `ready` status to extension host.
 
-**Agent Graph:** A LangGraph state machine:
-- **Quick Mode path:** User task → Implementation agent (single node) with loop for tool use.
-- **Task Mode path:** User task → Architect (plan + contract) → [Frontend | Backend | Implementation] → Review → [retry up to 3 times] → End.
+**Agent orchestration:**
+- **Quick Mode:** A simple LLM tool‑using loop (while‑loop with `ToolAwaiter` promise queue). Single Implementation agent with principles‑aware system prompt. No LangGraph needed — linear execution is sufficient.
+- **Task Mode (Phase 4):** A LangGraph `StateGraph` that orchestrates the full pipeline:
+  - Nodes: `architect` → `humanApproval` → `router` → `worker` → `review`
+  - Conditional edges for HITL (approve/reject/replan) and retry (PASS/FAIL, max 3 cycles)
+  - Shared `TaskState` carrying contract, messages, workspace path, retry count, and captured mistakes.
 
 **Internal modules:**
 - `server.ts` – WebSocket message handler, task lifecycle.
-- `agents/` – system prompts, function definitions for each agent.
-- `tools/` – implementations (but actual execution is delegated back to the extension host via the WebSocket bridge – the sidecar sends `tool_call` and the extension host executes it, returning the output). So the sidecar defines tools as “placeholders” that the LangGraph LLM calls, and the sidecar emits `tool_call` events over WS, waits for `tool_output` reply, then continues the graph.
-- `memory/` – Supabase client, hybrid search RPC call, local SQLite cache for offline retrieval, sync logic.
+- `agents/` – system prompts (with embedded engineering principles), function definitions for each agent.
+- `agents/taskModeGraph.ts` – LangGraph state machine for Task Mode (Phase 4).
+- `tools/` – tool definitions (schemas in sidecar; execution proxied to extension host via WebSocket).
+- `memory/` – Supabase client, hybrid search, local SQLite cache, offline fallback.
 - `refinery/` – distillation pipeline (triggered manually or on a timer).
+- `plugins/` – plugin loader, command registry, tool registry, hook system (Phase 3.6).
 
 ### 3.4 Memory System
 
 **Unified `memories` table (Supabase):**
-- Columns: `id`, `title`, `content` (2‑sentence distillation), `scope`, `status`, `source` (SEED/REFINERY), `quality_score`, `performance_score`, `agent`, `tags`, `category`, `code_block`, `use_when`, `avoid_when`, `embedding` (1536‑d), `tsv` (full‑text search vector), timestamps.
-- Hybrid search RPC: `match_memories(query_embedding, query_text, scope, limit)` returns top‑N results with a combined score (vector 40%, FTS 25%, tags 20%, performance 10%, quality 5%).
+- Columns: `id`, `title`, `content` (2‑sentence distillation), `scope`, `status`, `source` (SEED/REFINERY), `quality_score`, `performance_score`, `agent`, `tags`, `category`, `code_block`, `use_when`, `avoid_when`, `embedding` (1536‑d stored as text), timestamps.
+- Client‑side hybrid search: SELECT candidate set, parse stringified embeddings, cosine‑rank in JS. (The `match_memories` RPC exists but is unused due to embedding column type mismatch.)
 
 **Local SQLite cache (`~/.ollopa/memory_cache.db`):**
 - Mirrors the most recently used and highest‑scored memories from Supabase.
-- On first run or after sync, pulls down `Trusted` + `Elevated` + top 100 `Candidate` memories.
-- Synchronizes periodically (every 30 min) or manually.
-- For offline use, retrieval checks local cache first; only goes to Supabase if online and cache miss.
+- Synchronized on retrieval; offline fallback with cosine ranking on cached embeddings.
 
 **Ingestion & Refinery:**
 - Mistake & Repair captures fail data → writes to `raw_ingest_queue` via Supabase (or local queue if offline).
-- The Refinery (a function in the sidecar) runs:
-  - Manually via command “Ollopa: Run Refinery”.
-  - On a schedule (e.g., every 30 min if online).
-  - Distillation: uses a fast model (GPT‑4o‑mini or local Ollama) to extract 2‑sentence insight, assign scope/tags, score.
-  - Deduplication via embedding cosine similarity.
-  - Inserts new Candidate memory into Supabase and updates local cache.
+- The Refinery runs manually or on a timer; distills mistakes into 2‑sentence Candidate memories with deduplication.
 
 ### 3.5 Tool Definitions
 
 Tools are defined in the sidecar with JSON Schema for the LLM, but their execution is proxied to the extension host.
 
-| Tool | Description | Sidecar action |
-|------|-------------|----------------|
-| `search_replace` | Replace old_str with new_str in a file (exact match) | Emits `tool_call` with file path (relative to workspace root), old_str, new_str. Extension host applies edit to temp workspace. |
-| `read_file` | Read a file’s contents (excluding .env, secrets) | Emits `tool_call`; extension host reads from temp workspace and returns content. |
-| `execute_safe_bash` | Run a whitelisted shell command | Extension host validates command against whitelist, runs in temp workspace directory, returns combined stdout/stderr. |
-| `run_lint` | Run linter on changed files | Extension host runs `npx eslint <files>` (or project’s linter), returns output. |
-| `check_git_diff` | Show current uncommitted changes in workspace | Extension host uses Git API on temp workspace, returns unified diff. |
-| `semgrep_scan` | Run semgrep on changed files (used by Review) | Extension host executes `npx semgrep --config auto <files>`, returns findings. |
-| `retrieve_memory` | Semantic search in knowledge base | Sidecar handles this internally using memory service; not proxied. |
-| `define_contract` | Creates `.contract.json` in temp workspace | Sidecar produces JSON, sends to extension host to write file. |
+| Tool | Description | Execution |
+|------|-------------|-----------|
+| `search_replace` | Replace old_str with new_str in a file (exact match) | Extension host applies edit to temp workspace, returns diff |
+| `read_file` | Read a file's contents (excluding .env, secrets) | Extension host reads from temp workspace |
+| `execute_safe_bash` | Run a whitelisted shell command (30s timeout) | Extension host validates whitelist, runs in temp workspace, returns stdout/stderr |
+| `run_lint` | Run linter on changed files | Extension host runs project linter |
+| `check_git_diff` | Show current uncommitted changes | Extension host uses Git API on temp workspace |
+| `semgrep_scan` | Run semgrep on changed files (used by Review) | Extension host executes `npx semgrep --config auto <files>` |
+| `retrieve_memory` | Semantic search in knowledge base | Sidecar internal — uses memory service directly |
+| `define_contract` | Creates `.contract.json` in temp workspace | Sidecar produces JSON; extension host writes file |
 
-All file‑modifying tools operate on a **temporary workspace** (a copy of the project folder created when a task starts) to avoid polluting the real code until the user approves the final diff.
+All file‑modifying tools operate on a **temporary workspace** (a copy of the project folder created when a task starts).
 
 ### 3.6 Agent Team
 
-| Agent | Scope | Temp | Key System Prompt Excerpt | Tools |
-|-------|-------|------|---------------------------|-------|
-| **Architect** (Task Mode) | architecture | 0.0 | Plans approach, delegates to worker, writes contract. Must not generate code directly. | `retrieve_memory`, `define_contract`, `read_file` (limited to config files) |
-| **Frontend** | frontend | 0.05 | Senior UI engineer. Uses React/Vue/Svelte patterns. Banned: purple gradients, glassmorphism, centered heroes (project‑configurable). | `search_replace`, `read_file`, `execute_safe_bash`, `run_lint` |
-| **Backend** | backend | 0.0 | Senior backend. Enforces SQL injection prevention, proper error handling. | `search_replace`, `read_file`, `execute_safe_bash`, `run_lint` |
-| **Implementation** | general | 0.0 | Code executor. Follows specs exactly; does not redesign. | `search_replace`, `read_file`, `execute_safe_bash`, `run_lint` |
-| **Review** | architecture | 0.0 | Read‑only auditor. Validates contract hash, checks semgrep, diff scope, and rules from memory. Returns structured PASS/FAIL. | `check_git_diff`, `semgrep_scan`, `retrieve_memory` (type RULE), `validate_contract` (internal function) |
+| Agent | Scope | Temp | Role | Principles Enforced | Tools |
+|-------|-------|------|------|---------------------|-------|
+| **Architect** (Task Mode) | architecture | 0.0 | Plans, delegates, writes contract. Never generates code. | KISS, YAGNI, SRP, SoC, Composition over Inheritance | `retrieve_memory`, `define_contract`, `read_file` (config files only) |
+| **Frontend** | frontend | 0.05 | Senior UI engineer. Banned: purple gradients, glassmorphism, centered heroes. | KISS, DRY, Boy Scout Rule, POLA | `search_replace`, `read_file`, `execute_safe_bash`, `run_lint` |
+| **Backend** | backend | 0.0 | Senior backend. SQL injection prevention, proper error handling. | DRY, Fail‑Fast, Idempotency, KISS | `search_replace`, `read_file`, `execute_safe_bash`, `run_lint` |
+| **Implementation** | general | 0.0 | Code executor. Follows specs exactly; no redesign. | KISS, DRY, YAGNI, Boy Scout Rule, Fail‑Fast | `search_replace`, `read_file`, `execute_safe_bash`, `run_lint` |
+| **Review** | architecture | 0.0 | Read‑only auditor. Validates contract, runs semgrep, audits principles. | All principles (audit checklist) | `check_git_diff`, `semgrep_scan`, `retrieve_memory` (type RULE), `validate_contract` |
 
 ---
 
-## 4. Data Flows
+## 4. Engineering Principles Integration
 
-### 4.1 Basic Task Execution (Quick Mode)
+Principles are not just documented — they are embedded and enforced at multiple layers:
 
-1. User types task, toggles Quick mode, presses Enter.
-2. Webview sends `{type: 'task', mode: 'quick', task: "Add a health endpoint"}` via `postMessage`.
-3. Extension host forwards it over WebSocket to sidecar.
-4. Sidecar creates a new `taskId`, copies the workspace to a temp folder (managed by extension host).
-5. Sidecar runs LangGraph with the Implementation agent, which may call tools.
-6. For each tool call, sidecar emits `tool_call` → extension host executes on temp workspace and replies with `tool_output`.
-7. All intermediate steps are streamed to webview (tool cards, diffs).
-8. When agent finishes, sidecar emits `task_final_diff` with the diff between original workspace and temp workspace.
-9. Webview shows diff; user can accept/reject each file change.
-10. Accepting triggers `apply_diff` command: extension host applies the changes to the real workspace and discards the temp copy.
+| Layer | Mechanism | Principles Covered |
+|-------|-----------|-------------------|
+| **System prompts** | Each agent receives a "principles card" in its system message with role‑specific guidance | KISS, DRY, YAGNI, Boy Scout Rule, Fail‑Fast, POLA, SRP, SoC |
+| **Architect contract** | Contract template enforces SRP (each change = one responsibility) and SoC (files grouped by concern) | SRP, SoC, High Cohesion, Low Coupling |
+| **Worker tool execution** | Before `search_replace`, lightweight checks: if edit duplicates existing logic → warning (DRY); if it adds unnecessary abstraction → warning (KISS). Soft warnings, not hard blocks. | DRY, KISS, YAGNI |
+| **Review audit** | Review agent explicitly checks: "Does the diff violate any principle?" Uses a checklist derived from the principles. Calls `retrieve_memory` for security/architecture rules. | All principles — structured PASS/FAIL per principle |
+| **Mistake & Repair** | When a FAIL occurs, the violated principle (if identified) is captured alongside the bad diff and feedback, enriching the knowledge base with principle‑attributed lessons. | Specific principle attribution |
 
-### 4.2 Task Mode (with Contract & Review)
+**Example — Implementation agent principles card:**
+```
+Principles you must follow:
+- KISS: The simplest possible implementation. Favor clarity over cleverness.
+- DRY: Reuse existing utilities, types, and patterns from the codebase.
+- YAGNI: Implement only what the task asks. No speculative features.
+- Boy Scout Rule: Leave the code slightly better than you found it.
+- Fail-Fast: Validate inputs early. Use early returns to stop execution on bad assumptions.
+```
 
-Same steps as above, but:
-- Sidecar first runs Architect → produces `.contract.json`.
-- `plan_proposed` event sent to webview → user sees approval modal.
-- On Approve, sidecar proceeds to worker; on Reject (with optional comment), Architect replans (max 2 times).
-- After worker, Review agent validates diff against contract, runs semgrep, and emits PASS/FAIL.
-- On FAIL, the error is sent back to worker (with feedback) for retry (max 3 cycles). The full interaction (bad diff, feedback, fix) is captured.
+**Example — Review agent principles audit checklist:**
+```
+Audit checklist:
+- KISS: Is the implementation the simplest possible? Flag over-engineered abstractions.
+- DRY: Does the change duplicate existing logic? Check the codebase for similar patterns.
+- YAGNI: Does the change add code not required by the contract? Flag dead code, unused imports.
+- SRP: Does each file/module touched have one clear responsibility?
+- Fail-Fast: Are inputs validated? Missing error checks?
+- Security: Hardcoded secrets, SQL injection, unsafe eval? (Block via semgrep.)
+Return PASS only if no critical violations. Minor style issues are warnings, not failures.
+```
 
-### 4.3 Mistake & Repair Capture
+---
+
+## 5. Data Flows
+
+### 5.1 Quick Mode (Phase 3 — Shipped)
+
+```
+UserInput → ImplementationAgent (with tool loop) → final diff → user accept/reject
+```
+- Single agent with principles‑aware system prompt.
+- No planning, no contract, no review.
+- Safety: temp workspace, bash whitelist.
+
+### 5.2 Task Mode (Phase 4 — LangGraph)
+
+```
+UserTask
+   │
+   ▼
+Architect (planning + contract)
+   │
+   ├──[plan_proposed]──► HITL wait (user approve/reject/comment)
+   │                          │
+   │                          ├─[reject w/ comment]→ Architect (revise, max 2 loops)
+   │                          └─[approve]→ Router
+   │
+   ▼
+Router (selects Frontend | Backend | Implementation based on task + contract)
+   │
+   ▼
+Worker (tool‑using loop, role‑specific prompt)
+   │
+   ▼
+Review (audit: contract hash, semgrep, principles check, diff scope)
+   │
+   ├──[PASS]──► Success (capture lessons, present final diff, user apply)
+   │
+   └──[FAIL]──► check retry count
+                    ├──[< 3 retries]──► Worker (with review feedback injected)
+                    └──[≥ 3 retries]──► Final Fail (capture mistake w/ principle attribution, present error)
+```
+
+The entire Task Mode flow is a LangGraph `StateGraph` with:
+- **Nodes:** `architectNode`, `humanApprovalNode` (uses LangGraph `interrupt()`), `routerNode`, `workerNode`, `reviewNode`
+- **State:** `TaskState { messages, contract, retryCount, feedback, workspaceRoot, taskId, status, finalDiff, violatedPrinciples }`
+- **Conditional edges:** Approval (approve → router, reject → architect), Retry (PASS → end, FAIL → check retry count)
+
+### 5.3 Mistake & Repair Capture
 
 Only on FAIL after Review:
 1. Sidecar stores a record in `raw_ingest_queue` with:
-   - `task_id`, `bad_diff`, `review_feedback`, `corrected_diff` (if retry succeeds), `timestamp`.
-2. The Refinery later distills this into a memory and stores it in Supabase.
-3. The new memory becomes available for future tasks.
+   - `task_id`, `bad_diff`, `review_feedback`, `corrected_diff` (if retry succeeds), `violated_principles`, `timestamp`.
+2. The Refinery distills this into a principle‑attributed memory and stores it in Supabase.
+3. The new memory becomes available for future tasks, tagged with the violated principle.
 
-### 4.4 Offline Flow
+### 5.4 Offline Flow
 
 - If Supabase is unreachable, memory retrieval uses local SQLite cache.
 - Mistake & Repair records are queued in a local SQLite table (`offline_ingest`).
@@ -245,309 +302,154 @@ Only on FAIL after Review:
 
 ---
 
-## 5. Security Model
+## 6. Security Model
 
-- **Credentials:** Supabase anon key stored in VS Code `SecretStorage` (never on disk).
-- **Database role:** A dedicated Postgres role with only `SELECT`, `INSERT`, `UPDATE` on `memories` and `raw_ingest_queue`. No DROP/DELETE/ALTER. Sensitive operations (promotion to Trusted) use SECURITY DEFINER functions with elevated permissions server‑side.
-- **File isolation:** All agent edits happen in a temp directory copied from the workspace. Real files are only touched after user approval.
-- **Command whitelist:** `execute_safe_bash` validates against a JSON config:
-  ```json
-  {
-    "allowed_commands": {
-      "npm": ["install", "test", "run lint", "run build"],
-      "npx": ["eslint", "semgrep"],
-      "git": ["status", "diff", "add", "commit"]
-    },
-    "banned_patterns": ["curl", "wget", "sudo", "rm -rf /", "/etc/"],
-    "max_timeout_sec": 30
-  }
-  ```
-- **Secrets protection:** `read_file` blocks access to files matching patterns: `.env`, `*.pem`, `*secret*`, `credentials.*`.
-- **Contract enforcement:** `validate_contract` (internal sidecar function) hashes the final diff and compares with the contract; touching unlisted files → FAIL.
-- **Semgrep integration:** Review agent runs semgrep on changed files; any critical findings → FAIL.
+- **Credentials:** Supabase keys stored in VS Code `SecretStorage` (never on disk).
+- **File isolation:** All agent edits happen in a temp directory copied from the workspace. Real files touched only after user approval.
+- **Command whitelist:** `execute_safe_bash` validates against a JSON config with allowed commands, banned patterns, and 30s timeout.
+- **Secrets protection:** `read_file` blocks access to `.env`, `*.pem`, `*secret*`, `credentials.*`.
+- **Contract enforcement:** `validate_contract` hashes the final diff and compares with the contract; touching unlisted files → FAIL.
+- **Semgrep integration:** Review agent runs semgrep on changed files; critical findings → FAIL.
 
 ---
 
-## 6. UI/UX Design (Webview)
+## 7. UI/UX Design (Webview)
 
 **Three‑column layout:**
-- **Left sidebar (240px, collapsible):**
-  - Agent status list (per active task): pulse dot + label.
-  - Quick filters for memory categories.
-- **Center – Chat (flex):**
-  - Scrollable message list.
-  - Each message card is color‑coded by agent.
-  - Tool calls are rendered as collapsible accordions with the diff output highlighted.
-  - Input area at bottom with mode toggle (Quick/Task), model selector, send button.
-- **Right sidebar (260px, collapsible):**
-  - Context files tab: list of open files in workspace.
-  - Git tab: staged/unstaged changes.
-  - Memory tab: list of memories retrieved for current task.
+- **Left sidebar (240px, collapsible):** Agent status list (per active task), quick filters for memory categories.
+- **Center – Chat (flex):** Scrollable message list, color‑coded message cards, collapsible tool calls with diff highlighting, input area with mode toggle (Quick/Task) and model selector.
+- **Right sidebar (260px, collapsible):** Context files, Git changes, retrieved memories.
 
 **HITL Approval Modal:**
 - Full‑screen overlay in webview showing plan summary, contract details, changed files.
-- Buttons: “Approve”, “Reject & comment”, “Cancel task”.
+- Buttons: "Approve", "Reject & comment", "Cancel task".
+- Powered by LangGraph `interrupt()` — graph pauses until user decision.
 
 **Diff Viewer:**
-- Inline unified diff with syntax highlighting (using `diff` library and a custom React component).
-- Toggle to view final file state.
+- Inline unified diff with syntax highlighting (`diff` library + custom React component).
+- Toggle between unified diff and final file view.
 
 ---
 
-## 7. Agent Workflow in Detail
+## 8. Build Phases & Milestones
 
-### Quick Mode
-```
-UserInput → ImplementationAgent (with tools loop) → final diff → user accept/reject
-```
-- No planning, no contract, no review.
-- Agent acts as a senior dev who can make edits and run tests.
-- Safety still enforced: temp workspace, bash whitelist, semgrep optional (user can run it manually).
-
-### Task Mode
-```
-UserInput → Architect (plan + contract) → HITL Approval
-    → Router → Worker (Frontend/Backend/Implementation)
-        → Review
-            ├── PASS → final diff → user apply
-            └── FAIL → worker retry (with feedback) up to 3 times
-                └── after final FAIL → task fails, error message
-```
-- On first FAIL, the Mistake & Repair hook captures the interaction for distillation.
-- Plan rejection allows one revision cycle.
-
----
-
-## 8. Mistake & Repair Loop (Technical)
-
-After a Review FAIL (and before retry or final fail):
-1. The sidecar collects:
-   - `bad_diff`: diff before fix.
-   - `feedback`: Review agent’s structured feedback.
-   - `corrected_diff`: diff after successful retry (if any), or null if final fail.
-2. This is stored in `raw_ingest_queue` with status `PENDING_DISTILL`.
-3. The Refinery, on its next run, processes this record:
-   - Calls a distillation LLM (GPT‑4o‑mini) with prompt: “Distill the following mistake into a 2‑sentence engineering pattern: …”
-   - Checks for duplicates (embedding similarity) before inserting as Candidate memory.
-4. Over time, these memories improve agent performance.
-
----
-
-## 9. Offline & Caching Strategy
-
-- **Memory retrieval:** First checks local SQLite cache (fast). If no match, and online, calls Supabase RPC and caches result.
-- **Offline ingestion:** Mistake & Repair records queued in local SQLite, synced when online.
-- **Refinery offline:** Refinery requires LLM; can use a locally running Ollama model (configurable) if available, otherwise queues distillation until online.
-- **Supabase sync:** On extension activation and every 30 min, pulls updated high‑score memories from Supabase and updates local cache.
-
----
-
-## 10. Build Phases & Milestones
-
-### Phase 1: Scaffold & Sidecar Bridge (2 weeks)
+### Phase 1: Scaffold & Sidecar Bridge ✅
 - [x] Initialize VS Code extension project with webview panel.
-- [x] Create React webview with basic chat layout (input, message list).
+- [x] Create React webview with basic chat layout.
 - [x] Implement sidecar spawner (fork) with WebSocket connection.
 - [x] Establish two‑way communication: extension host ↔ webview ↔ sidecar.
-- [x] Implement `webviewProvider` and `sidecarManager`.
 - **Milestone:** User can type a message in chat and see an echo reply from the sidecar.
 
-### Phase 2: Memory Core (1 week)
-- [x] Set up Supabase project with `memories` table schema, RLS, and hybrid search RPC.
+### Phase 2: Memory Core ✅
+- [x] Set up Supabase project with `memories` table schema and RLS.
 - [x] Store Supabase credentials in VS Code `SecretStorage`.
-- [x] Implement sidecar Supabase client and `match_memories` call.
+- [x] Implement sidecar Supabase client and client‑side hybrid search.
 - [x] Create local SQLite cache and sync logic.
 - [x] Implement memory retrieval with offline fallback.
-- **Milestone:** Sidecar can retrieve relevant patterns for a hardcoded query.
+- **Milestone:** Sidecar can retrieve relevant patterns for a query from cloud or local cache.
 
-### Phase 3: Quick Mode Agent (3 weeks)
-- [x] Define Implementation agent system prompt and LangGraph state machine (single node with tool loop).
+### Phase 3: Quick Mode Agent ✅
+- [x] Define Implementation agent system prompt with tool loop.
 - [x] Implement tool definitions (search_replace, read_file, execute_safe_bash, run_lint, check_git_diff) as WebSocket proxies.
-- [x] Implement temp workspace creation in extension host (copy folder).
-- [x] Wire tool execution: extension host applies edits to temp workspace, runs bash, etc., and returns output.
+- [x] Implement temp workspace creation in extension host.
+- [x] Wire tool execution: extension host applies edits to temp workspace and returns output.
 - [x] Stream agent thoughts and tool calls to webview; render `MessageCard` with diff.
 - [x] Build accept/reject UI for final diff; apply to real workspace on accept.
-- **Milestone:** User can give a simple task like “rename function foo to bar” and see the diff applied after approval.
+- **Milestone:** User can give a simple task and see the diff applied after approval.
 
-## Phase 3.5 — OmniRoute Integration + Paid Provider Fallback
+### Phase 3.5: OmniRoute Integration + Paid Provider Fallback ✅
+- [x] Ping OmniRoute on startup, show connection status in UI.
+- [x] Route chat completions through OmniRoute by default (model `auto`).
+- [x] Toggle between OmniRoute and direct providers in chat UI.
+- [x] Auto-fallback to direct providers (DeepSeek, OpenRouter, Mimo, etc.) when OmniRoute is down.
+- [x] Store direct provider API keys in SecretStorage.
+- **Milestone:** Ollopa uses OmniRoute's 290+ providers, with fallback to user's cheap paid keys.
 
-**Goal:** Make OmniRoute the default LLM backend, with a direct path for cheap paid keys as fallback.
-
-**Status:** ✅ Shipped (2026-07-24).
-
-### Architecture
-
-```
-Sidecar (chatClient.ts)
-    │
-    ├─[if OmniRoute healthy]───► POST http://localhost:20128/v1/chat/completions
-    │                              model: "auto" (or user-chosen model from OmniRoute's catalog)
-    │
-    └─[if OmniRoute down or
-        user forces direct]────► Minimal Direct Provider Router
-                                    ├─ DeepSeek (api.deepseek.com)
-                                    ├─ OpenRouter (openrouter.ai)
-                                    ├─ Mimo (api.mimo.com)
-                                    └─ (configured via VS Code settings + SecretStorage)
-```
+### Phase 3.6: Skills & Plugins Ecosystem ✅
+- [x] Plugin loader: scan `.ollopa/plugins/` directories, `require()` and validate.
+- [x] Registries: tools, slash commands, hooks, providers.
+- [x] Hot reload via `fs.watch` with 200ms debounce.
+- [x] Plugin tools merged into agent function definitions; routed to plugin executors.
+- [x] Slash commands (`/commit`, `/deploy`, etc.) available in chat with autocomplete.
+- [x] Example plugins shipped: format-on-save, commit-message, groq-provider, omniroute-mcp-bridge.
+- **Milestone:** User can create a `.ollopa/plugins/hello.js` file and use `/hello` immediately.
 
 ---
 
-### Implementation Checklist
+### Phase 4: LangGraph Task Mode with Embedded Principles (3–4 weeks) 🔄
 
-#### 1. OmniRoute Detection & Startup
-- [x] Ping `http://localhost:20128/v1/models` on extension activation
-- [x] Expose `ollopa.omnirouteUrl` setting (default: `http://localhost:20128`)
-- [x] Show warning in webview status bar if OmniRoute is not running
-- [x] Offer to run `npx omniroute` via terminal or child process
-- [x] Add command `ollopa.startOmniRoute` to spawn OmniRoute as a managed process
+**Merges old Phase 4 (Planning & Contract) + Phase 5 (Review & Retry) into a single LangGraph‑orchestrated pipeline with engineering principles embedded at every layer.**
 
-#### 2. Modify `sidecar/src/llm/chatClient.ts`
-- [x] Replace direct OpenRouter call with a decision function:
-  ```ts
-  if (omnirouteAvailable && !forceDirect) {
-      return callOmniRoute(messages, tools, model);
-  } else {
-      return callDirectProvider(messages, tools, providerConfig);
-  }
-  ```
-- [x] Implement `callOmniRoute` — POST to `<omnirouteUrl>/v1/chat/completions` with model `"auto"`
-- [x] Implement `callDirectProvider` — reads provider list, picks first enabled, calls OpenAI-compatible endpoint
+#### 4.1 — Engineering Principles System
+- [ ] Define the "principles card" for each agent role (Architect, Frontend, Backend, Implementation, Review).
+- [ ] Update all agent system prompts to include the principles card.
+- [ ] Update the Quick Mode Implementation agent prompt with the principles card (enhancement to Phase 3).
+- [ ] Create the Review agent's principles audit checklist (KISS, DRY, YAGNI, SRP, Fail‑Fast, Security).
+- [ ] Add principle‑attribution fields to Mistake & Repair capture (`violated_principles` array).
 
-#### 3. Direct Provider Configuration
-- [x] Add `ollopa.directProviders` VS Code setting (array of provider objects):
-  ```json
-  [
-    { "name": "deepseek", "baseUrl": "https://api.deepseek.com/v1", "enabled": true, "keyAlias": "deepseek_key1" },
-    { "name": "openrouter", "baseUrl": "https://openrouter.ai/api/v1", "enabled": true, "keyAlias": "openrouter_main" }
-  ]
-  ```
-- [x] Store actual API keys in SecretStorage under `ollopa.providerKey.<alias>`
-- [x] Extension host reads settings, fetches keys, sends `provider_config` message to sidecar on startup and on change
-- [x] Sidecar maintains ordered provider list and tries each in order until one succeeds
+#### 4.2 — LangGraph State Machine
+- [ ] Install `@langchain/langgraph` in the sidecar workspace.
+- [ ] Define `TaskState` type: `{ messages, contract, retryCount, feedback, workspaceRoot, taskId, status, finalDiff, violatedPrinciples }`.
+- [ ] Create `sidecar/src/agents/taskModeGraph.ts` with the full `StateGraph`:
+  - `architectNode` — calls LLM (Architect persona with principles card), retrieves memories, outputs `.contract.json`.
+  - `humanApprovalNode` — calls LangGraph `interrupt()` to pause execution; emits `plan_proposed` over WebSocket; resumes when extension host sends `plan_decision`.
+  - `routerNode` — analyzes task + contract, returns `next: 'frontend' | 'backend' | 'implementation'`.
+  - `workerNode` — runs tool‑using loop for the assigned role (reuses Quick Mode pattern but with role‑specific principles card).
+  - `reviewNode` — runs review checks (contract hash, semgrep, principles audit), outputs `reviewResult: 'PASS' | 'FAIL'` with structured feedback and violated principles.
 
-#### 4. UI Updates
-- [x] Add provider status chip in webview (e.g., "OmniRoute · auto" or "Direct · deepseek")
-- [x] Add toggle between OmniRoute and direct mode in the chat input area
-- [ ] Model selector populates from OmniRoute's `/v1/models` in OmniRoute mode
-- [ ] Model selector shows static list of known cheap models in direct mode
+#### 4.3 — HITL Approval Protocol
+- [ ] Extend WebSocket protocol: `plan_proposed { taskId, contract, planText, agent: 'architect' }`.
+- [ ] Add `plan_decision { taskId, decision: 'approve' | 'reject', comment?: string }` inbound message.
+- [ ] Webview `PlanApprovalModal` renders contract details, changed files list, and Approve/Reject/Comment buttons.
+- [ ] On reject with comment, LangGraph routes back to `architectNode` with the comment as feedback (max 2 replans).
 
-#### 5. Fallback Logic
-- [x] Auto-fallback to direct providers if OmniRoute is configured but unreachable
-- [x] Notify UI when fallback occurs
-- [x] Return a clear error to the user if both OmniRoute and direct providers fail
+#### 4.4 — Review & Retry Loop
+- [ ] Review agent calls `validate_contract` (hash comparison), `semgrep_scan`, `check_git_diff`, and `retrieve_memory` (type RULE).
+- [ ] Review agent runs the principles audit checklist and outputs which principles passed/failed.
+- [ ] On PASS: graph ends, `task_final_diff` emitted, user can apply changes.
+- [ ] On FAIL: feedback injected into worker context; graph routes back to `workerNode`.
+- [ ] Circuit breaker: max 3 retries; after final fail, Mistake & Repair capture triggers with principle attribution.
 
----
+#### 4.5 — LangGraph Integration with Sidecar
+- [ ] Wire the LangGraph graph into `sidecar/src/start.ts` — on `chat:send { mode: 'task' }`, create a new graph run.
+- [ ] Graph runs share the existing WebSocket event bus for `tool_call`/`tool_output`, `agent_thought`, `task_final_diff`.
+- [ ] LangGraph `interrupt()` awaits the `plan_decision` message from the extension host before resuming.
+- [ ] Support concurrent graph runs (LangGraph natively supports multiple executions with different `config`).
 
-### Acceptance Criteria
-- [x] With OmniRoute running, all Quick Mode tasks route through it using model `auto`
-- [ ] User can select any model from OmniRoute's catalog
-- [x] User can add DeepSeek / OpenRouter / Mimo keys in VS Code settings and use them in direct mode
-- [x] Switching between OmniRoute and direct mode works instantly
-- [x] When OmniRoute stops, tasks automatically fall back to the first available direct provider
-- [x] Integration does not break the existing Phase 3 test suite
+#### 4.6 — Plugin Integration with Task Mode
+- [ ] Plugin tools are available to all agent nodes (Architect, Worker, Review) via the merged tool registry.
+- [ ] Plugin hooks (`onBeforeTool`, `onAfterTool`) fire for tool calls made by any agent node.
+- [ ] Plugin slash commands remain available alongside Task Mode chat.
 
-
-## Phase 3.6 — Skills & Plugins Ecosystem
-
-**Goal:** Add an open-source plugin system with tools, slash commands, hooks, and custom LLM providers — integrated into Ollopa.
-
-**Status:** ✅ Shipped (2026-07-24).
-
-### Plugin Locations
-- `<workspace>/.ollopa/plugins/*.js` — project-level
-- `~/.ollopa/plugins/*.js` — global, user-level
-
-### What a Plugin Can Do
-| Type | Description |
-|------|-------------|
-| **Tools** | Expose new agent-callable functions (e.g., `fetch_jira_issue`, `run_migrations`) |
-| **Slash Commands** | User-typed commands like `/deploy staging` handled by the plugin |
-| **Hooks** | `onBeforeTool` / `onAfterTool` callbacks for pre/post tool execution |
-| **Providers** | Register new LLM backends in the direct provider list |
+**Milestone:** A complex task like "Add pagination to the user list endpoint" triggers the full Architect → Approval → Worker → Review → Retry pipeline, with principles enforced at every step. The system catches contract violations, security issues, and principle breaches, retries up to 3 times, and captures mistakes with principle attribution for future learning.
 
 ---
 
-### Implementation Checklist
-
-#### 1. Plugin Loader (`sidecar/src/plugins/loader.ts`)
-- [x] Scan plugin directories and `require()` each file on startup
-- [x] Validate plugin shape against `OllopaPlugin` interface
-- [x] Register exports into registry: `tools`, `commands`, `hooks`, `providers`
-- [x] Add `fs.watch` watcher (with 200ms debounce) for hot reload on file changes
-- [x] Reload plugins on the fly without sidecar restart
-- [x] Async `init` hook for plugins that register tools dynamically (e.g. MCP bridge)
-
-#### 2. Integration with Agent
-- [x] Merge plugin tools with built-in tools when building the system prompt
-- [x] Route LLM tool calls to `plugin.executeTool()` if the tool belongs to a plugin
-- [x] Provide a sandboxed context to plugins (temp workspace, memory access)
-- [x] Extend WebSocket protocol: `chat:command { command, args }`, `list_commands`
-- [x] Route slash commands to the correct plugin and return result as a message card
-
-#### 3. Sandboxing (MVP)
-- [x] Restrict plugin file access to temp workspace (already enforced by tool bridge for builtins)
-- [x] Log a warning for plugins requesting network access (`network: true` field on tools)
-- [x] Add `network` permission field to plugin manifest
-- [ ] (Future) Move plugins to `worker_threads` or a dedicated VM sandbox
-
-#### 4. UI
-- [x] Show available slash commands in a webview help menu (`/` button or `/` input prefix)
-- [ ] (Future) Support plugin-registered custom settings UI components
-
-#### 5. Example Plugins (ship with Ollopa)
-- [x] `format-on-save.js` — hooks `afterTool` on `search_replace` and runs Prettier
-- [x] `commit-message.js` — adds `/commit` command that generates a commit message from current diff
-- [x] `groq-provider.js` — registers Groq as a new direct provider
-
-#### 6. OmniRoute MCP Bridge Plugin
-- [x] Write a plugin that connects to OmniRoute's MCP server
-- [x] Expose OmniRoute's tools to the agent via the plugin tool registry
-
----
-
-### Acceptance Criteria
-- [x] Creating `.ollopa/plugins/hello.js` with a `/hello` export works after restart or hot reload
-- [x] A plugin tool `count_lines` can be called by the Implementation agent during a Quick Mode task
-- [x] Hooks fire correctly (e.g., `search_replace` triggers a formatting hook)
-- [x] Sidecar does not crash if a plugin throws an error (errors logged, loop continues)
-- [x] Modifying a plugin file while the sidecar runs updates the registry within seconds
-
-### Phase 4: Task Mode – Planning & Contract (2 weeks)
-- [ ] Architect agent: prompt, ability to call `define_contract`.
-- [ ] Plan approval modal in webview with contract details.
-- [ ] Implement plan rejection flow with comment → re‑plan (max 2).
-- [ ] Router logic: select Frontend/Backend/Implementation based on task.
-- **Milestone:** Complex task triggers a plan that the user must approve before code changes.
-
-### Phase 5: Task Mode – Review & Retry (2 weeks)
-- [ ] Review agent: system prompt, `validate_contract` (internal), `check_git_diff`, `semgrep_scan`.
-- [ ] Retry loop: on FAIL, inject feedback into worker context, reset temp workspace to pre‑edit state.
-- [ ] Circuit breaker: max 3 retries, then task fails.
-- [ ] Capture Mistake & Repair on FAIL.
-- **Milestone:** The system catches an intentional contract violation, retries, and eventually succeeds or fails gracefully.
-
-### Phase 6: Safety & Sandboxing (1 week)
-- [ ] Implement command whitelist in extension host with timeout and pattern bans.
-- [ ] Enforce secret file blocking in `read_file`.
+### Phase 5: Safety & Sandboxing (1 week) 📋
+*(Renumbered from old Phase 6)*
+- [ ] Implement command whitelist in extension host with timeout and pattern bans (partially done in Phase 3).
+- [ ] Enforce secret file blocking in `read_file` (partially done in Phase 3).
 - [ ] Ensure temp workspace is always used; prevent direct edits to real workspace by agents.
-- [ ] Add semgrep to review workflow.
+- [ ] Integrate semgrep into review workflow (integrated in Phase 4 — verify completeness).
 - **Milestone:** Agent cannot run dangerous commands or access .env files.
 
-### Phase 7: Refinery & Self‑Improvement (2 weeks)
-- [ ] Implement `raw_ingest_queue` insertion for Mistake & Repair.
+### Phase 6: Refinery & Self‑Improvement (2 weeks) 📋
+*(Renumbered from old Phase 7)*
+- [ ] Implement `raw_ingest_queue` insertion for Mistake & Repair (with principle attribution).
 - [ ] Build distillation pipeline (Refinery) – run manually via command or on interval.
 - [ ] Use GPT‑4o‑mini (or local Ollama) to distill mistakes into memories.
 - [ ] Update memory lifecycle (Candidate → Elevated → Trusted).
-- **Milestone:** After a failed task is retried, a new memory appears in the knowledge base.
+- **Milestone:** After a failed task is retried, a new principle‑attributed memory appears in the knowledge base.
 
-### Phase 8: Offline & Caching (1 week)
+### Phase 7: Offline & Caching (1 week) 📋
+*(Renumbered from old Phase 8)*
 - [ ] Local SQLite cache for memories; sync on startup and timer.
 - [ ] Offline ingestion queue for Mistake & Repair.
 - [ ] Detection of online/offline state; graceful fallback.
 - **Milestone:** Disable internet; the agent still retrieves relevant patterns from local cache.
 
-### Phase 9: Multi‑Task & UI Polish (2 weeks)
+### Phase 8: Multi‑Task & UI Polish (2 weeks) 📋
+*(Renumbered from old Phase 9)*
 - [ ] Support concurrent tasks (multiple tabs/chat sessions) with separate taskIds.
 - [ ] Agent status sidebar shows per‑task progress.
 - [ ] Task cancellation: sidecar kills LangGraph run, extension host deletes temp workspace.
@@ -556,29 +458,50 @@ Sidecar (chatClient.ts)
 - [ ] Error handling: friendly messages instead of raw stack traces.
 - **Milestone:** User can run two independent tasks simultaneously.
 
-### Phase 10: Packaging & Documentation (1 week)
+### Phase 9: Packaging & Documentation (1 week) 📋
+*(Renumbered from old Phase 10)*
 - [ ] Configure `vsce` package for extension.
 - [ ] Write README, quick‑start guide, demo script.
-- [ ] Record demo video.
+- [ ] Record demo video showcasing Quick Mode, Task Mode with LangGraph, principles enforcement, plugin ecosystem.
 - [ ] Publish to VS Code Marketplace (optional).
 - **Milestone:** Extension installable from VSIX file, fully documented.
 
-**Total estimated: ~16–18 weeks** (4 months) for a fully polished, job‑ready portfolio project.
+**Total estimated: ~15–17 weeks** for a fully polished, job‑ready portfolio project.
 
 ---
 
-## 11. Technical Stack
+## 9. Phase Summary
+
+| Phase | Status | Done | Total |
+|-------|--------|------|-------|
+| Phase 1: Scaffold & Sidecar Bridge | ✅ Complete | 5/5 | 5 |
+| Phase 2: Memory Core | ✅ Complete | 5/5 | 5 |
+| Phase 3: Quick Mode Agent | ✅ Complete | 6/6 | 6 |
+| Phase 3.5: OmniRoute Integration | ✅ Complete | 10/11 | 11 |
+| Phase 3.6: Skills & Plugins | ✅ Complete | 15/16 | 16 |
+| Phase 4: LangGraph Task Mode + Principles | 🔄 In Progress | 0/19 | 19 |
+| Phase 5: Safety & Sandboxing | 📋 Not Started | 0/4 | 4 |
+| Phase 6: Refinery & Self‑Improvement | 📋 Not Started | 0/4 | 4 |
+| Phase 7: Offline & Caching | 📋 Not Started | 0/4 | 4 |
+| Phase 8: Multi‑Task & UI Polish | 📋 Not Started | 0/6 | 6 |
+| Phase 9: Packaging & Documentation | 📋 Not Started | 0/4 | 4 |
+| **Total** | | **41/84** | **84** |
+
+---
+
+## 10. Technical Stack
 
 | Layer | Technology |
 |-------|-----------|
 | Extension host | TypeScript, VS Code Extension API |
 | Webview UI | React 18, TypeScript, Vite, `@vscode/webview-ui-toolkit` |
-| Sidecar orchestrator | Node.js 20+, LangGraph.js, OpenAI / OpenRouter SDK, `ws` |
+| Sidecar orchestrator | Node.js 20+, LangGraph.js (Task Mode), OpenAI‑compatible client (OmniRoute), `ws` |
 | Memory DB (cloud) | Supabase (PostgreSQL + pgvector) |
 | Local cache | `better-sqlite3` |
 | Credentials storage | VS Code `SecretStorage` |
 | Diff display | `diff` npm package + custom React component |
 | Linting/Security | semgrep, ESLint (project‑specific) |
+| Plugin system | Node.js `require()`, `fs.watch` hot reload |
 | Build/packaging | webpack, vsce |
 
 ---

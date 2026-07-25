@@ -17,6 +17,7 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
+    "@langchain/langgraph": "^1.4.8",
     "@supabase/supabase-js": "^2.45.0",
     "@types/diff": "^7.0.2",
     "better-sqlite3": "^11.1.0",

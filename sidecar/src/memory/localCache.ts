@@ -61,7 +61,66 @@ export function initLocalCache(): void {
       updated_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
+    CREATE TABLE IF NOT EXISTS mistakes (
+      id TEXT PRIMARY KEY,
+      task_id TEXT,
+      task_text TEXT,
+      bad_diff TEXT,
+      review_feedback TEXT,
+      violated_principles TEXT,
+      retry_count INTEGER,
+      captured_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_mistakes_task ON mistakes(task_id);
   `);
+}
+
+/** Get the live cache handle. Throws if `initLocalCache` has not run. */
+export function getLocalCache(): {
+  insertMistake: (m: import('./mistakeCapture').CapturedMistake) => void;
+  listMistakes: () => import('./mistakeCapture').CapturedMistake[];
+} {
+  if (!db) throw new Error('local cache not initialised');
+  return {
+    insertMistake(m) {
+      db!.prepare(`
+        INSERT OR REPLACE INTO mistakes (
+          id, task_id, task_text, bad_diff, review_feedback,
+          violated_principles, retry_count, captured_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        m.id,
+        m.taskId,
+        m.task,
+        m.badDiff,
+        m.reviewFeedback,
+        JSON.stringify(m.violatedPrinciples ?? []),
+        m.retryCount ?? 0,
+        new Date(m.timestamp).toISOString(),
+      );
+    },
+    listMistakes() {
+      const rows = db!.prepare('SELECT * FROM mistakes').all() as Array<{
+        id: string; task_id: string; task_text: string; bad_diff: string;
+        review_feedback: string; violated_principles: string; retry_count: number; captured_at: string;
+      }>;
+      return rows.map((r) => ({
+        id: r.id,
+        taskId: r.task_id,
+        task: r.task_text,
+        badDiff: r.bad_diff,
+        reviewFeedback: r.review_feedback,
+        violatedPrinciples: safeParse(r.violated_principles) as never,
+        retryCount: r.retry_count,
+        timestamp: Date.parse(r.captured_at) || Date.now(),
+        delivery: 'queued' as const,
+      }));
+    },
+  };
+}
+
+function safeParse(s: string): unknown {
+  try { return JSON.parse(s); } catch { return []; }
 }
 
 export function isCacheReady(): boolean {
