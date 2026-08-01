@@ -55,4 +55,18 @@ export class ToolAwaiter {
       this.pending.delete(taskId);
     }
   }
+
+  /**
+   * Reject only the pending tool output for a specific task. Used by the
+   * cancellation path (Phase 8) so cancelling one task doesn't disturb
+   * concurrent tasks sharing the same awaiter.
+   */
+  rejectAllForTask(taskId: string, reason: string): boolean {
+    const p = this.pending.get(taskId);
+    if (!p) return false;
+    clearTimeout(p.timer);
+    this.pending.delete(taskId);
+    p.reject(new Error(reason));
+    return true;
+  }
 }

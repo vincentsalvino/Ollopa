@@ -8,8 +8,10 @@ import {
   readProviderConfig,
   type SidecarCredentials,
   type ProviderConfig,
+  type DirectProviderSetting,
 } from './secrets';
 import * as tempWorkspace from './tempWorkspace';
+import { registerInlineCommands } from './inlineActions';
 
 let sidecar: SidecarManager | undefined;
 let webview: WebviewProvider | undefined;
@@ -18,12 +20,10 @@ let cachedProviderConfig: ProviderConfig | null = null;
 let omnirouteProcess: ChildProcess | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  cachedCredentials = await readSidecarCredentials(context.secrets);
-  cachedProviderConfig = await readProviderConfig(
-    context.secrets,
-    vscode.workspace.getConfiguration('ollopa'),
-  );
-
+  // Register commands IMMEDIATELY — before any await. If the secret reads
+  // hang or throw (slow keychain, corrupt settings), the user can still
+  // open the panel, add a key, or run Configure. The commands themselves
+  // read the cached values lazily.
   webview = new WebviewProvider(
     context.extensionPath,
     () => sidecar,
@@ -39,14 +39,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('ollopa.configure', () => configureCommand(context)),
     vscode.commands.registerCommand('ollopa.startOmniRoute', () => startOmniRoute(context)),
     vscode.commands.registerCommand('ollopa.addProviderKey', () => addProviderKeyCommand(context)),
+    vscode.commands.registerCommand('ollopa.manageProviderKeys', () => manageProviderKeysCommand(context)),
+    vscode.commands.registerCommand('ollopa.focusPrompt', () => webview?.post({ type: 'focus_prompt' })),
+    // Phase 2B: inline AI assistance
+    ...registerInlineCommands(context, () => sidecar),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration('ollopa.omnirouteUrl')
         && !e.affectsConfiguration('ollopa.forceDirect')
-        && !e.affectsConfiguration('ollopa.directProviders')) return;
+        && !e.affectsConfiguration('ollopa.directProviders')
+        && !e.affectsConfiguration('ollopa.fallbackChain')
+        && !e.affectsConfiguration('ollopa.keyPool.defaults')
+        && !e.affectsConfiguration('ollopa.searchBackend')
+        && !e.affectsConfiguration('ollopa.web.allowedDomains')) return;
       void rebindProviderConfig(context);
     }),
     { dispose: () => tempWorkspace.cleanupAll() },
   );
+
+  // Now do the slow init in the background. Errors are surfaced via the
+  // notifications and the sidecar's stderr; they do NOT block command
+  // registration.
+  void initialise(context);
+}
+
+async function initialise(context: vscode.ExtensionContext): Promise<void> {
+  try {
+    cachedCredentials = await readSidecarCredentials(context.secrets);
+    cachedProviderConfig = await readProviderConfig(
+      context.secrets,
+      vscode.workspace.getConfiguration('ollopa'),
+    );
+  } catch (err) {
+    void vscode.window.showWarningMessage(
+      `Ollopa: credential read failed: ${(err as Error).message}. Run "Ollopa: Configure" to set up.`,
+    );
+  }
 
   void bootSidecar(context);
   void pingOmniRouteAndNotify();
@@ -148,6 +175,78 @@ async function addProviderKeyCommand(context: vscode.ExtensionContext): Promise<
   await context.secrets.store(`ollopa.providerKey.${alias}`, key.trim());
   void vscode.window.showInformationMessage(`Saved provider key "${alias}".`);
   await rebindProviderConfig(context);
+}
+
+/**
+ * Phase 8: manage keys for a provider that uses a `keys[]` pool.
+ * Quick-pick over declared providers, then add / remove aliases.
+ */
+async function manageProviderKeysCommand(context: vscode.ExtensionContext): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration('ollopa');
+  const providers = (cfg.get<DirectProviderSetting[]>('directProviders') ?? [])
+    .filter((p) => p && typeof p.name === 'string');
+  if (providers.length === 0) {
+    void vscode.window.showInformationMessage('No direct providers configured. Edit ollopa.directProviders first.');
+    return;
+  }
+  const pick = await vscode.window.showQuickPick(
+    providers.map((p) => ({
+      label: p.name,
+      description: p.keys ? `pool (${p.keys.filter((k) => !!k).length}/${p.keys.length} configured)` : (p.keyAlias ? `single key: ${p.keyAlias}` : 'no key'),
+    })),
+    { title: 'Manage provider keys' },
+  );
+  if (!pick) return;
+  const provider = providers.find((p) => p.name === pick.label);
+  if (!provider) return;
+
+  const action = await vscode.window.showQuickPick(
+    [
+      { label: 'add-key', description: 'Add another alias to this provider\'s pool' },
+      { label: 'list', description: 'List aliases for this provider' },
+    ],
+    { title: `Provider: ${provider.name}` },
+  );
+  if (!action) return;
+
+  if (action.label === 'add-key') {
+    const alias = await vscode.window.showInputBox({
+      title: `Add key for ${provider.name}`,
+      prompt: 'Alias name (e.g. ollama_cloud_key2). Stored in OS keychain.',
+      placeHolder: provider.keys ? `${provider.keys[0] ?? 'key'}_2` : `${provider.name}_key1`,
+      ignoreFocusOut: true,
+    });
+    if (!alias) return;
+    const key = await vscode.window.showInputBox({
+      title: `Key value for "${alias}"`,
+      prompt: 'Stored in OS keychain.',
+      password: true,
+      ignoreFocusOut: true,
+    });
+    if (!key) return;
+    await context.secrets.store(`ollopa.providerKey.${alias}`, key.trim());
+    // Patch the settings array so the provider config picks up the new alias.
+    if (provider.keys) {
+      provider.keys.push(alias);
+      await cfg.update('directProviders', providers, vscode.ConfigurationTarget.Global);
+    }
+    void vscode.window.showInformationMessage(`Added key "${alias}" to ${provider.name}.`);
+    await rebindProviderConfig(context);
+  } else if (action.label === 'list') {
+    const aliases = provider.keys ?? (provider.keyAlias ? [provider.keyAlias] : []);
+    if (aliases.length === 0) {
+      void vscode.window.showInformationMessage(`${provider.name} has no key aliases configured.`);
+      return;
+    }
+    const items = await Promise.all(aliases.map(async (alias) => {
+      const stored = await context.secrets.get(`ollopa.providerKey.${alias}`);
+      return {
+        label: alias,
+        description: stored ? '••••' + stored.slice(-4) : '(not set)',
+      };
+    }));
+    void vscode.window.showInformationMessage(`${provider.name}: ${items.map((i) => i.label).join(', ')}`, { modal: false });
+  }
 }
 
 async function configureCommand(context: vscode.ExtensionContext): Promise<SidecarCredentials | undefined> {

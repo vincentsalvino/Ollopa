@@ -26,6 +26,8 @@ import { ToolAwaiter, type ToolOutputPayload } from './toolAwaiter';
 import { buildUnifiedDiff, replayEdits } from './diffSynth';
 import { getRegistry, runHooks, type PluginContext } from '../plugins/loader';
 import { buildSystemPrompt } from './principles';
+import { summariseToolOutput, trimMessagesToBudget, totalTokens } from './budget';
+import { isCancelled } from '../concurrency';
 
 export interface SearchReplaceEdit {
   filePath: string;
@@ -129,6 +131,10 @@ export async function runQuickMode(
   const MAX_TURNS = 12; // safety against infinite loops
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
+    if (isCancelled(ctx.taskId)) {
+      ctx.send({ kind: 'task_error', taskId: ctx.taskId, error: 'Task cancelled' });
+      return edits;
+    }
     let result: ChatResult;
     try {
       result = await chatCompletion(messages, toolDefs);
@@ -212,12 +218,26 @@ export async function runQuickMode(
         } catch { /* ignore — diffs will just lack originals */ }
       }
 
+      // Phase 8: token-aware compression of tool outputs. Diff / file outputs
+      // are kept verbatim; everything else is summarised when over budget.
+      const summarised = (output.kind === 'diff' || output.kind === 'file')
+        ? output.output
+        : summariseToolOutput(output.output);
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
         name: tc.name,
-        content: output.output,
+        content: summarised,
       });
+    }
+  }
+
+  // Phase 8: drop oldest non-system messages if over budget.
+  if (totalTokens(messages) > 8000) {
+    const trimmed = trimMessagesToBudget(messages, 8000);
+    if (trimmed.length < messages.length) {
+      messages.length = 0;
+      messages.push(...trimmed);
     }
   }
 

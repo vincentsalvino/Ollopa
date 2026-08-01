@@ -1,19 +1,24 @@
 {
-  "name": "ollopa-extension",
+  "name": "ollopa",
   "displayName": "Ollopa",
   "description": "AI Coding Platform — chat-centric multi-agent assistant with persistent memory.",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.1",
   "publisher": "ollopa",
+  "repository": "https://github.com/ollopa/ollopa",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "keywords": ["ai", "coding", "agent", "memory", "langgraph"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "watch": "tsc -p tsconfig.json --watch"
+    "watch": "tsc -p tsconfig.json --watch",
+    "postbuild": "node scripts/copy-dist.js"
   },
   "contributes": {
     "configuration": {
@@ -26,21 +31,71 @@
         },
         "ollopa.omnirouteUrl": {
           "type": "string",
-          "default": "http://localhost:20128",
-          "description": "Base URL for the OmniRoute LLM router. Empty disables OmniRoute."
+          "default": "",
+          "description": "Base URL for the OmniRoute LLM router. Empty disables OmniRoute. Set this + set forceDirect=false to use OmniRoute as the default route."
         },
         "ollopa.forceDirect": {
           "type": "boolean",
-          "default": false,
-          "description": "Skip OmniRoute and go straight to the first available direct provider."
+          "default": true,
+          "description": "Skip OmniRoute and go straight to the first enabled direct provider (default: true — use Ollama local / direct APIs out of the box)."
         },
         "ollopa.directProviders": {
           "type": "array",
           "default": [
-            { "name": "openrouter", "baseUrl": "https://openrouter.ai/api/v1", "enabled": true, "keyAlias": "__openrouter__" },
-            { "name": "deepseek", "baseUrl": "https://api.deepseek.com/v1", "enabled": false, "keyAlias": "deepseek_key1" }
+            { "name": "ollama-local", "baseUrl": "http://localhost:11434/v1", "enabled": true, "keyAlias": "", "kind": "ollama" },
+            { "name": "ollama-cloud", "baseUrl": "https://api.ollama.com/v1", "enabled": false, "keys": ["ollama_cloud_key1"], "kind": "openai-compatible", "poolDefaults": { "weeklyMs": 604800000, "sessionMs": 7200000 } },
+            { "name": "openrouter", "baseUrl": "https://openrouter.ai/api/v1", "enabled": false, "keyAlias": "__openrouter__", "kind": "openai-compatible" },
+            { "name": "deepseek", "baseUrl": "https://api.deepseek.com/v1", "enabled": false, "keyAlias": "deepseek_key1", "kind": "openai-compatible" }
           ],
-          "description": "Direct OpenAI-compatible providers tried in order when OmniRoute is unavailable or direct mode is forced. API keys are stored under ollopa.providerKey.<keyAlias> in SecretStorage. Use keyAlias '__openrouter__' to reuse the global OpenRouter key."
+          "description": "Direct LLM providers tried in order when OmniRoute is unavailable or direct mode is forced. Each entry has: name, baseUrl, enabled, keyAlias (alias of API key in SecretStorage — empty for Ollama) OR keys[] (Phase 8: pool of aliases; rotates within a provider, marks exhausted on 429), kind (openai-compatible | ollama), poolDefaults (weeklyMs / sessionMs / cooldownMs). Default order: Ollama local first (no key needed), then cloud / openrouter / deepseek behind a key."
+        },
+        "ollopa.keyPool.defaults": {
+          "type": "object",
+          "default": {},
+          "description": "Phase 8: global overrides for key-pool reset windows. Per-provider poolDefaults in directProviders take precedence."
+        },
+        "ollopa.fallbackChain": {
+          "type": "array",
+          "default": [],
+          "description": "Phase 4: ordered list of provider NAMES to try as fallback. Empty = use the directProviders order."
+        },
+        "ollopa.searchBackend": {
+          "type": "string",
+          "enum": ["duckduckgo"],
+          "default": "duckduckgo",
+          "description": "Phase 3: backend used by the web_search tool. Only DuckDuckGo is supported today (no API key)."
+        },
+        "ollopa.web.allowedDomains": {
+          "type": "array",
+          "default": [
+            "developer.mozilla.org",
+            "nodejs.org",
+            "devdocs.io",
+            "github.com",
+            "stackoverflow.com",
+            "wikipedia.org"
+          ],
+          "description": "Phase 3: domain whitelist for fetch_url. Set to [\"*\"] to allow any domain (not recommended)."
+        },
+        "ollopa.licenseCheck.forbidden": {
+          "type": "array",
+          "default": [
+            "AGPL-*",
+            "SSPL*",
+            "BUSL-*",
+            "Commons-Clause"
+          ],
+          "description": "Phase 5: glob patterns for forbidden dependency licenses. License check fails if any dep matches."
+        },
+        "ollopa.privacy.localOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Phase 6: refuse any outbound HTTP (web tools, cloud LLM providers). Audit log every refusal."
+        },
+        "ollopa.privacy.redactSecrets": {
+          "type": "boolean",
+          "default": true,
+          "description": "Phase 6: mask secret-shaped strings (AWS keys, GitHub PATs, JWTs, private keys) before sending to the LLM."
         }
       }
     },
@@ -78,8 +133,77 @@
       {
         "command": "ollopa.addProviderKey",
         "title": "Ollopa: Add Provider API Key"
+      },
+      {
+        "command": "ollopa.manageProviderKeys",
+        "title": "Ollopa: Manage Provider Keys"
+      },
+      {
+        "command": "ollopa.explainSelection",
+        "title": "Ollopa: Explain Selection"
+      },
+      {
+        "command": "ollopa.refactorSelection",
+        "title": "Ollopa: Refactor Selection"
+      },
+      {
+        "command": "ollopa.focusPrompt",
+        "title": "Ollopa: Focus Prompt"
       }
-    ]
+    ],
+    "keybindings": [
+      {
+        "command": "ollopa.openPanel",
+        "key": "ctrl+shift+o",
+        "mac": "cmd+shift+o"
+      },
+      {
+        "command": "ollopa.configure",
+        "key": "ctrl+shift+,",
+        "mac": "cmd+shift+,"
+      },
+      {
+        "command": "ollopa.addProviderKey",
+        "key": "ctrl+shift+k",
+        "mac": "cmd+shift+k"
+      },
+      {
+        "command": "ollopa.startOmniRoute",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n"
+      },
+      {
+        "command": "ollopa.explainSelection",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "ollopa.refactorSelection",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "ollopa.focusPrompt",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "ollopa.explainSelection",
+          "when": "editorHasSelection",
+          "group": "ollopa"
+        },
+        {
+          "command": "ollopa.refactorSelection",
+          "when": "editorHasSelection",
+          "group": "ollopa"
+        }
+      ]
+    }
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

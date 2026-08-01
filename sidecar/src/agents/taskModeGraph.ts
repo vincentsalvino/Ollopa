@@ -39,6 +39,13 @@ import {
 import { ToolAwaiter, type ToolOutputPayload } from './toolAwaiter';
 import type { SearchReplaceEdit, AgentEvent } from './implementation';
 import { captureMistake } from '../memory/mistakeCapture';
+import { summariseToolOutput, trimMessagesToBudget, totalTokens } from './budget';
+import { isCancelled } from '../concurrency';
+import { classifyError, hintForKind, type ErrorKind } from './errorClassifier';
+import { search as webSearchQuery, fetchUrl, lookupApi, lookupExample } from '../tools/webSearch';
+import { checkWorkspaceLicenses, formatLicenseResults } from '../tools/licenseCheck';
+import { loadPrivacyConfig } from '../privacy/privacy';
+import { appendAudit, redactSecrets } from '../audit/auditLog';
 
 /* -------------------------------------------------------------------------- */
 /*  State                                                                     */
@@ -112,6 +119,11 @@ export const TaskState = Annotation.Root({
     reducer: (a, b) => a.concat(b),
     default: () => [],
   }),
+  /** Critical (ERROR-severity) semgrep findings from the last review scan. */
+  semgrepCritical: Annotation<string[]>({
+    reducer: (_prev, y) => y,
+    default: () => [],
+  }),
   /** Review feedback string. */
   reviewFeedback: Annotation<string>({
     reducer: (_prev, y) => y,
@@ -127,6 +139,42 @@ export const TaskState = Annotation.Root({
     reducer: (_prev, y) => y,
     default: () => '',
   }),
+  /** Phase 1.1A: classified error kind from the last failure. */
+  lastErrorKind: Annotation<ErrorKind | null>({
+    reducer: (_prev, y) => y,
+    default: () => null,
+  }),
+  /** Phase 1.1A: rolling log of failure patterns (capped at 5) to avoid repeating mistakes. */
+  failurePattern: Annotation<string[]>({
+    reducer: (a, b) => a.concat(b).slice(-5),
+    default: () => [],
+  }),
+  /**
+   * Phase 8: step texts the worker has already executed on a prior attempt
+   * (matched verbatim from `contract.steps`). Populated by the worker at
+   * turn boundaries; read by the router on the next pass to skip steps
+   * the architect marked as already proven via `riskMitigations`.
+   */
+  executedSteps: Annotation<string[]>({
+    reducer: (a, b) => Array.from(new Set(a.concat(b))),
+    default: () => [],
+  }),
+  /**
+   * Phase 8: computed by the router. Steps to skip this attempt because
+   * the prior attempt already produced them. Empty on the first pass.
+   */
+  skipSteps: Annotation<string[]>({
+    reducer: (_prev, y) => y,
+    default: () => [],
+  }),
+  /** Phase 5: security findings (secrets + license). Worker runs both after edits. */
+  securityFindings: Annotation<{
+    secrets: Array<{ file: string; line: number; kind: string; snippet: string }>;
+    licenses: Array<{ package: string; license: string | null }>;
+  }>({
+    reducer: (_prev, y) => y,
+    default: () => ({ secrets: [], licenses: [] }),
+  }),
 });
 
 export type TaskStateType = typeof TaskState.State;
@@ -141,6 +189,13 @@ export interface Contract {
   risks: string[];
   suggestedRole: AgentRole;
   steps: string[];
+  /**
+   * Phase 8: optional mapping from a risk string → the step index that
+   * mitigates it. Used by the router to skip already-proven steps on
+   * retry. LLM may omit; if absent, the router falls back to skipping
+   * nothing.
+   */
+  riskMitigations?: Record<string, number>;
   scopeHash: string;
 }
 
@@ -159,8 +214,9 @@ export type TaskEvent =
   | { kind: 'plan_proposed'; taskId: string; contract: Contract; planText: string; agent: 'architect' }
   | { kind: 'task_started'; taskId: string }
   | { kind: 'agent_thought'; taskId: string; message: string; agent: AgentRole }
-  | { kind: 'tool_call'; taskId: string; toolName: string; toolArgs: Record<string, unknown> }
-  | { kind: 'tool_output'; taskId: string; toolName: string; output: string; outputKind: 'terminal' | 'diff' | 'file' | 'error' }
+  | { kind: 'task_token_total'; taskId: string; agent: AgentRole; total: number }
+  | { kind: 'tool_call'; taskId: string; toolName: string; toolArgs: Record<string, unknown>; startedAt: number }
+  | { kind: 'tool_output'; taskId: string; toolName: string; output: string; outputKind: 'terminal' | 'diff' | 'file' | 'error'; durationMs?: number }
   | { kind: 'task_final_diff'; taskId: string; diff: string }
   | { kind: 'task_complete'; taskId: string; status: 'success' | 'failed' | 'cancelled' }
   | { kind: 'task_error'; taskId: string; error: string }
@@ -176,6 +232,30 @@ const BUILTIN_TOOLS = new Set([
   'execute_safe_bash',
   'run_lint',
   'check_git_diff',
+  'semgrep_scan',
+  // Phase 1.1C
+  'move_file',
+  'batch_search_replace',
+  'list_files',
+  'run_tests',
+  'secrets_scan',
+  // Phase 3 — web tools run sidecar-side, NOT via the extension bridge.
+  'web_search',
+  'fetch_url',
+  'lookup_api',
+  'lookup_example',
+  'license_check',
+]);
+
+// Tools that run sidecar-side and return a result inline, instead of
+// round-tripping through the extension tool bridge. `BUILTIN_TOOLS` is
+// a superset; the worker checks this set to decide which path to take.
+const SIDECAR_LOCAL_TOOLS = new Set([
+  'web_search',
+  'fetch_url',
+  'lookup_api',
+  'lookup_example',
+  'license_check',
 ]);
 
 /* -------------------------------------------------------------------------- */
@@ -206,7 +286,8 @@ const architectSystem = [
   '  "files": ["list of files the worker will touch, relative to workspace root"],',
   '  "risks": ["non-empty list of risks the worker must mitigate"],',
   '  "suggestedRole": "frontend" | "backend" | "implementation",',
-  '  "steps": ["ordered list of concrete steps the worker must follow"]',
+  '  "steps": ["ordered list of concrete steps the worker must follow"],',
+  '  "riskMitigations": { "<risk text>": <step index> } // optional; maps each risk to the step index that mitigates it. Omit if not useful."',
   '}',
   '',
   'Then append a separate `planText` line: a 2–3 sentence human summary of the plan.',
@@ -215,6 +296,10 @@ const architectSystem = [
   '{...the JSON object above...}',
   '---PLAN---',
   'the human-readable plan text',
+  '',
+  'REPLAN behaviour: when the user feedback lists UNCHANGED items, you may keep them as-is in `steps`.',
+  'When the feedback asks for a change, rewrite ONLY the affected steps — do not regenerate unchanged ones verbatim.',
+  'The router will skip steps already proven by a prior attempt when the contract has matching step text.',
 ].join('\n');
 
 async function architectNode(
@@ -227,9 +312,17 @@ async function architectNode(
     { role: 'system', content: buildSystemPrompt('architect', [architectSystem, mems]) },
   ];
   if (state.feedback) {
+    // Replan path. Surface the prior contract so the architect knows
+    // what's already been planned and can emit only the changed steps.
+    const prior = state.contract
+      ? `\nPrior contract (re-emit only what changed; otherwise keep as-is):\n${JSON.stringify(state.contract, null, 2)}\n`
+      : '';
     messages.push({
       role: 'user',
-      content: `Original task:\n${state.userTask}\n\nUser feedback on the prior plan (must address this):\n${state.feedback}`,
+      content:
+        `Original task:\n${state.userTask}\n\n` +
+        `User feedback on the prior plan (must address this):\n${state.feedback}` +
+        prior,
     });
   } else {
     messages.push({ role: 'user', content: state.userTask });
@@ -237,7 +330,7 @@ async function architectNode(
 
   let result: ChatResult;
   try {
-    result = await chatCompletion(messages, []); // no tools — architect reasons only
+    result = await chatCompletionWithStats(ctx, state.taskId, 'architect', applyPrivacy(messages), []);
   } catch (err) {
     return { status: 'failed', errorMessage: `architect LLM failed: ${(err as Error).message}` };
   }
@@ -299,7 +392,18 @@ function humanApprovalNode(
 
 function routerNode(state: TaskStateType): Partial<TaskStateType> {
   const role = state.contract?.suggestedRole ?? 'implementation';
-  return { workerRole: role };
+  // Phase 8: identify steps that have already been proven on a prior
+  // attempt. A "proven" step is one whose text matches (case-insensitive
+  // substring) a step that already executed and produced a snapshot in
+  // this run. We pass this list down to the worker so it doesn't redo
+  // work — but only when riskMitigations is present (otherwise the LLM
+  // already chose to re-plan and we trust the new contract as-is).
+  let skipSteps: string[] = [];
+  if (state.contract?.riskMitigations && (state.executedSteps ?? []).length > 0) {
+    const executed = new Set((state.executedSteps ?? []).map((s) => s.toLowerCase()));
+    skipSteps = (state.contract.steps ?? []).filter((s) => executed.has(s.toLowerCase()));
+  }
+  return { workerRole: role, skipSteps };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -317,7 +421,21 @@ async function workerNode(
     'If the review feedback is non-empty, address it before adding anything new.',
     state.contract ? `\nContract:\n${JSON.stringify(state.contract, null, 2)}` : '',
     state.reviewFeedback ? `\nReview feedback from previous attempt:\n${state.reviewFeedback}` : '',
-  ]);
+    // Phase 1.1B: surface a targeted hint when we know what kind of error
+    // caused the previous attempt to fail. Costs ~50 tokens, saves a blind re-run.
+    state.lastErrorKind
+      ? `\nPrevious attempt failed with kind="${state.lastErrorKind}". Targeted guidance:\n${hintForKind(state.lastErrorKind)}`
+      : '',
+    // Phase 1.1A: rolling log of prior failure snippets so the worker
+    // does not retry the same broken pattern.
+    (state.failurePattern ?? []).length > 0
+      ? `\nRecent failure patterns (do NOT repeat):\n${(state.failurePattern ?? []).map((p) => `- ${p}`).join('\n')}`
+      : '',
+    // Phase 8: skip steps the router has already proven on a prior attempt.
+    (state.skipSteps ?? []).length > 0
+      ? `\nSteps already completed on a prior attempt (do NOT redo these):\n${(state.skipSteps ?? []).map((s) => `- ${s}`).join('\n')}`
+      : '',
+  ].filter(Boolean));
 
   const messages: ChatMessage[] = [
     { role: 'system', content: system },
@@ -337,9 +455,12 @@ async function workerNode(
   const MAX_TURNS = 12;
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
+    if (isCancelled(state.taskId)) {
+      return { status: 'cancelled', errorMessage: 'cancelled by host' };
+    }
     let result: ChatResult;
     try {
-      result = await chatCompletion(messages, toolDefs);
+      result = await chatCompletionWithStats(ctx, state.taskId, role, applyPrivacy(messages), toolDefs);
     } catch (err) {
       return { status: 'failed', errorMessage: `worker LLM failed: ${(err as Error).message}` };
     }
@@ -350,7 +471,8 @@ async function workerNode(
     if (!m.tool_calls || m.tool_calls.length === 0) break;
 
     for (const tc of m.tool_calls) {
-      ctx.send({ kind: 'tool_call', taskId: state.taskId, toolName: tc.name, toolArgs: tc.args });
+      const toolStartedAt = Date.now();
+      ctx.send({ kind: 'tool_call', taskId: state.taskId, toolName: tc.name, toolArgs: tc.args, startedAt: toolStartedAt });
 
       if (BUILTIN_TOOLS.has(tc.name)) {
         await runHooks('before', { toolName: tc.name, args: tc.args });
@@ -364,7 +486,21 @@ async function workerNode(
 
       let output: ToolOutputPayload;
       try {
-        if (BUILTIN_TOOLS.has(tc.name)) {
+        if (SIDECAR_LOCAL_TOOLS.has(tc.name)) {
+          // Phase 3: web tools execute in the sidecar (outbound HTTP).
+          // No temp workspace, no extension round-trip. Still emit a
+          // tool_output event so the webview timeline shows the call.
+          const text = await runSidecarLocalTool(tc.name, tc.args, state.workspaceRoot);
+          output = { toolName: tc.name, output: text, kind: 'terminal' };
+          ctx.send({
+            kind: 'tool_output',
+            taskId: state.taskId,
+            toolName: tc.name,
+            output: text,
+            outputKind: 'terminal',
+            durationMs: Date.now() - toolStartedAt,
+          });
+        } else if (BUILTIN_TOOLS.has(tc.name)) {
           output = await ctx.awaiter.awaitToolOutput(state.taskId);
         } else {
           output = await runPluginTool(tc.name, tc.args, ctx);
@@ -374,10 +510,18 @@ async function workerNode(
             toolName: output.toolName,
             output: output.output,
             outputKind: output.kind,
+            durationMs: Date.now() - toolStartedAt,
           });
         }
       } catch (err) {
-        return { status: 'failed', errorMessage: `tool ${tc.name} failed: ${(err as Error).message}` };
+        const msg = `tool ${tc.name} failed: ${(err as Error).message}`;
+        const kind = classifyError(msg);
+        return {
+          status: 'failed',
+          errorMessage: msg,
+          lastErrorKind: kind,
+          failurePattern: [`${kind} via ${tc.name}`],
+        };
       }
 
       if (BUILTIN_TOOLS.has(tc.name)) {
@@ -389,17 +533,85 @@ async function workerNode(
         if (fp) snapshots[fp] = output.output;
       }
 
-      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.name, content: output.output });
+      // Phase 8: token-aware compression of tool outputs before they go
+      // back to the LLM. Diff / file outputs are kept verbatim (the agent
+      // needs the full content); terminal / error outputs are summarised
+      // when they exceed the budget.
+      const summarised = (output.kind === 'diff' || output.kind === 'file')
+        ? output.output
+        : summariseToolOutput(output.output);
+      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.name, content: summarised });
+    }
+  }
+
+  // Phase 8: enforce token budget after each worker turn. Drops oldest
+  // non-system messages when total exceeds the budget.
+  if (totalTokens(messages) > 8000) {
+    const trimmed = trimMessagesToBudget(messages, 8000);
+    // Replace the messages slice if anything was dropped.
+    if (trimmed.length < messages.length) {
+      messages.length = 0;
+      messages.push(...trimmed);
     }
   }
 
   const diff = synthesiseDiff(edits, snapshots);
-  return { edits, fileSnapshots: snapshots, finalDiff: diff };
+  // Phase 8: record the contract steps the worker actually executed this
+  // attempt, so a future retry can skip them. Substring match against
+  // step text keeps the mapping robust to minor LLM rewording.
+  const allSteps = state.contract?.steps ?? [];
+  const executed = allSteps.filter((s) => !(state.skipSteps ?? []).includes(s));
+  return { edits, fileSnapshots: snapshots, finalDiff: diff, executedSteps: executed };
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Review                                                                    */
+/*  Security scan (Phase 5)                                                  */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Cheap pre-review security gate. Reads the worker's file snapshots,
+ * runs secrets_scan over them, and runs license_check on the workspace
+ * root. Returns any findings so the review node can include them.
+ *
+ * Ponytail: regex-only secrets scan (Phase 1 stub); `npm view` license
+ * lookup. No semgrep here — review still owns that, and it's expensive.
+ */
+async function securityScanNode(
+  state: TaskStateType,
+  _runtime: { configurable?: Record<string, unknown> },
+): Promise<Partial<TaskStateType>> {
+  const secrets: Array<{ file: string; line: number; kind: string; snippet: string }> = [];
+  // Inline regex sweep over snapshots — same patterns as extension's secrets_scan.
+  const patterns = [
+    { name: 'aws-access-key',    re: /AKIA[0-9A-Z]{16}/g },
+    { name: 'github-pat',        re: /ghp_[A-Za-z0-9]{36}/g },
+    { name: 'slack-token',       re: /xox[abp]-[0-9A-Za-z-]{10,}/g },
+    { name: 'private-key-block', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g },
+    { name: 'jwt',               re: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
+  ];
+  for (const [filePath, content] of Object.entries(state.fileSnapshots ?? {})) {
+    const lines = content.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      for (const { name, re } of patterns) {
+        re.lastIndex = 0;
+        if (re.test(lines[i])) {
+          secrets.push({ file: filePath, line: i + 1, kind: name, snippet: lines[i].slice(0, 120) });
+        }
+      }
+    }
+  }
+  // License check — only run if package.json is in scope.
+  let licenses: Array<{ package: string; license: string | null }> = [];
+  if (state.workspaceRoot) {
+    try {
+      const results = await checkWorkspaceLicenses(state.workspaceRoot);
+      licenses = results.filter((r) => r.forbidden).map((r) => ({ package: r.package, license: r.license }));
+    } catch { /* best-effort */ }
+  }
+  return {
+    securityFindings: { secrets, licenses },
+  };
+}
 
 interface ReviewVerdict {
   verdict: 'PASS' | 'FAIL';
@@ -429,15 +641,116 @@ async function reviewNode(
     },
   ];
 
-  let result: ChatResult;
-  try {
-    result = await chatCompletion(messages, []);
-  } catch (err) {
-    return { status: 'failed', errorMessage: `review LLM failed: ${(err as Error).message}` };
-  }
-  ctx.send({ kind: 'agent_thought', taskId: state.taskId, message: result.message.content ?? '', agent: 'review' });
+  // Only allow review-only tools (no edits).
+  const reviewToolDefs = TOOL_DEFS.filter((t) =>
+    t.function.name === 'semgrep_scan' || t.function.name === 'check_git_diff'
+  );
 
-  const verdict = parseReviewOutput(result.message.content ?? '');
+  // Up to 4 tool turns — enough for the reviewer to run semgrep + a re-read if needed.
+  const MAX_REVIEW_TURNS = 4;
+  const collectedSemgrepCritical: string[] = [];
+  for (let turn = 0; turn < MAX_REVIEW_TURNS; turn++) {
+    let result: ChatResult;
+    try {
+      result = await chatCompletionWithStats(ctx, state.taskId, 'review', applyPrivacy(messages), reviewToolDefs);
+    } catch (err) {
+      return { status: 'failed', errorMessage: `review LLM failed: ${(err as Error).message}` };
+    }
+    const m = result.message;
+    if (m.content) {
+      ctx.send({ kind: 'agent_thought', taskId: state.taskId, message: m.content, agent: 'review' });
+    }
+    if (!m.tool_calls || m.tool_calls.length === 0) break;
+
+    for (const tc of m.tool_calls) {
+      const toolStartedAt = Date.now();
+      ctx.send({ kind: 'tool_call', taskId: state.taskId, toolName: tc.name, toolArgs: tc.args, startedAt: toolStartedAt });
+
+      let output: ToolOutputPayload;
+      try {
+        output = await ctx.awaiter.awaitToolOutput(state.taskId);
+      } catch (err) {
+        return { status: 'failed', errorMessage: `review tool ${tc.name} failed: ${(err as Error).message}` };
+      }
+
+      // Parse semgrep critical findings from this turn's output.
+      if (tc.name === 'semgrep_scan') {
+        const m2 = output.output.match(/===SEMGREP_RESULT===\s*([\s\S]*)/);
+        if (m2) {
+          try {
+            const parsed = JSON.parse(m2[1]);
+            if (Array.isArray(parsed?.critical)) {
+              for (const f of parsed.critical) {
+                const id = `${f.check_id ?? 'unknown'}@${f.path ?? '?'}:${f.line ?? '?'}`;
+                if (!collectedSemgrepCritical.includes(id)) collectedSemgrepCritical.push(id);
+              }
+            }
+          } catch { /* malformed JSON — skip */ }
+        }
+      }
+
+      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.name, content: output.output });
+    }
+  }
+
+  // Phase 5: if the security scan already flagged secrets or forbidden
+  // licenses in the worker's edits, short-circuit FAIL without asking
+  // the reviewer LLM to also notice. Cheap, deterministic.
+  const sf = state.securityFindings ?? { secrets: [], licenses: [] };
+  if (sf.secrets.length > 0 || sf.licenses.length > 0) {
+    const parts: string[] = [];
+    if (sf.secrets.length > 0) {
+      parts.push(`security scan found ${sf.secrets.length} secret-like pattern(s) in: ${sf.secrets.map((s) => `${s.file}:${s.line} (${s.kind})`).join(', ')}`);
+    }
+    if (sf.licenses.length > 0) {
+      parts.push(`license check found ${sf.licenses.length} forbidden-licensed package(s): ${sf.licenses.map((l) => `${l.package} (${l.license ?? '?'})`).join(', ')}`);
+    }
+    const summary = parts.join('; ');
+    ctx.send({
+      kind: 'review_verdict',
+      taskId: state.taskId,
+      verdict: 'FAIL',
+      violated: [],
+      feedback: summary,
+    });
+    return {
+      reviewVerdict: 'FAIL',
+      violated: [],
+      reviewFeedback: summary,
+      semgrepCritical: [],
+      securityFindings: sf,
+    };
+  }
+
+  // If semgrep already flagged critical findings, short-circuit FAIL.
+  if (collectedSemgrepCritical.length > 0) {
+    const summary = `semgrep critical: ${collectedSemgrepCritical.length}`;
+    ctx.send({
+      kind: 'review_verdict',
+      taskId: state.taskId,
+      verdict: 'FAIL',
+      violated: [],
+      feedback: summary,
+    });
+    return {
+      reviewVerdict: 'FAIL',
+      violated: [],
+      reviewFeedback: summary,
+      semgrepCritical: collectedSemgrepCritical,
+    };
+  }
+
+  // Final LLM verdict call (no tools — we just want the structured JSON).
+  let verdictResult: ChatResult;
+  try {
+    verdictResult = await chatCompletionWithStats(ctx, state.taskId, 'review', applyPrivacy(messages), []);
+  } catch (err) {
+    return { status: 'failed', errorMessage: `review verdict LLM failed: ${(err as Error).message}` };
+  }
+  const verdictText = verdictResult.message.content ?? '';
+  ctx.send({ kind: 'agent_thought', taskId: state.taskId, message: verdictText, agent: 'review' });
+
+  const verdict = parseReviewOutput(verdictText);
   if (!verdict) {
     return { status: 'failed', errorMessage: 'review agent did not return parseable JSON' };
   }
@@ -455,13 +768,23 @@ async function reviewNode(
       reviewVerdict: 'PASS',
       violated: [],
       reviewFeedback: verdict.feedback,
+      semgrepCritical: [],
       status: 'success',
     };
   }
+  // Phase 1.1B: classify the review FAIL so the next worker retry can
+  // read lastErrorKind and get a targeted hint. Semgrep criticals map
+  // to their own kind; everything else is a generic review_fail.
+  const kind: ErrorKind = collectedSemgrepCritical.length > 0
+    ? 'semgrep_critical'
+    : classifyError(verdict.feedback || 'review returned FAIL');
   return {
     reviewVerdict: 'FAIL',
     violated: verdict.violated,
     reviewFeedback: verdict.feedback,
+    semgrepCritical: collectedSemgrepCritical,
+    lastErrorKind: kind,
+    failurePattern: [`${kind}: ${(verdict.feedback || '').slice(0, 120)}`],
   };
 }
 
@@ -481,13 +804,43 @@ function afterApproval(state: TaskStateType): 'router' | 'architect' | 'cancelle
 
 function afterReview(state: TaskStateType): 'success' | 'worker_retry' | 'final_fail' {
   if (state.status === 'failed' || state.status === 'cancelled') return 'final_fail';
+  if ((state.semgrepCritical ?? []).length > 0) {
+    // Persistent semgrep critical findings — never accept PASS, always retry.
+    if ((state.retryCount ?? 0) >= 3) return 'final_fail';
+    return 'worker_retry';
+  }
   if (state.reviewVerdict === 'PASS') return 'success';
   if ((state.retryCount ?? 0) >= 3) return 'final_fail';
   return 'worker_retry';
 }
 
-function bumpRetry(state: TaskStateType): Partial<TaskStateType> {
-  return { retryCount: (state.retryCount ?? 0) + 1 };
+async function bumpRetry(state: TaskStateType): Promise<Partial<TaskStateType>> {
+  // Phase 1.1B: classify the failure that triggered the retry, so the
+  // next worker invocation can read it via state.lastErrorKind and
+  // append a targeted hint to its system prompt.
+  const kind = classifyError(state.errorMessage ?? '');
+  const errMsg = state.errorMessage ?? '';
+  // Phase 1.1B: surface the first ESLint error line verbatim when we
+  // recognise a lint failure. The worker sees this in the failurePattern
+  // list, which is rendered at the top of its system prompt.
+  const patterns = [`${kind}: ${errMsg.slice(0, 120)}`];
+  if (kind === 'lint_fail') {
+    const firstLine = errMsg.split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0);
+    if (firstLine) patterns.push(`FIRST ESLINT ERROR: ${firstLine.slice(0, 240)}`);
+  }
+  // Phase 1.1B: exponential backoff — 1s, 2s, 4s for retries 0,1,2.
+  // Capped at 4s so a 3-retry cycle fits in ~7s. We only sleep when
+  // the host isn't cancelling the task mid-retry.
+  const retryN = state.retryCount ?? 0;
+  const delayMs = Math.min(1000 * Math.pow(2, retryN), 4000);
+  if (delayMs > 0 && !isCancelled(state.taskId)) {
+    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  }
+  return {
+    retryCount: retryN + 1,
+    lastErrorKind: kind,
+    failurePattern: patterns,
+  };
 }
 
 async function captureFinalFail(
@@ -515,6 +868,7 @@ export function buildTaskGraph() {
     .addNode('human_approval', humanApprovalNode)
     .addNode('router', routerNode)
     .addNode('worker', workerNode)
+    .addNode('security_scan', securityScanNode)
     .addNode('review', reviewNode)
     .addNode('worker_retry', bumpRetry)
     .addNode('final_fail', captureFinalFail)
@@ -525,7 +879,8 @@ export function buildTaskGraph() {
     .addConditionalEdges('architect', afterArchitect, { human_approval: 'human_approval', fail: 'fail' })
     .addConditionalEdges('human_approval', afterApproval, { router: 'router', architect: 'architect', cancelled: 'cancelled' })
     .addEdge('router', 'worker')
-    .addEdge('worker', 'review')
+    .addEdge('worker', 'security_scan')
+    .addEdge('security_scan', 'review')
     .addConditionalEdges('review', afterReview, { success: 'success', worker_retry: 'worker_retry', final_fail: 'final_fail' })
     .addEdge('worker_retry', 'worker')
     .addEdge('success', END)
@@ -613,12 +968,21 @@ function parseArchitectOutput(text: string): { planText: string; contract: Contr
       obj.suggestedRole === 'frontend' || obj.suggestedRole === 'backend' || obj.suggestedRole === 'implementation'
         ? obj.suggestedRole
         : 'implementation';
+    let riskMitigations: Record<string, number> | undefined;
+    if (obj.riskMitigations && typeof obj.riskMitigations === 'object') {
+      const out: Record<string, number> = {};
+      for (const [k, v] of Object.entries(obj.riskMitigations as Record<string, unknown>)) {
+        if (typeof v === 'number' && Number.isInteger(v) && v >= 0) out[k] = v;
+      }
+      if (Object.keys(out).length > 0) riskMitigations = out;
+    }
     const contract: Contract = {
       goal: obj.goal,
       files: obj.files.filter((s: unknown) => typeof s === 'string'),
       risks: Array.isArray(obj.risks) ? obj.risks.filter((s: unknown) => typeof s === 'string') : [],
       suggestedRole: role,
       steps: Array.isArray(obj.steps) ? obj.steps.filter((s: unknown) => typeof s === 'string') : [],
+      riskMitigations,
       scopeHash: '',
     };
     return { planText: m[2].trim(), contract };
@@ -720,4 +1084,121 @@ async function runPluginTool(
   } catch (err) {
     return { toolName: name, output: `plugin tool failed: ${(err as Error).message}`, kind: 'error' };
   }
+}
+
+/**
+ * Phase 3: invoke a sidecar-local tool (outbound HTTP, no extension
+ * round-trip) and return a plain-text result for the LLM.
+ */
+async function runSidecarLocalTool(name: string, args: Record<string, unknown>, workspaceRoot: string | null): Promise<string> {
+  // Phase 6: localOnly blocks every outbound HTTP tool up front.
+  const privacy = loadPrivacyConfig();
+  if (privacy.localOnly && (name === 'web_search' || name === 'fetch_url' || name === 'lookup_api' || name === 'lookup_example')) {
+    void appendAudit({ kind: 'network_blocked', source: name, detail: 'localOnly mode active' });
+    return `[blocked: local-only mode is on. The tool '${name}' requires network access. Disable ollopa.privacy.localOnly to use it.]`;
+  }
+  switch (name) {
+    case 'web_search': {
+      const query = typeof args.query === 'string' ? args.query : '';
+      const limit = typeof args.limit === 'number' ? args.limit : 5;
+      const backend = typeof args.backend === 'string' ? args.backend : undefined;
+      if (!query) return 'missing query';
+      const results = await webSearchQuery(query, limit, backend);
+      if (results.length === 0) return '(no results)';
+      return results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n\n');
+    }
+    case 'fetch_url': {
+      const url = typeof args.url === 'string' ? args.url : '';
+      const maxBytes = typeof args.maxBytes === 'number' ? args.maxBytes : undefined;
+      if (!url) return 'missing url';
+      return await fetchUrl(url, maxBytes);
+    }
+    case 'lookup_api': {
+      const library = typeof args.library === 'string' ? args.library : '';
+      const method = typeof args.method === 'string' ? args.method : '';
+      if (!library || !method) return 'missing library/method';
+      return await lookupApi(library, method);
+    }
+    case 'lookup_example': {
+      const library = typeof args.library === 'string' ? args.library : '';
+      const method = typeof args.method === 'string' ? args.method : '';
+      if (!library || !method) return 'missing library/method';
+      return await lookupExample(library, method);
+    }
+    case 'license_check': {
+      const forbidden = Array.isArray(args.forbidden)
+        ? (args.forbidden.filter((s) => typeof s === 'string') as string[])
+        : undefined;
+      if (forbidden && forbidden.length > 0) {
+        // Override the default forbidden list just for this call.
+        const prev = process.env.OLLOPA_FORBIDDEN_LICENSES;
+        process.env.OLLOPA_FORBIDDEN_LICENSES = forbidden.join(',');
+        try {
+          if (!workspaceRoot) return 'no workspace root available';
+          const r = await checkWorkspaceLicenses(workspaceRoot);
+          return formatLicenseResults(r);
+        } finally {
+          if (prev === undefined) delete process.env.OLLOPA_FORBIDDEN_LICENSES;
+          else process.env.OLLOPA_FORBIDDEN_LICENSES = prev;
+        }
+      }
+      if (!workspaceRoot) return 'no workspace root available';
+      const r = await checkWorkspaceLicenses(workspaceRoot);
+      return formatLicenseResults(r);
+    }
+    default:
+      return `unknown sidecar tool: ${name}`;
+  }
+}
+
+/**
+ * Phase 6: apply privacy redaction to messages before they go to the
+ * LLM. Walks every message and replaces `content` with the redacted
+ * version when `redactSecrets` is on. Returns the same array (mutates
+ * in place — same shape `chatCompletion` already consumes).
+ *
+ * The audit log records how many bytes were masked so the user can
+ * sanity-check that redaction is actually firing.
+ */
+function applyPrivacy(messages: ChatMessage[]): ChatMessage[] {
+  const cfg = loadPrivacyConfig();
+  if (!cfg.redactSecrets) return messages;
+  let totalBytes = 0;
+  for (const msg of messages) {
+    if (typeof msg.content === 'string' && msg.content.length > 0) {
+      const r = redactSecrets(msg.content);
+      if (r.redactedCount > 0) {
+        msg.content = r.text;
+        totalBytes += r.redactedBytes;
+      }
+    }
+  }
+  if (totalBytes > 0) {
+    void appendAudit({
+      kind: 'payload_redacted',
+      source: 'chatCompletion',
+      redactedBytes: totalBytes,
+      detail: `masked ${totalBytes} bytes across ${messages.length} message(s)`,
+    });
+  }
+  return messages;
+}
+
+/**
+ * Phase 8: wrap chatCompletion so the webview can show running token
+ * totals in the header. Ponytail: fires a single side-channel event per
+ * call; no LLM schema change. The total is the pre-call count of the
+ * prompt we sent (good enough — exact usage isn't exposed by every
+ * provider, and we don't want to add a parsing layer here).
+ */
+async function chatCompletionWithStats(
+  ctx: NodeCtx,
+  taskId: string,
+  agent: AgentRole,
+  messages: ChatMessage[],
+  tools: ReturnType<typeof Array.prototype.slice> | import('../llm/chatClient').ToolDefinition[],
+): Promise<ChatResult> {
+  const sent = totalTokens(messages);
+  ctx.send({ kind: 'task_token_total', taskId, agent, total: sent });
+  return chatCompletion(messages, tools as import('../llm/chatClient').ToolDefinition[]);
 }

@@ -57,11 +57,27 @@ export function getLastBackend(): ResolvedChatResult['backend'] | null {
   return lastBackend;
 }
 
+/**
+ * Phase 4: optional per-call override. When `overrideProvider` is set,
+ * the router bypasses OmniRoute and the fallback chain and uses this
+ * provider directly. Empty string = no override.
+ *
+ * Why per-call: the webview header chip lets the user pin a task to a
+ * specific model. The override lives on the call, not on the process.
+ */
+let activeOverride: string = '';
+export function setProviderOverride(name: string | null | undefined): void {
+  activeOverride = typeof name === 'string' ? name : '';
+}
+export function getProviderOverride(): string {
+  return activeOverride;
+}
+
 export async function chatCompletion(
   messages: ChatMessage[],
   tools: ToolDefinition[],
 ): Promise<ChatResult> {
-  if (process.env.OLLOPA_LLM_MODE === 'mock') {
+  if (process.env.OLLAPA_LLM_MODE === 'mock' || process.env.OLLOPA_LLM_MODE === 'mock') {
     if (!hasMockScript()) {
       throw new Error('OLLOPA_LLM_MODE=mock but no mock script registered');
     }
@@ -75,6 +91,8 @@ export async function chatCompletion(
     forceDirect: creds.forceDirect,
     directProviders: creds.directProviders,
     defaultModel: LLM_MODEL,
+    fallbackChain: creds.fallbackChain,
+    overrideProvider: activeOverride || undefined,
   });
   lastBackend = result.backend;
   return result;

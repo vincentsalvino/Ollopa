@@ -11,14 +11,25 @@
   "scripts": {
     "build:webview": "npm run build --workspace webview",
     "build:sidecar": "npm run build --workspace sidecar",
-    "build:extension": "npm run build --workspace extension",
+    "bundle:sidecar": "esbuild sidecar/src/start.ts --bundle --platform=node --target=node18 --format=cjs --outfile=extension/dist/sidecar.js --external:better-sqlite3 --external:@swc/*",
+    "build:extension": "npm run build --workspace extension && npm run bundle:sidecar",
     "build": "npm run build:webview && npm run build:sidecar && npm run build:extension",
     "dev:webview": "npm run dev --workspace webview",
     "dev:sidecar": "npm run dev --workspace sidecar",
+    "typecheck": "tsc --noEmit -p sidecar/tsconfig.json && tsc --noEmit -p extension/tsconfig.json",
     "test:phase2": "tsx sidecar/test/offline.ts",
-    "test:quick": "npm run build:sidecar && npm run build:extension && tsx sidecar/test/quickMode.ts"
+    "test:quick": "npm run build:sidecar && npm run build:extension && tsx sidecar/test/quickMode.ts",
+    "test:plugins": "npm run build:sidecar && tsx sidecar/test/plugins.ts",
+    "test:marketplace": "npm run build:sidecar && tsx sidecar/test/marketplace.ts",
+    "test:mcp": "npm run build:sidecar && tsx sidecar/test/mcp.ts",
+    "test:skills": "npm run build:sidecar && tsx sidecar/test/skills.ts",
+    "test": "npm run build && npm run typecheck && npm run test:plugins && npm run test:marketplace && npm run test:mcp && npm run test:skills && npm run test:phase2 && npm run test:quick",
+    "prepackage": "npm run build",
+    "package": "npm run prepackage && node scripts/package-vsix.cjs"
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.21.5",
     "tsx": "^4.7.0"
   }
 }

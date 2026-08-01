@@ -1,0 +1,11 @@
+# Drop everything we don't want in the .vsix.
+**/src/**
+**/test/**
+**/*.test.ts
+**/.vscode/**
+scripts/**
+
+# Keep: dist/, sidecar/dist/, webview/dist/, resources/, README.md, package.json
+# ws is staged under dist/node_modules by copy-dist. --no-dependencies
+# keeps vsce from walking the workspace root and emitting ../ entries that
+# yauzl rejects.

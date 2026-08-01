@@ -35,10 +35,14 @@ export interface Credentials {
   omnirouteUrl: string | null;
   forceDirect: boolean;
   directProviders: DirectProviderConfig[];
+  /** Phase 4: ordered list of provider names tried after primary. */
+  fallbackChain: string[];
 }
 
 export function loadCredentials(): Credentials {
   ensureDotenv();
+  const raw = process.env.OLLOPA_FALLBACK_CHAIN?.trim();
+  const fallbackChain = raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
   return {
     supabaseUrl: process.env.SUPABASE_URL ?? null,
     supabaseServiceKey: process.env.SUPABASE_SERVICE_KEY ?? null,
@@ -46,6 +50,7 @@ export function loadCredentials(): Credentials {
     omnirouteUrl: process.env.OLLOPA_OMNIROUTE_URL?.trim() || null,
     forceDirect: process.env.OLLOPA_FORCE_DIRECT === '1',
     directProviders: parseDirectProvidersEnv(process.env.OLLOPA_DIRECT_PROVIDERS),
+    fallbackChain,
   };
 }
 

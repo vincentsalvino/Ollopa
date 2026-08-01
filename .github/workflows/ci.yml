@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (plugin loader)
+        run: npm run test:plugins
+
+      - name: Test (offline replay)
+        run: npm run test:phase2
+
+      - name: Test (quick mode E2E)
+        run: npm run test:quick
+
+      - name: Package
+        run: npm run package
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollopa-vsix
+          path: ollopa-*.vsix
+          if-no-files-found: error
+          retention-days: 14

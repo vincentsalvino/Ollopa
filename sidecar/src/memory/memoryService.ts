@@ -16,6 +16,7 @@
  * may be incomplete; that's an accepted limitation of the offline mode.
  */
 import { getSupabase, hasSupabase } from './supabaseClient';
+import { isSupabaseReachable } from './syncService';
 import { getEmbedding, EMBEDDING_DIM } from './embedding';
 import {
   initLocalCache,
@@ -24,6 +25,7 @@ import {
   type CachedMemory,
 } from './localCache';
 import { logRetrieval } from './retrievalLog';
+import { withCache } from './memoryCache';
 
 export interface RetrievedMemory {
   id: string;
@@ -60,8 +62,16 @@ const FETCH_LIMIT = 50; // cap on candidate rows pulled from Supabase per query
 
 export async function retrieveMemory(params: RetrieveParams): Promise<RetrieveResult> {
   const limit = params.limit ?? DEFAULT_LIMIT;
+  return withCache(params.query, params.scope, params.agent, limit, async () => {
+    return retrieveMemoryUncached(params, limit);
+  });
+}
 
+async function retrieveMemoryUncached(params: RetrieveParams, limit: number): Promise<RetrieveResult> {
   if (!hasSupabase()) {
+    return retrieveFromCache(params.query, params.scope, limit);
+  }
+  if (!(await isSupabaseReachable())) {
     return retrieveFromCache(params.query, params.scope, limit);
   }
 

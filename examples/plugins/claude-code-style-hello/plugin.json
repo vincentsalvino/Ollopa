@@ -1,0 +1,10 @@
+{
+  "name": "claude-code-style-hello",
+  "version": "0.1.0",
+  "description": "Example Claude Code-style plugin that adds a /hello slash command.",
+  "author": "Ollopa",
+  "license": "MIT",
+  "provides": {
+    "commands": ["commands/"]
+  }
+}

@@ -107,3 +107,124 @@ html, body, #root { height: 100%; margin: 0; }
 .diff__line--del { color: #ff8a8a; background: rgba(255, 138, 138, 0.08); }
 .diff__line--hunk { color: #b9d3ff; }
 .diff__line--file { color: var(--muted); }
+
+/* Plan approval card */
+.plan {
+  background: linear-gradient(180deg, #14202d 0%, #0e1623 100%);
+  border: 1px solid #2c4769; border-radius: 8px;
+  padding: 10px 12px; margin-top: 6px;
+}
+.plan__head { display: flex; justify-content: space-between; align-items: center; }
+.plan__title { font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #b9d3ff; }
+.plan__hash { font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+.plan__summary { margin: 6px 0 8px 0; color: var(--fg); font-size: 13px; }
+.plan__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.plan__col h4 { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 4px 0; }
+.plan__col p, .plan__files, .plan__risks, .plan__steps { margin: 0 0 8px 0; padding-left: 18px; font-size: 12px; color: var(--fg); }
+.plan__files li code { color: #b9d3ff; }
+.plan__feedback label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px; }
+.plan__feedback textarea {
+  width: 100%; resize: vertical; background: #06080d; color: var(--fg);
+  border: 1px solid #232735; border-radius: 4px; padding: 6px 8px; font-family: inherit; font-size: 12px;
+}
+.plan__actions { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
+.plan__btn { padding: 6px 14px; border-radius: 4px; border: none; font-size: 12px; cursor: pointer; font-weight: 600; }
+.plan__btn--approve { background: #2f8a52; color: #fff; }
+.plan__btn--approve:hover { background: #38a363; }
+.plan__btn--reject  { background: #5a2a2a; color: #fff; }
+.plan__btn--reject:hover  { background: #7a3838; }
+
+/* Review verdict card */
+.review { border-radius: 6px; padding: 8px 10px; margin-top: 6px; border: 1px solid #232735; }
+.review--pass { background: rgba(110, 231, 160, 0.06); border-color: #2c5d3e; }
+.review--fail { background: rgba(255, 138, 138, 0.06); border-color: #5d2c2c; }
+.review__head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.review--pass .review__head { color: #6ee7a0; }
+.review--fail .review__head { color: #ff8a8a; }
+.review__principles { display: flex; gap: 4px; }
+.review__principle { background: rgba(255, 138, 138, 0.18); color: #ff8a8a; font-size: 10px; padding: 2px 6px; border-radius: 999px; font-family: ui-monospace, monospace; }
+.review__feedback { margin: 6px 0 0 0; color: var(--fg); font-size: 12px; }
+
+/* ─── Tabs ────────────────────────────────────────────────────────── */
+.app__tabs { margin-left: auto; display: flex; gap: 4px; }
+.app__tab--icon { font-size: 14px; padding: 2px 8px; min-width: 28px; }
+
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal__panel { width: min(720px, 92vw); height: min(520px, 80vh); background: var(--panel); border: 1px solid #2a2f40; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; }
+.modal__head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #232735; }
+.modal__title { font-weight: 600; }
+.modal__close { background: transparent; color: var(--fg); border: 1px solid #2a2f40; border-radius: 4px; cursor: pointer; padding: 0 8px; font-size: 16px; line-height: 1.6; }
+.modal__body { flex: 1; display: flex; min-height: 0; }
+.modal__tabs { display: flex; flex-direction: column; width: 140px; border-right: 1px solid #232735; background: #131722; padding: 6px 0; gap: 2px; }
+.modal__tab { background: transparent; color: var(--muted); border: 0; text-align: left; padding: 8px 12px; cursor: pointer; font-size: 13px; }
+.modal__tab:hover { background: #1c2030; color: var(--fg); }
+.modal__tab--active { background: #1c2030; color: var(--fg); border-left: 2px solid var(--accent); }
+.modal__pane { flex: 1; padding: 16px; overflow-y: auto; }
+.cfg h3 { margin: 0 0 8px 0; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.cfg__row { margin: 6px 0; font-size: 13px; }
+.cfg__hint { margin-top: 12px; font-size: 12px; color: var(--muted); }
+.cfg__list { margin: 4px 0 12px 0; padding-left: 18px; font-size: 13px; }
+.cfg__list li { margin: 3px 0; }
+code { background: #1c2030; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+
+.app__tab {
+  background: transparent; color: var(--muted); border: 1px solid transparent;
+  padding: 2px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
+}
+.app__tab--active { background: #2a2f40; color: var(--fg); border-color: #3a3f55; }
+
+/* ─── Plugins panel ──────────────────────────────────────────────── */
+.plugins { padding: 16px 18px; overflow: auto; }
+.plugins__head h2 { margin: 0 0 4px 0; font-size: 16px; }
+.plugins__hint { color: var(--muted); font-size: 12px; margin: 0 0 14px 0; line-height: 1.5; }
+.plugins__hint code { background: #2a2f40; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+.plugins__install { display: flex; gap: 8px; margin-bottom: 12px; }
+.plugins__install input {
+  flex: 1; background: #1a1f2e; color: var(--fg); border: 1px solid #3a3f55;
+  border-radius: 6px; padding: 6px 10px; font-family: ui-monospace, monospace; font-size: 12px;
+}
+.plugins__install button {
+  background: #2a4f8a; color: #fff; border: 0; padding: 6px 14px;
+  border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.plugins__install button:disabled { opacity: 0.5; cursor: not-allowed; }
+.plugins__err { color: #ff8a8a; font-size: 12px; margin: 4px 0; }
+.plugins__ok { color: #6ee7a0; font-size: 12px; margin: 4px 0; }
+.plugins__sub { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 16px 0 8px 0; }
+.plugins__empty { color: var(--muted); font-size: 13px; font-style: italic; }
+.plugins__list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.plugins__row {
+  background: #1a1f2e; border: 1px solid #2a2f40; border-radius: 6px;
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
+}
+.plugins__row-main { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.plugins__row-main code { font-size: 12px; color: var(--fg); }
+.plugins__src { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
+.plugins__row-meta { display: flex; gap: 10px; align-items: center; font-size: 11px; color: var(--muted); }
+.plugins__row-meta button {
+  margin-left: auto; background: #3a1f1f; color: #ff8a8a; border: 0;
+  padding: 3px 10px; border-radius: 999px; font-size: 11px; cursor: pointer;
+}
+.plugins__row-meta button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.privacy-banner { padding: 6px 12px; font-size: 12px; background: #1a2530; color: #b8d4ff; border-bottom: 1px solid #2a3850; }
+.privacy-banner--strict { background: #2a1f1f; color: #ffd8a8; border-bottom-color: #5a3a2a; }
+
+/* Phase 8 — a11y. Honor OS-level reduce-motion and add a visible
+   focus ring for keyboard users. Mouse users keep the default outline
+   so they aren't distracted by a ring on every click. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+:focus-visible {
+  outline: 2px solid #6cb6ff;
+  outline-offset: 2px;
+}
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid #6cb6ff;
+  outline-offset: 2px;
+}

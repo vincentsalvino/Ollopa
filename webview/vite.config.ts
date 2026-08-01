@@ -7,10 +7,14 @@ import * as path from 'node:path';
 //   2. Dev   → when OLLOPA_WEBVIEW_DEV=1 is set on the extension host, it loads
 //             http://localhost:5173 directly. The CSP and dev script src in
 //             webviewProvider.ts point here.
+//
+// `root: 'src'` puts the source tree at the vite root; `outDir: '../dist'`
+// hops back up one level so the build emits `webview/dist` (matching the
+// path the extension host reads in `webviewProvider.ts`).
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: 'dist',
+    outDir: path.resolve(__dirname, 'dist'),
     emptyOutDir: true,
     rollupOptions: {
       output: {

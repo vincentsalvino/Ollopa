@@ -15,18 +15,24 @@ export interface CommandWhitelist {
 const WHITELIST: CommandWhitelist = {
   allowed: [
     { bin: 'npm', subcommands: ['test', 'run', 'list', 'ls'] },
-    { bin: 'npx', subcommands: ['eslint', 'tsc'] },
+    { bin: 'npx', subcommands: ['eslint', 'tsc', 'semgrep', 'jest', 'vitest'] },
     { bin: 'git', subcommands: ['status', 'diff', 'log', 'show'] },
     { bin: 'node', subcommands: ['--version'] },
   ],
   bannedPatterns: [
-    /\brm\s+-rf?\s+\//i,        // rm -rf /
+    /\brm\s+-rf?\s+\//i,                       // rm -rf /
     /\bsudo\b/i,
-    /\bcurl\b/i,
-    /\bwget\b/i,
-    /\bchmod\b/i,
+    /\b(curl|wget|nc|netcat)\b/i,
+    /\bchmod\b\s+(-R\s+)?[0-7]*[7][0-7]/i,     // chmod 777 / chmod -R 777
+    /\bchmod\b\s+(-R\s+)?\+[rwx]+\b/i,         // chmod +x / chmod -R +x
     /\/etc\//i,
     /\beval\b/i,
+    /:.*\(\)\s*\{.*\|.*&.*\}/i,                // fork bomb :(){:|:&};:
+    /\|\s*(sh|bash|zsh|fish|node|python)\b/i,  // pipe-to-shell
+    /\b(?:mkfs|dd|shutdown|reboot|halt|poweroff)\b/i,
+    />\s*\/dev\/(sd|hd|nvme|disk)/i,           // overwrite raw block devices
+    /`[^`]*`/i,                                // backtick command substitution
+    /\$\([^)]*\)/i,                            // $() command substitution
   ],
   maxTimeoutMs: 30_000,
   maxOutputBytes: 64 * 1024, // 64 KB
@@ -49,8 +55,11 @@ export function verifyCommand(command: string): WhitelistVerdict {
   if (typeof command !== 'string' || command.trim().length === 0) {
     return { ok: false, reason: 'empty command' };
   }
+  // Strip all quote characters before pattern matching so token-splitting
+  // bypasses (c""url, cur' 'l, "r"m) cannot evade bans.
+  const stripped = command.replace(/["'`]/g, '');
   for (const pat of WHITELIST.bannedPatterns) {
-    if (pat.test(command)) return { ok: false, reason: `banned pattern: ${pat}` };
+    if (pat.test(stripped)) return { ok: false, reason: `banned pattern: ${pat}` };
   }
   const tokens = tokenize(command);
   if (tokens.length === 0) return { ok: false, reason: 'no tokens' };

@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App, type Msg } from './App';
 import type { Inbound, Outbound } from './global';
+import './styles.css';
 
 const vscode = window.acquireVsCodeApi();
 
@@ -20,3 +21,5 @@ function bootstrap(): void {
     window.dispatchEvent(new CustomEvent('ollopa:inbound', { detail: ev.data }));
   });
 }
+
+bootstrap();

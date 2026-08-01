@@ -56,7 +56,14 @@ export async function create(realPath: string, taskId: string): Promise<TempCont
   // monorepo is fast. Phase 3 keeps it simple — just .git.
   await cp(realPath, tempPath, {
     recursive: true,
-    filter: (src) => !src.split(path.sep).includes('.git'),
+    dereference: true,
+    filter: (src) => {
+      const parts = src.split(path.sep);
+      if (parts.includes('.git')) return false;
+      if (parts.includes('node_modules')) return false;
+      if (parts.includes('dist')) return false;
+      return true;
+    },
   });
   const ctx: TempContext = { taskId, realPath, tempPath, changedFiles: new Set() };
   contexts.set(taskId, ctx);
